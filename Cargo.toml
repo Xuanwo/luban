@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/luban_app", "crates/luban_domain", "crates/luban_ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+anyhow = "1"
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit"] }

@@ -1,0 +1,7 @@
+[package]
+name = "luban_domain"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+

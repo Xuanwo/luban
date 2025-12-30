@@ -1,0 +1,9 @@
+[package]
+name = "luban_app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+luban_ui = { path = "../luban_ui" }
+
