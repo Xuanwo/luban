@@ -64,3 +64,18 @@ impl AppState {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_state_is_consistent() {
+        let state = AppState::demo();
+
+        assert!(!state.projects.is_empty());
+        assert!(state.selected_project < state.projects.len());
+
+        assert!(!state.timeline.is_empty());
+        assert!(state.selected_timeline_item < state.timeline.len());
+    }
+}

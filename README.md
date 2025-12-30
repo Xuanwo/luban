@@ -8,6 +8,12 @@ Luban is a standalone AI code editor app built with GPUI, with a Zed-like layout
 
 ## Development
 
+This project uses `just` to manage all common dev commands.
+
+```bash
+just -l
+```
+
 ### macOS Requirements
 
 GPUI uses Metal shaders on macOS. Ensure the Metal toolchain component is installed:
@@ -19,11 +25,11 @@ xcodebuild -downloadComponent MetalToolchain
 ### Run
 
 ```bash
-cargo run -p luban_app
+just run
 ```
 
 ### Build
 
 ```bash
-cargo build -p luban_app
+just build
 ```

@@ -1,4 +1,6 @@
-use gpui::{AnyElement, Context, ElementId, IntoElement, Render, SharedString, div, prelude::*, px, rgb};
+use gpui::{
+    AnyElement, Context, ElementId, IntoElement, Render, SharedString, div, prelude::*, px, rgb,
+};
 use luban_domain::{AppState, RightPaneTab, TimelineStatus};
 
 pub struct LubanRootView {
@@ -121,47 +123,37 @@ impl Render for LubanRootView {
                             .id("timeline-scroll")
                             .overflow_scroll()
                             .py_2()
-                            .children(
-                                self.state
-                                    .timeline
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, item)| {
-                                        let is_selected = i == self.state.selected_timeline_item;
-                                        let status_color = match item.status {
-                                            TimelineStatus::Pending => rgb(0x6c7485),
-                                            TimelineStatus::Running => rgb(0x3ea6ff),
-                                            TimelineStatus::Done => rgb(0x3ddb77),
-                                            TimelineStatus::Failed => rgb(0xff5c5c),
-                                        };
+                            .children(self.state.timeline.iter().enumerate().map(|(i, item)| {
+                                let is_selected = i == self.state.selected_timeline_item;
+                                let status_color = match item.status {
+                                    TimelineStatus::Pending => rgb(0x6c7485),
+                                    TimelineStatus::Running => rgb(0x3ea6ff),
+                                    TimelineStatus::Done => rgb(0x3ddb77),
+                                    TimelineStatus::Failed => rgb(0xff5c5c),
+                                };
 
-                                        div()
-                                            .px_3()
-                                            .py_2()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .cursor_pointer()
-                                            .bg(if is_selected {
-                                                rgb(0x1a1d2c)
-                                            } else {
-                                                rgb(0x0f111a)
-                                            })
-                                            .hover(|s| s.bg(rgb(0x1a1d2c)))
-                                            .id(ElementId::named_usize("timeline-item", i))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.select_timeline_item(i, cx);
-                                            }))
-                                            .child(
-                                                div()
-                                                    .w(px(8.0))
-                                                    .h(px(8.0))
-                                                    .rounded_full()
-                                                    .bg(status_color),
-                                            )
-                                            .child(item.title.clone())
-                                    }),
-                            ),
+                                div()
+                                    .px_3()
+                                    .py_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .cursor_pointer()
+                                    .bg(if is_selected {
+                                        rgb(0x1a1d2c)
+                                    } else {
+                                        rgb(0x0f111a)
+                                    })
+                                    .hover(|s| s.bg(rgb(0x1a1d2c)))
+                                    .id(ElementId::named_usize("timeline-item", i))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.select_timeline_item(i, cx);
+                                    }))
+                                    .child(
+                                        div().w(px(8.0)).h(px(8.0)).rounded_full().bg(status_color),
+                                    )
+                                    .child(item.title.clone())
+                            })),
                     ),
             )
             .child(
@@ -181,10 +173,16 @@ impl Render for LubanRootView {
                             .gap_2()
                             .border_b_1()
                             .border_color(rgb(0x23263a))
-                            .child(right_tab_button(cx, self.state.right_pane_tab, RightPaneTab::Diff))
-                            .child(
-                                right_tab_button(cx, self.state.right_pane_tab, RightPaneTab::Terminal),
-                            ),
+                            .child(right_tab_button(
+                                cx,
+                                self.state.right_pane_tab,
+                                RightPaneTab::Diff,
+                            ))
+                            .child(right_tab_button(
+                                cx,
+                                self.state.right_pane_tab,
+                                RightPaneTab::Terminal,
+                            )),
                     )
                     .child(right_content),
             )

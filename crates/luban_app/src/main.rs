@@ -9,7 +9,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| LubanRootView::new(cx)),
+            |_, cx| cx.new(LubanRootView::new),
         )
         .unwrap();
 
