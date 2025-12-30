@@ -4,7 +4,8 @@ use gpui::{
     SharedString, Window, div, px, rems,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, StyledExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, IconNamed as _, Sizable as _, Size,
+    StyledExt as _,
     button::*,
     collapsible::Collapsible,
     input::{Input, InputEvent, InputState},
@@ -1523,7 +1524,8 @@ fn render_tool_summary_item(
     let element_id = format!("conversation-turn-item-{}", item_key.replace("::", "-"));
 
     let (title, summary) = codex_item_summary(item, false);
-    let icon = Icon::new(codex_item_icon_name(item))
+    let icon = Icon::empty()
+        .path(codex_item_icon_path(item))
         .with_size(Size::Small)
         .text_color(theme.muted_foreground);
 
@@ -1657,7 +1659,8 @@ fn render_codex_item(
                 .color(theme.muted_foreground)
                 .into_any_element()
         } else {
-            Icon::new(codex_item_icon_name(item))
+            Icon::empty()
+                .path(codex_item_icon_path(item))
                 .with_size(Size::Small)
                 .text_color(theme.muted_foreground)
                 .into_any_element()
@@ -1954,16 +1957,16 @@ fn codex_item_compact_summary(item: &CodexThreadItem) -> (&'static str, String) 
     }
 }
 
-fn codex_item_icon_name(item: &CodexThreadItem) -> IconName {
+fn codex_item_icon_path(item: &CodexThreadItem) -> SharedString {
     match item {
-        CodexThreadItem::AgentMessage { .. } => IconName::Bot,
-        CodexThreadItem::Reasoning { .. } => IconName::LoaderCircle,
-        CodexThreadItem::CommandExecution { .. } => IconName::SquareTerminal,
-        CodexThreadItem::FileChange { .. } => IconName::File,
-        CodexThreadItem::McpToolCall { .. } => IconName::Settings2,
-        CodexThreadItem::WebSearch { .. } => IconName::Globe,
-        CodexThreadItem::TodoList { .. } => IconName::Check,
-        CodexThreadItem::Error { .. } => IconName::TriangleAlert,
+        CodexThreadItem::AgentMessage { .. } => IconName::Bot.path(),
+        CodexThreadItem::Reasoning { .. } => "icons/brain.svg".into(),
+        CodexThreadItem::CommandExecution { .. } => IconName::SquareTerminal.path(),
+        CodexThreadItem::FileChange { .. } => IconName::File.path(),
+        CodexThreadItem::McpToolCall { .. } => IconName::Settings2.path(),
+        CodexThreadItem::WebSearch { .. } => IconName::Globe.path(),
+        CodexThreadItem::TodoList { .. } => IconName::Check.path(),
+        CodexThreadItem::Error { .. } => IconName::TriangleAlert.path(),
     }
 }
 
@@ -1988,7 +1991,8 @@ fn render_turn_duration_row(
             .color(theme.muted_foreground)
             .into_any_element()
     } else {
-        Icon::new(IconName::LoaderCircle)
+        Icon::empty()
+            .path("icons/timer.svg")
             .with_size(Size::Small)
             .text_color(theme.muted_foreground)
             .into_any_element()
@@ -2180,6 +2184,15 @@ mod tests {
             codex_item_compact_summary(&item),
             ("Thinking", "…".to_owned())
         );
+    }
+
+    #[test]
+    fn codex_item_icon_paths_are_stable() {
+        let item = CodexThreadItem::Reasoning {
+            id: "r-1".to_owned(),
+            text: "x".to_owned(),
+        };
+        assert_eq!(codex_item_icon_path(&item).as_ref(), "icons/brain.svg");
     }
 
     #[test]
