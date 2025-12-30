@@ -7,3 +7,5 @@ edition.workspace = true
 gpui.workspace = true
 luban_domain = { path = "../luban_domain" }
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

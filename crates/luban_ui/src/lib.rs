@@ -1,3 +1,3 @@
 mod root;
 
-pub use root::LubanRootView;
+pub use root::{CreatedWorkspace, LubanRootView, ProjectWorkspaceService};

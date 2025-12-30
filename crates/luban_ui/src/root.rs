@@ -1,45 +1,178 @@
+use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, ElementId, IntoElement, Render, SharedString, div, prelude::*, px, rgb,
+    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, PromptButton, PromptLevel,
+    Window, div, px, rgb,
 };
-use luban_domain::{AppState, RightPaneTab, TimelineStatus};
+use luban_domain::{
+    Action, AppState, Effect, MainPane, OperationStatus, ProjectId, WorkspaceId, WorkspaceStatus,
+};
+use std::{path::PathBuf, sync::Arc};
+
+pub struct CreatedWorkspace {
+    pub workspace_name: String,
+    pub branch_name: String,
+    pub worktree_path: PathBuf,
+}
+
+pub trait ProjectWorkspaceService: Send + Sync {
+    fn create_workspace(
+        &self,
+        project_path: PathBuf,
+        project_slug: String,
+    ) -> Result<CreatedWorkspace, String>;
+
+    fn archive_workspace(
+        &self,
+        project_path: PathBuf,
+        worktree_path: PathBuf,
+    ) -> Result<(), String>;
+}
 
 pub struct LubanRootView {
     state: AppState,
-    title: SharedString,
+    services: Arc<dyn ProjectWorkspaceService>,
 }
 
 impl LubanRootView {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
+    pub fn new(services: Arc<dyn ProjectWorkspaceService>, _cx: &mut Context<Self>) -> Self {
         Self {
-            state: AppState::demo(),
-            title: "Luban".into(),
+            state: AppState::new(),
+            services,
         }
     }
 
-    fn select_project(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.state.selected_project = index;
-        cx.notify();
+    #[cfg(test)]
+    pub fn with_state(
+        services: Arc<dyn ProjectWorkspaceService>,
+        state: AppState,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self { state, services }
     }
 
-    fn select_timeline_item(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.state.selected_timeline_item = index;
-        cx.notify();
+    #[cfg(test)]
+    pub fn debug_state(&self) -> &AppState {
+        &self.state
     }
 
-    fn set_right_tab(&mut self, tab: RightPaneTab, cx: &mut Context<Self>) {
-        self.state.right_pane_tab = tab;
+    fn dispatch(&mut self, action: Action, cx: &mut Context<Self>) {
+        let effects = self.state.apply(action);
         cx.notify();
+
+        for effect in effects {
+            self.run_effect(effect, cx);
+        }
+    }
+
+    fn run_effect(&mut self, effect: Effect, cx: &mut Context<Self>) {
+        match effect {
+            Effect::CreateWorkspace { project_id } => self.run_create_workspace(project_id, cx),
+            Effect::ArchiveWorkspace { workspace_id } => {
+                self.run_archive_workspace(workspace_id, cx)
+            }
+        }
+    }
+
+    fn run_create_workspace(&mut self, project_id: ProjectId, cx: &mut Context<Self>) {
+        let Some(project) = self.state.project(project_id) else {
+            self.dispatch(
+                Action::WorkspaceCreateFailed {
+                    project_id,
+                    message: "Project not found".to_owned(),
+                },
+                cx,
+            );
+            return;
+        };
+
+        let project_path = project.path.clone();
+        let project_slug = project.slug.clone();
+        let services = self.services.clone();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(async move {
+                            services.create_workspace(project_path, project_slug)
+                        })
+                        .await;
+
+                    let action = match result {
+                        Ok(created) => Action::WorkspaceCreated {
+                            project_id,
+                            workspace_name: created.workspace_name,
+                            branch_name: created.branch_name,
+                            worktree_path: created.worktree_path,
+                        },
+                        Err(message) => Action::WorkspaceCreateFailed {
+                            project_id,
+                            message,
+                        },
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(action, view_cx)
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn run_archive_workspace(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        let Some((project_path, worktree_path)) = workspace_context(&self.state, workspace_id)
+        else {
+            self.dispatch(
+                Action::WorkspaceArchiveFailed {
+                    workspace_id,
+                    message: "Workspace not found".to_owned(),
+                },
+                cx,
+            );
+            return;
+        };
+
+        let services = self.services.clone();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(async move {
+                            services.archive_workspace(project_path, worktree_path)
+                        })
+                        .await;
+
+                    let action = match result {
+                        Ok(()) => Action::WorkspaceArchived { workspace_id },
+                        Err(message) => Action::WorkspaceArchiveFailed {
+                            workspace_id,
+                            message,
+                        },
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(action, view_cx)
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
     }
 }
 
-impl Render for LubanRootView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar_width = px(260.0);
-        let right_width = px(420.0);
-        let right_content = match self.state.right_pane_tab {
-            RightPaneTab::Diff => right_diff_view(&self.state),
-            RightPaneTab::Terminal => right_terminal_view(),
-        };
+impl gpui::Render for LubanRootView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar_width = px(340.0);
 
         div()
             .size_full()
@@ -47,234 +180,545 @@ impl Render for LubanRootView {
             .bg(rgb(0x0f111a))
             .text_color(rgb(0xd7dae0))
             .text_sm()
-            .child(
-                div()
-                    .w(sidebar_width)
-                    .h_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_col()
-                    .bg(rgb(0x11131d))
-                    .border_r_1()
-                    .border_color(rgb(0x23263a))
-                    .child(
-                        div()
-                            .h(px(44.0))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(rgb(0x23263a))
-                            .text_color(rgb(0xffffff))
-                            .child(self.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .id("sidebar-scroll")
-                            .overflow_scroll()
-                            .py_2()
-                            .children(self.state.projects.iter().enumerate().map(|(i, p)| {
-                                let is_selected = i == self.state.selected_project;
-                                div()
-                                    .px_3()
-                                    .py_2()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .cursor_pointer()
-                                    .bg(if is_selected {
-                                        rgb(0x1a1d2c)
-                                    } else {
-                                        rgb(0x11131d)
-                                    })
-                                    .hover(|s| s.bg(rgb(0x1a1d2c)))
-                                    .id(ElementId::named_usize("sidebar-project", i))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.select_project(i, cx);
-                                    }))
-                                    .child(p.name.clone())
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .bg(rgb(0x0f111a))
-                    .border_r_1()
-                    .border_color(rgb(0x23263a))
-                    .child(
-                        div()
-                            .h(px(44.0))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(rgb(0x23263a))
-                            .text_color(rgb(0xbac3d4))
-                            .child("Timeline"),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .id("timeline-scroll")
-                            .overflow_scroll()
-                            .py_2()
-                            .children(self.state.timeline.iter().enumerate().map(|(i, item)| {
-                                let is_selected = i == self.state.selected_timeline_item;
-                                let status_color = match item.status {
-                                    TimelineStatus::Pending => rgb(0x6c7485),
-                                    TimelineStatus::Running => rgb(0x3ea6ff),
-                                    TimelineStatus::Done => rgb(0x3ddb77),
-                                    TimelineStatus::Failed => rgb(0xff5c5c),
-                                };
-
-                                div()
-                                    .px_3()
-                                    .py_2()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .cursor_pointer()
-                                    .bg(if is_selected {
-                                        rgb(0x1a1d2c)
-                                    } else {
-                                        rgb(0x0f111a)
-                                    })
-                                    .hover(|s| s.bg(rgb(0x1a1d2c)))
-                                    .id(ElementId::named_usize("timeline-item", i))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.select_timeline_item(i, cx);
-                                    }))
-                                    .child(
-                                        div().w(px(8.0)).h(px(8.0)).rounded_full().bg(status_color),
-                                    )
-                                    .child(item.title.clone())
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .w(right_width)
-                    .h_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_col()
-                    .bg(rgb(0x11131d))
-                    .child(
-                        div()
-                            .h(px(44.0))
-                            .px_2()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .border_b_1()
-                            .border_color(rgb(0x23263a))
-                            .child(right_tab_button(
-                                cx,
-                                self.state.right_pane_tab,
-                                RightPaneTab::Diff,
-                            ))
-                            .child(right_tab_button(
-                                cx,
-                                self.state.right_pane_tab,
-                                RightPaneTab::Terminal,
-                            )),
-                    )
-                    .child(right_content),
-            )
+            .child(render_sidebar(cx, &self.state, sidebar_width))
+            .child(render_main(cx, &self.state))
     }
 }
 
-fn right_tab_button(
+fn render_sidebar(
     cx: &mut Context<LubanRootView>,
-    active: RightPaneTab,
-    tab: RightPaneTab,
+    state: &AppState,
+    sidebar_width: gpui::Pixels,
 ) -> impl IntoElement {
-    let is_active = tab == active;
-    let label = match tab {
-        RightPaneTab::Diff => "Diff",
-        RightPaneTab::Terminal => "Terminal",
-    };
-    let id = match tab {
-        RightPaneTab::Diff => ElementId::named_usize("right-pane-tab", 0),
-        RightPaneTab::Terminal => ElementId::named_usize("right-pane-tab", 1),
-    };
+    let view_handle = cx.entity().downgrade();
 
     div()
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .cursor_pointer()
-        .bg(if is_active {
+        .w(sidebar_width)
+        .h_full()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .bg(rgb(0x11131d))
+        .border_r_1()
+        .border_color(rgb(0x23263a))
+        .child(
+            div()
+                .h(px(44.0))
+                .px_3()
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_b_1()
+                .border_color(rgb(0x23263a))
+                .child(div().text_color(rgb(0xffffff)).child("Projects"))
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .bg(rgb(0x1a1d2c))
+                        .hover(|s| s.bg(rgb(0x23263a)))
+                        .debug_selector(|| "add-project".to_owned())
+                        .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _window, app| {
+                            let view_handle = view_handle.clone();
+                            let options = gpui::PathPromptOptions {
+                                files: false,
+                                directories: true,
+                                multiple: false,
+                                prompt: Some("Add Project".into()),
+                            };
+
+                            let receiver = app.prompt_for_paths(options);
+                            app.spawn(move |cx: &mut gpui::AsyncApp| {
+                                let mut async_cx = cx.clone();
+                                async move {
+                                    let Ok(result) = receiver.await else {
+                                        return;
+                                    };
+                                    let Ok(Some(mut paths)) = result else {
+                                        return;
+                                    };
+                                    let Some(path) = paths.pop() else {
+                                        return;
+                                    };
+
+                                    let _ = view_handle.update(
+                                        &mut async_cx,
+                                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                                            view.dispatch(Action::AddProject { path }, view_cx);
+                                        },
+                                    );
+                                }
+                            })
+                            .detach();
+                        })
+                        .child("+"),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .id("projects-scroll")
+                .overflow_scroll()
+                .py_2()
+                .children(state.projects.iter().enumerate().map(|(i, project)| {
+                    render_project(cx, i, project, state.main_pane)
+                })),
+        )
+}
+
+fn render_project(
+    cx: &mut Context<LubanRootView>,
+    project_index: usize,
+    project: &luban_domain::Project,
+    main_pane: MainPane,
+) -> AnyElement {
+    let is_selected = matches!(main_pane, MainPane::ProjectSettings(id) if id == project.id);
+    let view_handle = cx.entity().downgrade();
+
+    let disclosure = if project.expanded { "▾" } else { "▸" };
+    let create_label = match project.create_workspace_status {
+        OperationStatus::Idle => "+",
+        OperationStatus::Running => "…",
+    };
+
+    let header = div()
+        .px_2()
+        .py_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .bg(if is_selected {
             rgb(0x1a1d2c)
         } else {
             rgb(0x11131d)
         })
         .hover(|s| s.bg(rgb(0x1a1d2c)))
-        .id(id)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.set_right_tab(tab, cx);
-        }))
-        .child(label)
-}
-
-fn right_diff_view(state: &AppState) -> AnyElement {
-    let title: SharedString = state
-        .timeline
-        .get(state.selected_timeline_item)
-        .map(|i| i.title.clone().into())
-        .unwrap_or_else(|| "No selection".into());
-
-    div()
-        .flex_1()
-        .id("right-diff-scroll")
-        .overflow_scroll()
-        .p_3()
-        .gap_2()
-        .flex()
-        .flex_col()
-        .child(div().text_color(rgb(0xffffff)).child("Diff"))
-        .child(div().text_color(rgb(0xbac3d4)).child(title))
+        .debug_selector(move || format!("project-header-{project_index}"))
         .child(
             div()
-                .mt_2()
-                .p_2()
-                .rounded_md()
-                .bg(rgb(0x0f111a))
-                .border_1()
-                .border_color(rgb(0x23263a))
-                .font_family("SF Mono")
-                .text_color(rgb(0xd7dae0))
-                .child("+ placeholder diff output"),
+                .flex_1()
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let project_id = project.id;
+                        move |this, _, _, cx| {
+                            this.dispatch(Action::ToggleProjectExpanded { project_id }, cx)
+                        }
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(16.0))
+                        .text_color(rgb(0xbac3d4))
+                        .debug_selector(move || format!("project-toggle-{project_index}"))
+                        .child(disclosure),
+                )
+                .child(div().child(project.name.clone())),
         )
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .bg(rgb(0x11131d))
+                .hover(|s| s.bg(rgb(0x23263a)))
+                .debug_selector(move || format!("project-create-workspace-{project_index}"))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let project_id = project.id;
+                        move |this, _, _, cx| {
+                            this.dispatch(Action::CreateWorkspace { project_id }, cx)
+                        }
+                    }),
+                )
+                .child(create_label),
+        )
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .bg(rgb(0x11131d))
+                .hover(|s| s.bg(rgb(0x23263a)))
+                .debug_selector(move || format!("project-settings-{project_index}"))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let project_id = project.id;
+                        move |this, _, _, cx| {
+                            this.dispatch(Action::OpenProjectSettings { project_id }, cx)
+                        }
+                    }),
+                )
+                .child("⋯"),
+        );
+
+    let children = project
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.status == WorkspaceStatus::Active)
+        .map(|(workspace_index, workspace)| {
+            render_workspace_row(
+                cx,
+                view_handle.clone(),
+                project_index,
+                workspace_index,
+                project.id,
+                workspace,
+                main_pane,
+            )
+        });
+
+    div()
+        .flex()
+        .flex_col()
+        .child(header)
+        .when(project.expanded, |s| {
+            s.child(div().pl(px(22.0)).flex().flex_col().children(children))
+        })
         .into_any_element()
 }
 
-fn right_terminal_view() -> AnyElement {
-    div()
-        .flex_1()
-        .id("right-terminal-scroll")
-        .overflow_scroll()
-        .p_3()
-        .gap_2()
+fn render_workspace_row(
+    cx: &mut Context<LubanRootView>,
+    view_handle: gpui::WeakEntity<LubanRootView>,
+    project_index: usize,
+    workspace_index: usize,
+    _project_id: ProjectId,
+    workspace: &luban_domain::Workspace,
+    main_pane: MainPane,
+) -> AnyElement {
+    let is_selected = matches!(main_pane, MainPane::Workspace(id) if id == workspace.id);
+    let workspace_id = workspace.id;
+    let archive_disabled = workspace.archive_status == OperationStatus::Running;
+
+    let row = div()
+        .px_2()
+        .py_1()
         .flex()
-        .flex_col()
-        .child(div().text_color(rgb(0xffffff)).child("Terminal"))
+        .items_center()
+        .gap_2()
+        .bg(if is_selected {
+            rgb(0x1a1d2c)
+        } else {
+            rgb(0x11131d)
+        })
+        .hover(|s| s.bg(rgb(0x1a1d2c)))
+        .debug_selector(move || format!("workspace-row-{project_index}-{workspace_index}"))
         .child(
             div()
-                .mt_2()
-                .p_2()
-                .rounded_md()
-                .bg(rgb(0x0f111a))
-                .border_1()
-                .border_color(rgb(0x23263a))
-                .font_family("SF Mono")
-                .text_color(rgb(0xd7dae0))
-                .children(["$ luban --help", "placeholder: integrated terminal"]),
+                .flex_1()
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.dispatch(Action::OpenWorkspace { workspace_id }, cx)
+                    }),
+                )
+                .child(div().flex_1().child(workspace.workspace_name.clone()))
+                .child(div().text_color(rgb(0x6c7485)).child("—")),
         )
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .text_color(rgb(0xff5c5c))
+                .bg(rgb(0x11131d))
+                .hover(|s| s.bg(rgb(0x23263a)))
+                .debug_selector(move || {
+                    format!("workspace-archive-{project_index}-{workspace_index}")
+                })
+                .when(archive_disabled, |s| s.opacity(0.5))
+                .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, app| {
+                    if archive_disabled {
+                        return;
+                    }
+
+                    let receiver = window.prompt(
+                        PromptLevel::Warning,
+                        "Archive workspace?",
+                        Some("This will remove the git worktree on disk."),
+                        &[PromptButton::ok("Archive"), PromptButton::cancel("Cancel")],
+                        app,
+                    );
+
+                    let view_handle = view_handle.clone();
+                    app.spawn(move |cx: &mut gpui::AsyncApp| {
+                        let mut async_cx = cx.clone();
+                        async move {
+                            let Ok(choice) = receiver.await else {
+                                return;
+                            };
+                            if choice != 0 {
+                                return;
+                            }
+                            let _ = view_handle.update(
+                                &mut async_cx,
+                                |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                                    view.dispatch(
+                                        Action::ArchiveWorkspace { workspace_id },
+                                        view_cx,
+                                    );
+                                },
+                            );
+                        }
+                    })
+                    .detach();
+                })
+                .child(if archive_disabled { "…" } else { "Archive" }),
+        );
+
+    row.into_any_element()
+}
+
+fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement {
+    let content = match state.main_pane {
+        MainPane::None => div()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_color(rgb(0xffffff)).child("Welcome"))
+            .child(
+                div()
+                    .text_color(rgb(0xbac3d4))
+                    .child("Select a workspace to begin."),
+            )
+            .into_any_element(),
+        MainPane::ProjectSettings(project_id) => {
+            let title = state
+                .project(project_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Project".to_owned());
+
+            div()
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_color(rgb(0xffffff)).child(title))
+                .child(div().text_color(rgb(0xbac3d4)).child("No settings yet."))
+                .into_any_element()
+        }
+        MainPane::Workspace(workspace_id) => {
+            let Some(workspace) = state.workspace(workspace_id) else {
+                return div()
+                    .p_3()
+                    .child(div().text_color(rgb(0xff5c5c)).child("Workspace not found"))
+                    .into_any_element();
+            };
+
+            div()
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(rgb(0xffffff))
+                        .child(workspace.workspace_name.clone()),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(0xbac3d4))
+                        .child(format!("Branch: {}", workspace.branch_name)),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(0x6c7485))
+                        .child(format!("Worktree: {}", workspace.worktree_path.display())),
+                )
+                .child(
+                    div()
+                        .mt_3()
+                        .p_2()
+                        .rounded_md()
+                        .bg(rgb(0x11131d))
+                        .border_1()
+                        .border_color(rgb(0x23263a))
+                        .child("Agent interaction placeholder"),
+                )
+                .into_any_element()
+        }
+    };
+
+    div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(0x0f111a))
+        .child(
+            div()
+                .h(px(44.0))
+                .px_3()
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_b_1()
+                .border_color(rgb(0x23263a))
+                .child(div().text_color(rgb(0xffffff)).child("Workspace")),
+        )
+        .when_some(state.last_error.clone(), |s, message| {
+            let view_handle = cx.entity().downgrade();
+            s.child(
+                div()
+                    .mx_3()
+                    .mt_3()
+                    .p_2()
+                    .rounded_md()
+                    .bg(rgb(0x2a1b1b))
+                    .border_1()
+                    .border_color(rgb(0xff5c5c))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().child(message))
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .bg(rgb(0x3a2323))
+                            .hover(|st| st.bg(rgb(0x4a2b2b)))
+                            .debug_selector(|| "error-dismiss".to_owned())
+                            .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _, app| {
+                                let _ = view_handle.update(app, |view, cx| {
+                                    view.dispatch(Action::ClearError, cx);
+                                });
+                            })
+                            .child("Dismiss"),
+                    ),
+            )
+        })
+        .child(content)
         .into_any_element()
+}
+
+fn workspace_context(state: &AppState, workspace_id: WorkspaceId) -> Option<(PathBuf, PathBuf)> {
+    for project in &state.projects {
+        for workspace in &project.workspaces {
+            if workspace.id == workspace_id && workspace.status == WorkspaceStatus::Active {
+                return Some((project.path.clone(), workspace.worktree_path.clone()));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::Modifiers;
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct FakeService;
+
+    impl ProjectWorkspaceService for FakeService {
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+        ) -> Result<CreatedWorkspace, String> {
+            Ok(CreatedWorkspace {
+                workspace_name: "abandon-about".to_owned(),
+                branch_name: "luban/abandon-about".to_owned(),
+                worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+            })
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[gpui::test]
+    async fn clicking_project_header_toggles_expanded(cx: &mut gpui::TestAppContext) {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::ToggleProjectExpanded { project_id });
+
+        let (view, cx) = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        cx.refresh().unwrap();
+
+        let bounds = cx
+            .debug_bounds("project-header-0")
+            .expect("missing debug bounds for project-header-0");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.refresh().unwrap();
+
+        let expanded = view.read_with(cx, |v, _| v.debug_state().projects[0].expanded);
+        assert!(!expanded);
+    }
+
+    #[gpui::test]
+    async fn archiving_workspace_shows_prompt_and_updates_state(cx: &mut gpui::TestAppContext) {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::ToggleProjectExpanded { project_id });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+
+        let (view, cx) = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        cx.refresh().unwrap();
+
+        let bounds = cx
+            .debug_bounds("workspace-archive-0-0")
+            .expect("missing debug bounds for workspace-archive-0-0");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+
+        let status = view.read_with(cx, |v, _| v.debug_state().projects[0].workspaces[0].status);
+        assert_eq!(status, WorkspaceStatus::Active);
+
+        let bounds = cx
+            .debug_bounds("workspace-archive-0-0")
+            .expect("missing debug bounds for workspace-archive-0-0");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Archive");
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+
+        let status = view.read_with(cx, |v, _| v.debug_state().projects[0].workspaces[0].status);
+        assert_eq!(status, WorkspaceStatus::Archived);
+    }
 }

@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+bip39.workspace = true
 gpui.workspace = true
 luban_ui = { path = "../luban_ui" }
-
+rand.workspace = true
