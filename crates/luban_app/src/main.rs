@@ -1,17 +1,19 @@
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_component::{Root, Theme, ThemeMode};
-use luban_ui::LubanRootView;
+use gpui_component_assets::Assets;
+use luban_ui::{LubanRootView, apply_linear_theme};
 
 mod services;
 use services::GitWorkspaceService;
 
 fn init_components(cx: &mut App) {
     gpui_component::init(cx);
+    apply_linear_theme(cx);
     Theme::change(ThemeMode::Light, None, cx);
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    Application::new().with_assets(Assets).run(|cx: &mut App| {
         init_components(cx);
 
         let services = GitWorkspaceService::new().expect("failed to init services");
@@ -43,6 +45,12 @@ mod tests {
 
         cx.read(|app| {
             assert_eq!(Theme::global(app).mode, ThemeMode::Light);
+            assert_eq!(Theme::global(app).font_size, px(14.0));
+            assert_eq!(Theme::global(app).radius, px(8.0));
+            assert_eq!(
+                Theme::global(app).theme_name().as_ref(),
+                "Luban Linear Light"
+            );
         });
     }
 }

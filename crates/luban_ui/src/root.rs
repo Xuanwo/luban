@@ -1,12 +1,15 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, PromptButton, PromptLevel, Window, div, px,
+    AnyElement, Context, ElementId, IntoElement, MouseButton, PromptButton, PromptLevel,
+    SharedString, Window, div, px, rems,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, StyledExt as _,
     button::*,
     collapsible::Collapsible,
     input::{Input, InputEvent, InputState},
+    spinner::Spinner,
+    text::{TextView, TextViewStyle},
 };
 use luban_domain::{
     Action, AppState, CodexThreadEvent, CodexThreadItem, ConversationSnapshot, Effect, MainPane,
@@ -164,6 +167,9 @@ impl LubanRootView {
             self.expanded_agent_turns.remove(id);
         } else {
             self.expanded_agent_turns.insert(id.to_owned());
+            let prefix = format!("{id}::");
+            self.expanded_agent_items
+                .retain(|item_id| !item_id.starts_with(&prefix));
         }
     }
 
@@ -499,14 +505,13 @@ impl LubanRootView {
 impl gpui::Render for LubanRootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let sidebar_width = px(340.0);
+        let sidebar_width = px(300.0);
 
         div()
             .size_full()
             .flex()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .text_sm()
             .child(render_sidebar(cx, &self.state, sidebar_width))
             .child(self.render_main(window, cx))
     }
@@ -520,6 +525,45 @@ fn render_sidebar(
     let theme = cx.theme();
     let view_handle = cx.entity().downgrade();
 
+    let add_project_button = Button::new("add-project")
+        .ghost()
+        .compact()
+        .icon(Icon::new(IconName::Plus).text_color(theme.muted_foreground))
+        .tooltip("Add project")
+        .on_click(move |_, _window, app| {
+            let view_handle = view_handle.clone();
+            let options = gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some("Add Project".into()),
+            };
+
+            let receiver = app.prompt_for_paths(options);
+            app.spawn(move |cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let Ok(result) = receiver.await else {
+                        return;
+                    };
+                    let Ok(Some(mut paths)) = result else {
+                        return;
+                    };
+                    let Some(path) = paths.pop() else {
+                        return;
+                    };
+
+                    let _ = view_handle.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(Action::AddProject { path }, view_cx);
+                        },
+                    );
+                }
+            })
+            .detach();
+        });
+
     div()
         .w(sidebar_width)
         .h_full()
@@ -532,56 +576,23 @@ fn render_sidebar(
         .border_color(theme.sidebar_border)
         .child(
             div()
-                .h(px(44.0))
-                .px_3()
+                .h(px(40.0))
+                .px_2()
                 .flex()
                 .items_center()
                 .justify_between()
                 .border_b_1()
                 .border_color(theme.sidebar_border)
-                .child(div().child("Projects"))
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .text_xs()
+                        .child("PROJECTS"),
+                )
                 .child(
                     div()
                         .debug_selector(|| "add-project".to_owned())
-                        .child(
-                            Button::new("add-project")
-                                .ghost()
-                                .compact()
-                                .label("+")
-                                .on_click(move |_, _window, app| {
-                                    let view_handle = view_handle.clone();
-                                    let options = gpui::PathPromptOptions {
-                                        files: false,
-                                        directories: true,
-                                        multiple: false,
-                                        prompt: Some("Add Project".into()),
-                                    };
-
-                                    let receiver = app.prompt_for_paths(options);
-                                    app.spawn(move |cx: &mut gpui::AsyncApp| {
-                                        let mut async_cx = cx.clone();
-                                        async move {
-                                            let Ok(result) = receiver.await else {
-                                                return;
-                                            };
-                                            let Ok(Some(mut paths)) = result else {
-                                                return;
-                                            };
-                                            let Some(path) = paths.pop() else {
-                                                return;
-                                            };
-
-                                            let _ = view_handle.update(
-                                                &mut async_cx,
-                                                |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
-                                                    view.dispatch(Action::AddProject { path }, view_cx);
-                                                },
-                                            );
-                                        }
-                                    })
-                                    .detach();
-                                }),
-                        ),
+                        .child(add_project_button),
                 ),
         )
         .child(
@@ -590,9 +601,13 @@ fn render_sidebar(
                 .id("projects-scroll")
                 .overflow_scroll()
                 .py_2()
-                .children(state.projects.iter().enumerate().map(|(i, project)| {
-                    render_project(cx, i, project, state.main_pane)
-                })),
+                .children(
+                    state
+                        .projects
+                        .iter()
+                        .enumerate()
+                        .map(|(i, project)| render_project(cx, i, project, state.main_pane)),
+                ),
         )
 }
 
@@ -605,25 +620,38 @@ fn render_project(
     let theme = cx.theme();
     let is_selected = matches!(main_pane, MainPane::ProjectSettings(id) if id == project.id);
     let view_handle = cx.entity().downgrade();
+    let project_id = project.id;
 
-    let disclosure = if project.expanded { "▾" } else { "▸" };
-    let create_label = match project.create_workspace_status {
-        OperationStatus::Idle => "+",
-        OperationStatus::Running => "…",
+    let disclosure_icon = if project.expanded {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
     };
+    let create_loading = matches!(project.create_workspace_status, OperationStatus::Running);
 
+    let selection_border = if is_selected {
+        theme.primary
+    } else {
+        theme.transparent
+    };
     let header = div()
+        .mx_2()
+        .mt_1()
+        .h(px(32.0))
         .px_2()
-        .py_2()
         .flex()
         .items_center()
-        .gap_2()
+        .justify_between()
+        .rounded_md()
+        .border_l_2()
+        .border_color(selection_border)
         .bg(if is_selected {
             theme.sidebar_accent
         } else {
-            theme.sidebar
+            theme.transparent
         })
         .hover(move |s| s.bg(theme.sidebar_accent))
+        .group("")
         .text_color(if is_selected {
             theme.sidebar_accent_foreground
         } else {
@@ -640,7 +668,6 @@ fn render_project(
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener({
-                        let project_id = project.id;
                         move |this, _, _, cx| {
                             this.dispatch(Action::ToggleProjectExpanded { project_id }, cx)
                         }
@@ -648,54 +675,92 @@ fn render_project(
                 )
                 .child(
                     div()
-                        .w(px(16.0))
-                        .text_color(theme.muted_foreground)
-                        .debug_selector(move || format!("project-toggle-{project_index}"))
-                        .child(disclosure),
-                )
-                .child(div().child(project.name.clone())),
-        )
-        .child(
-            div()
-                .debug_selector(move || format!("project-create-workspace-{project_index}"))
-                .child(
-                    Button::new(format!("project-create-workspace-{project_index}"))
-                        .ghost()
-                        .compact()
-                        .disabled(matches!(
-                            project.create_workspace_status,
-                            OperationStatus::Running
-                        ))
-                        .label(create_label)
-                        .on_click({
-                            let view_handle = view_handle.clone();
-                            let project_id = project.id;
-                            move |_, _, app| {
-                                let _ = view_handle.update(app, |view, cx| {
-                                    view.dispatch(Action::CreateWorkspace { project_id }, cx);
-                                });
-                            }
-                        }),
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .max_w(px(220.0))
+                                .truncate()
+                                .text_lg()
+                                .font_semibold()
+                                .child(project.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(16.0))
+                                .debug_selector(move || format!("project-toggle-{project_index}"))
+                                .child(
+                                    Icon::new(disclosure_icon)
+                                        .with_size(Size::Small)
+                                        .text_color(theme.muted_foreground),
+                                ),
+                        ),
                 ),
         )
         .child(
-            div()
-                .debug_selector(move || format!("project-settings-{project_index}"))
-                .child(
-                    Button::new(format!("project-settings-{project_index}"))
-                        .ghost()
-                        .compact()
-                        .label("⋯")
-                        .on_click({
-                            let view_handle = view_handle.clone();
-                            let project_id = project.id;
-                            move |_, _, app| {
-                                let _ = view_handle.update(app, |view, cx| {
-                                    view.dispatch(Action::OpenProjectSettings { project_id }, cx);
-                                });
-                            }
-                        }),
-                ),
+            div().flex().items_center().gap_1().child(
+                div()
+                    .when(!create_loading, |s| s.invisible())
+                    .group_hover("", |s| s.visible())
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .debug_selector(move || {
+                                format!("project-create-workspace-{project_index}")
+                            })
+                            .child(
+                                Button::new(format!("project-create-workspace-{project_index}"))
+                                    .ghost()
+                                    .compact()
+                                    .disabled(create_loading)
+                                    .loading(create_loading)
+                                    .icon(
+                                        Icon::new(IconName::Plus)
+                                            .text_color(theme.muted_foreground),
+                                    )
+                                    .tooltip("Create workspace")
+                                    .on_click({
+                                        let view_handle = view_handle.clone();
+                                        move |_, _, app| {
+                                            let _ = view_handle.update(app, |view, cx| {
+                                                view.dispatch(
+                                                    Action::CreateWorkspace { project_id },
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(move || format!("project-settings-{project_index}"))
+                            .child(
+                                Button::new(format!("project-settings-{project_index}"))
+                                    .ghost()
+                                    .compact()
+                                    .icon(
+                                        Icon::new(IconName::Ellipsis)
+                                            .text_color(theme.muted_foreground),
+                                    )
+                                    .tooltip("Project settings")
+                                    .on_click({
+                                        let view_handle = view_handle.clone();
+                                        move |_, _, app| {
+                                            let _ = view_handle.update(app, |view, cx| {
+                                                view.dispatch(
+                                                    Action::OpenProjectSettings { project_id },
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }),
+                            ),
+                    ),
+            ),
         );
 
     let children = project
@@ -738,19 +803,34 @@ fn render_workspace_row(
     let is_selected = matches!(main_pane, MainPane::Workspace(id) if id == workspace.id);
     let workspace_id = workspace.id;
     let archive_disabled = workspace.archive_status == OperationStatus::Running;
+    let archive_icon = if archive_disabled {
+        IconName::LoaderCircle
+    } else {
+        IconName::Inbox
+    };
 
+    let selection_border = if is_selected {
+        theme.primary
+    } else {
+        theme.transparent
+    };
     let row = div()
+        .mx_2()
+        .h(px(30.0))
         .px_2()
-        .py_1()
         .flex()
         .items_center()
         .gap_2()
+        .rounded_md()
+        .border_l_2()
+        .border_color(selection_border)
         .bg(if is_selected {
             theme.sidebar_accent
         } else {
-            theme.sidebar
+            theme.transparent
         })
         .hover(move |s| s.bg(theme.sidebar_accent))
+        .group("")
         .text_color(if is_selected {
             theme.sidebar_accent_foreground
         } else {
@@ -770,20 +850,28 @@ fn render_workspace_row(
                         this.dispatch(Action::OpenWorkspace { workspace_id }, cx)
                     }),
                 )
-                .child(div().flex_1().child(workspace.workspace_name.clone()))
-                .child(div().text_color(theme.muted_foreground).child("—")),
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_base()
+                        .child(workspace.workspace_name.clone()),
+                ),
         )
         .child(
             div()
                 .debug_selector(move || {
                     format!("workspace-archive-{project_index}-{workspace_index}")
                 })
+                .when(!archive_disabled, |s| s.invisible())
+                .group_hover("", |s| s.visible())
                 .child(
                     Button::new(format!("workspace-archive-{project_index}-{workspace_index}"))
-                        .danger()
+                        .ghost()
                         .compact()
                         .disabled(archive_disabled)
-                        .label(if archive_disabled { "…" } else { "Archive" })
+                        .icon(Icon::new(archive_icon).text_color(theme.muted_foreground))
+                        .tooltip("Archive workspace")
                         .on_click(move |_, window, app| {
                             if archive_disabled {
                                 return;
@@ -836,12 +924,16 @@ impl LubanRootView {
             return input;
         }
 
-        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Message..."));
+        let input_state = cx.new(|cx| {
+            InputState::new(window, cx)
+                .auto_grow(4, 12)
+                .placeholder("Message... (\u{2318}\u{21a9} to send)")
+        });
 
         let subscription = cx.subscribe_in(&input_state, window, {
             let input_state = input_state.clone();
             move |this: &mut LubanRootView, _, ev: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { secondary: false } = ev {
+                if let InputEvent::PressEnter { secondary: true } = ev {
                     let text = input_state.read(cx).value().trim().to_owned();
                     if text.is_empty() {
                         return;
@@ -862,24 +954,15 @@ impl LubanRootView {
 
     fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let view_handle = cx.entity().downgrade();
+        let title = main_pane_title(&self.state, self.state.main_pane);
+        let show_title_bar = matches!(self.state.main_pane, MainPane::ProjectSettings(_));
 
         let content = match self.state.main_pane {
             MainPane::None => {
                 self.last_chat_workspace_id = None;
                 self.last_chat_item_count = 0;
 
-                div()
-                    .p_3()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(div().child("Welcome"))
-                    .child(
-                        div()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Select a workspace to begin."),
-                    )
-                    .into_any_element()
+                div().flex_1().into_any_element()
             }
             MainPane::ProjectSettings(project_id) => {
                 self.last_chat_workspace_id = None;
@@ -892,11 +975,13 @@ impl LubanRootView {
                     .unwrap_or_else(|| "Project".to_owned());
 
                 div()
-                    .p_3()
+                    .p_4()
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().child(title))
+                    .max_w(px(900.0))
+                    .mx_auto()
+                    .child(div().text_lg().child(title))
                     .child(
                         div()
                             .text_color(cx.theme().muted_foreground)
@@ -982,82 +1067,88 @@ impl LubanRootView {
                     .track_scroll(&self.chat_scroll_handle)
                     .overflow_x_hidden()
                     .w_full()
-                    .p_3()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .when_some(running_elapsed, |s, elapsed| {
-                        s.child(render_running_status_row(theme, elapsed))
-                    })
-                    .children(history_children)
-                    .children(in_progress_items.into_iter().map({
-                        let view_handle = view_handle.clone();
-                        let expanded = expanded.clone();
-                        move |item| render_codex_item(item, theme, true, &expanded, &view_handle)
-                    }))
-                    .when(is_running && !has_in_progress_items, |s| {
-                        s.child(
-                            div()
-                                .h(px(28.0))
-                                .w_full()
-                                .px_1()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    Icon::new(IconName::LoaderCircle)
-                                        .with_size(Size::Small)
-                                        .text_color(theme.muted_foreground),
-                                )
-                                .child(div().text_color(theme.muted_foreground).child("Thinking:"))
-                                .child(
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(900.0))
+                            .mx_auto()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .pb(px(160.0))
+                            .children(history_children)
+                            .children(in_progress_items.into_iter().map({
+                                let view_handle = view_handle.clone();
+                                let expanded = expanded.clone();
+                                move |item| {
+                                    render_codex_item(item, theme, true, &expanded, &view_handle)
+                                }
+                            }))
+                            .when_some(running_elapsed, |s, elapsed| {
+                                s.child(render_turn_duration_row(theme, elapsed, true))
+                            })
+                            .when(is_running && !has_in_progress_items, |s| {
+                                s.child(
                                     div()
-                                        .flex_1()
-                                        .truncate()
-                                        .text_color(theme.muted_foreground)
-                                        .child("…"),
-                                ),
-                        )
-                    });
+                                        .h(px(28.0))
+                                        .w_full()
+                                        .px_1()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Spinner::new()
+                                                .with_size(Size::Small)
+                                                .color(theme.muted_foreground),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(theme.muted_foreground)
+                                                .child("Thinking:"),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .truncate()
+                                                .text_color(theme.muted_foreground)
+                                                .child("…"),
+                                        ),
+                                )
+                            }),
+                    );
 
                 let composer = div()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .bg(theme.muted)
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_2()
-                    .child(div().flex_1().child(Input::new(&input_state)))
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .px_4()
+                    .pb_4()
                     .child(
-                        Button::new("agent-send")
-                            .compact()
-                            .label("Send")
-                            .disabled(is_running)
-                            .on_click({
-                                let input_state = input_state.clone();
-                                move |_, window, app| {
-                                    let text = input_state.read(app).value().trim().to_owned();
-                                    if text.is_empty() {
-                                        return;
-                                    }
-                                    input_state
-                                        .update(app, |state, cx| state.set_value("", window, cx));
-                                    let _ = view_handle.update(app, |view, cx| {
-                                        view.dispatch(
-                                            Action::SendAgentMessage { workspace_id, text },
-                                            cx,
-                                        );
-                                    });
-                                }
-                            }),
+                        div()
+                            .w_full()
+                            .max_w(px(900.0))
+                            .mx_auto()
+                            .p_2()
+                            .rounded_lg()
+                            .bg(theme.background)
+                            .border_1()
+                            .border_color(theme.border)
+                            .child(
+                                Input::new(&input_state)
+                                    .appearance(false)
+                                    .with_size(Size::Large)
+                                    .disabled(is_running),
+                            ),
                     );
 
                 div()
                     .flex()
                     .flex_col()
                     .h_full()
+                    .relative()
                     .child(history)
                     .child(composer)
                     .into_any_element()
@@ -1065,32 +1156,32 @@ impl LubanRootView {
         };
 
         let theme = cx.theme();
+        let title_bar = div()
+            .h(px(44.0))
+            .px_4()
+            .flex()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(theme.title_bar_border)
+            .bg(theme.title_bar)
+            .child(div().text_sm().child(title));
+
         div()
             .flex_1()
             .h_full()
             .flex()
             .flex_col()
             .bg(theme.background)
-            .child(
-                div()
-                    .h(px(44.0))
-                    .px_3()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(theme.title_bar_border)
-                    .bg(theme.title_bar)
-                    .child(div().child("Workspace")),
-            )
+            .when(show_title_bar, |s| s.child(title_bar))
             .when_some(self.state.last_error.clone(), |s, message| {
                 let theme = cx.theme();
                 let view_handle = cx.entity().downgrade();
                 s.child(
                     div()
-                        .mx_3()
+                        .mx_4()
                         .mt_3()
-                        .p_2()
+                        .p_3()
                         .rounded_md()
                         .bg(theme.danger)
                         .border_1()
@@ -1120,7 +1211,22 @@ impl LubanRootView {
     }
 }
 
+fn main_pane_title(state: &AppState, pane: MainPane) -> String {
+    match pane {
+        MainPane::None => String::new(),
+        MainPane::ProjectSettings(project_id) => state
+            .project(project_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Project Settings".to_owned()),
+        MainPane::Workspace(workspace_id) => state
+            .workspace(workspace_id)
+            .map(|w| w.workspace_name.clone())
+            .unwrap_or_else(|| "Workspace".to_owned()),
+    }
+}
+
 fn render_conversation_entry(
+    entry_index: usize,
     entry: &luban_domain::ConversationEntry,
     theme: &gpui_component::Theme,
     expanded_items: &HashSet<String>,
@@ -1128,39 +1234,54 @@ fn render_conversation_entry(
 ) -> AnyElement {
     match entry {
         luban_domain::ConversationEntry::UserMessage { text } => {
+            let markdown = chat_markdown_view(&format!("user-message-{entry_index}"), text);
             let bubble = div()
+                .max_w(px(680.0))
                 .p_2()
                 .rounded_md()
-                .bg(theme.secondary)
+                .bg(theme.accent)
                 .border_1()
                 .border_color(theme.border)
-                .child(
-                    div()
-                        .text_color(theme.secondary_foreground)
-                        .child(text.clone()),
-                );
+                .child(div().text_color(theme.foreground).child(markdown));
 
             div()
+                .id(format!("conversation-user-{entry_index}"))
                 .w_full()
                 .flex()
+                .flex_row()
                 .justify_end()
                 .child(bubble)
                 .into_any_element()
         }
-        luban_domain::ConversationEntry::CodexItem { item } => {
-            render_codex_item(item.as_ref(), theme, false, expanded_items, view_handle)
-        }
-        luban_domain::ConversationEntry::TurnUsage { usage: _ } => {
-            div().hidden().into_any_element()
-        }
+        luban_domain::ConversationEntry::CodexItem { item } => div()
+            .id(format!(
+                "conversation-codex-{}-{entry_index}",
+                codex_item_id(item)
+            ))
+            .w_full()
+            .child(render_codex_item(
+                item.as_ref(),
+                theme,
+                false,
+                expanded_items,
+                view_handle,
+            ))
+            .into_any_element(),
+        luban_domain::ConversationEntry::TurnUsage { usage: _ } => div()
+            .id(format!("conversation-usage-{entry_index}"))
+            .hidden()
+            .into_any_element(),
         luban_domain::ConversationEntry::TurnDuration { duration_ms } => div()
-            .text_color(theme.muted_foreground)
-            .child(format!(
-                "Time: {}",
-                format_duration_compact(Duration::from_millis(*duration_ms))
+            .debug_selector(move || format!("turn-duration-{entry_index}"))
+            .id(format!("conversation-duration-{entry_index}"))
+            .child(render_turn_duration_row(
+                theme,
+                Duration::from_millis(*duration_ms),
+                false,
             ))
             .into_any_element(),
         luban_domain::ConversationEntry::TurnError { message } => div()
+            .id(format!("conversation-error-{entry_index}"))
             .p_2()
             .rounded_md()
             .bg(theme.danger)
@@ -1170,6 +1291,11 @@ fn render_conversation_entry(
             .child(div().child(message.clone()))
             .into_any_element(),
     }
+}
+
+fn min_width_zero(mut element: gpui::Div) -> gpui::Div {
+    element.style().min_size.width = Some(px(0.0).into());
+    element
 }
 
 fn build_workspace_history_children(
@@ -1196,6 +1322,8 @@ fn build_workspace_history_children(
             return;
         }
 
+        let turn_container_id = turn.id.clone();
+        let turn_id = turn.id.clone();
         let expanded = expanded_turns.contains(&turn.id);
         let header = render_agent_turn_summary_row(
             &turn.id,
@@ -1206,18 +1334,29 @@ fn build_workspace_history_children(
             theme,
             view_handle,
         );
-        let content = div().pl_4().flex().flex_col().gap_2().children(
-            turn.ops
-                .into_iter()
-                .map(|item| render_codex_item(item, theme, false, expanded_items, view_handle)),
-        );
+        let content = div()
+            .pl_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(turn.ops.into_iter().map({
+                let turn_id = turn_id.clone();
+                move |item| {
+                    render_tool_summary_item(&turn_id, item, theme, expanded_items, view_handle)
+                }
+            }));
 
         children.push(
-            Collapsible::new()
-                .open(expanded)
+            div()
+                .id(format!("conversation-turn-{turn_container_id}"))
                 .w_full()
-                .child(header)
-                .content(content)
+                .child(
+                    Collapsible::new()
+                        .open(expanded)
+                        .w_full()
+                        .child(header)
+                        .content(content),
+                )
                 .into_any_element(),
         );
 
@@ -1232,7 +1371,7 @@ fn build_workspace_history_children(
         }
     };
 
-    for entry in entries {
+    for (entry_index, entry) in entries.iter().enumerate() {
         match entry {
             luban_domain::ConversationEntry::UserMessage { text: _ } => {
                 if let Some(turn) = current_turn.take() {
@@ -1240,6 +1379,7 @@ fn build_workspace_history_children(
                 }
 
                 children.push(render_conversation_entry(
+                    entry_index,
                     entry,
                     theme,
                     expanded_items,
@@ -1265,8 +1405,8 @@ fn build_workspace_history_children(
 
                     if codex_item_is_tool_call(item) {
                         turn.tool_calls += 1;
+                        turn.ops.push(item);
                     }
-                    turn.ops.push(item);
                     continue;
                 }
 
@@ -1289,6 +1429,7 @@ fn build_workspace_history_children(
                     flush_turn(turn, &mut children);
                 }
                 children.push(render_conversation_entry(
+                    entry_index,
                     entry,
                     theme,
                     expanded_items,
@@ -1314,48 +1455,146 @@ fn render_agent_turn_summary_row(
     theme: &gpui_component::Theme,
     view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
+    let debug_id = format!("agent-turn-summary-{id}");
     let row = div()
+        .debug_selector(move || debug_id.clone())
         .h(px(28.0))
         .w_full()
-        .px_1()
+        .px_2()
         .flex()
         .items_center()
-        .gap_2();
+        .gap_2()
+        .group("");
 
-    let row = if has_ops {
-        let icon = if expanded {
-            IconName::ChevronDown
-        } else {
-            IconName::ChevronRight
-        };
-        let tooltip = if expanded { "Hide" } else { "Show" };
-        let id = id.to_owned();
-        let view_handle = view_handle.clone();
-        row.child(
-            Button::new(format!("agent-turn-toggle-{id}"))
-                .ghost()
-                .compact()
-                .icon(icon)
-                .tooltip(tooltip)
-                .on_click(move |_, _, app| {
-                    let _ = view_handle.update(app, |view, cx| {
-                        view.toggle_agent_turn_expanded(&id);
-                        cx.notify();
-                    });
-                }),
-        )
+    let disclosure_icon = if expanded {
+        IconName::ChevronDown
     } else {
-        row.child(div().w(px(16.0)))
+        IconName::ChevronRight
     };
 
     row.child(
         div()
-            .flex_1()
-            .truncate()
-            .text_color(theme.muted_foreground)
-            .child(format!("{tool_calls} tool calls, {messages} messages")),
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(min_width_zero(
+                div()
+                    .max_w(px(520.0))
+                    .truncate()
+                    .text_left()
+                    .text_color(theme.muted_foreground)
+                    .child(format!("{tool_calls} tool calls, {messages} messages")),
+            ))
+            .child(div().w(px(16.0)).when(has_ops, |s| {
+                let id = id.to_owned();
+                let view_handle = view_handle.clone();
+                let debug_id = format!("agent-turn-toggle-{id}");
+                s.debug_selector(move || debug_id.clone())
+                    .invisible()
+                    .when(expanded, |s| s.visible())
+                    .group_hover("", |s| s.visible())
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, _, app| {
+                        let _ = view_handle.update(app, |view, cx| {
+                            view.toggle_agent_turn_expanded(&id);
+                            cx.notify();
+                        });
+                    })
+                    .child(
+                        Icon::new(disclosure_icon)
+                            .with_size(Size::Small)
+                            .text_color(theme.muted_foreground),
+                    )
+            })),
     )
     .into_any_element()
+}
+
+fn render_tool_summary_item(
+    turn_id: &str,
+    item: &CodexThreadItem,
+    theme: &gpui_component::Theme,
+    expanded_items: &HashSet<String>,
+    view_handle: &gpui::WeakEntity<LubanRootView>,
+) -> AnyElement {
+    let item_id = codex_item_id(item);
+    let item_key = format!("{turn_id}::{item_id}");
+    let expanded = expanded_items.contains(&item_key);
+    let element_id = format!("conversation-turn-item-{}", item_key.replace("::", "-"));
+
+    let (title, summary) = codex_item_summary(item, false);
+    let icon = Icon::new(codex_item_icon_name(item))
+        .with_size(Size::Small)
+        .text_color(theme.muted_foreground);
+
+    let disclosure_icon = if expanded {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    };
+
+    let view_handle = view_handle.clone();
+    let item_key_for_click = item_key.clone();
+    let header = div()
+        .h(px(28.0))
+        .w_full()
+        .px_2()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .group("")
+        .child(icon)
+        .child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(format!("{title}:")),
+        )
+        .child(min_width_zero(
+            div()
+                .max_w(px(760.0))
+                .truncate()
+                .text_color(theme.muted_foreground)
+                .child(summary),
+        ))
+        .child(
+            div()
+                .w(px(16.0))
+                .invisible()
+                .when(expanded, |s| s.visible())
+                .group_hover("", |s| s.visible())
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, app| {
+                    let _ = view_handle.update(app, |view, cx| {
+                        view.toggle_agent_item_expanded(&item_key_for_click);
+                        cx.notify();
+                    });
+                })
+                .child(
+                    Icon::new(disclosure_icon)
+                        .with_size(Size::Small)
+                        .text_color(theme.muted_foreground),
+                ),
+        );
+
+    let details = div()
+        .w_full()
+        .overflow_x_hidden()
+        .whitespace_normal()
+        .pl_6()
+        .child(render_codex_item_details(item, theme));
+
+    div()
+        .id(element_id)
+        .w_full()
+        .child(
+            Collapsible::new()
+                .open(expanded)
+                .w_full()
+                .child(header)
+                .content(details),
+        )
+        .into_any_element()
 }
 
 fn render_codex_item(
@@ -1365,14 +1604,16 @@ fn render_codex_item(
     expanded_items: &HashSet<String>,
     view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
-    if !in_progress && let CodexThreadItem::AgentMessage { text, .. } = item {
+    if !in_progress && let CodexThreadItem::AgentMessage { id, text } = item {
+        let markdown = chat_markdown_view(&format!("agent-message-{id}"), text);
         return div()
+            .id(format!("codex-agent-message-{id}"))
             .w_full()
-            .px_1()
+            .px_2()
             .py_1()
             .flex()
             .flex_col()
-            .child(div().text_color(theme.foreground).child(text.clone()))
+            .child(div().text_color(theme.foreground).child(markdown))
             .into_any_element();
     }
 
@@ -1410,10 +1651,19 @@ fn render_codex_item(
 
     if in_progress && !expanded && !always_expanded {
         let (label, text) = codex_item_compact_summary(item);
-        let item_icon = Icon::new(codex_item_icon_name(item))
-            .with_size(Size::Small)
-            .text_color(theme.muted_foreground);
+        let item_icon = if matches!(item, CodexThreadItem::Reasoning { .. }) {
+            Spinner::new()
+                .with_size(Size::Small)
+                .color(theme.muted_foreground)
+                .into_any_element()
+        } else {
+            Icon::new(codex_item_icon_name(item))
+                .with_size(Size::Small)
+                .text_color(theme.muted_foreground)
+                .into_any_element()
+        };
         return div()
+            .id(format!("codex-compact-{id}"))
             .h(px(28.0))
             .w_full()
             .px_1()
@@ -1426,13 +1676,13 @@ fn render_codex_item(
                     .text_color(theme.muted_foreground)
                     .child(format!("{label}:")),
             )
-            .child(
+            .child(min_width_zero(
                 div()
                     .flex_1()
                     .truncate()
                     .text_color(theme.muted_foreground)
                     .child(text),
-            )
+            ))
             .when_some(toggle_button, |s, b| s.child(b))
             .into_any_element();
     }
@@ -1448,33 +1698,48 @@ fn render_codex_item(
                 .flex_col()
                 .gap_1()
                 .child(div().text_color(theme.muted_foreground).child(title))
-                .child(div().child(summary)),
+                .child(min_width_zero(div().truncate().child(summary))),
         )
         .when_some(toggle_button, |s, b| s.child(b));
 
-    Collapsible::new()
-        .open(expanded)
-        .p_2()
-        .rounded_md()
-        .bg(theme.muted)
-        .border_1()
-        .border_color(theme.border)
-        .child(header)
-        .content(render_codex_item_details(item, theme))
+    div()
+        .id(format!("codex-item-{id}"))
+        .w_full()
+        .child(
+            Collapsible::new()
+                .open(expanded)
+                .p_2()
+                .rounded_md()
+                .bg(theme.secondary)
+                .border_1()
+                .border_color(theme.border)
+                .child(header)
+                .content(render_codex_item_details(item, theme)),
+        )
         .into_any_element()
 }
 
 fn render_codex_item_details(item: &CodexThreadItem, theme: &gpui_component::Theme) -> AnyElement {
     match item {
-        CodexThreadItem::AgentMessage { text, .. } => div()
-            .mt_2()
-            .child(div().child(text.clone()))
-            .into_any_element(),
-        CodexThreadItem::Reasoning { text, .. } => div()
-            .mt_2()
-            .text_color(theme.muted_foreground)
-            .child(text.clone())
-            .into_any_element(),
+        CodexThreadItem::AgentMessage { id, text } => {
+            let markdown = chat_markdown_view(&format!("agent-message-{id}-details"), text);
+            div()
+                .mt_2()
+                .w_full()
+                .overflow_x_hidden()
+                .child(markdown)
+                .into_any_element()
+        }
+        CodexThreadItem::Reasoning { id, text } => {
+            let markdown = chat_markdown_view(&format!("reasoning-{id}-details"), text)
+                .text_color(theme.muted_foreground);
+            div()
+                .mt_2()
+                .w_full()
+                .overflow_x_hidden()
+                .child(markdown)
+                .into_any_element()
+        }
         CodexThreadItem::CommandExecution {
             command,
             aggregated_output,
@@ -1482,13 +1747,19 @@ fn render_codex_item_details(item: &CodexThreadItem, theme: &gpui_component::The
             ..
         } => div()
             .mt_2()
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().child(command.clone()))
+            .child(div().whitespace_normal().child(command.clone()))
             .when(!aggregated_output.trim().is_empty(), |s| {
                 s.child(
                     div()
+                        .w_full()
+                        .overflow_x_hidden()
+                        .whitespace_normal()
                         .text_color(theme.muted_foreground)
                         .child(aggregated_output.clone()),
                 )
@@ -1496,6 +1767,7 @@ fn render_codex_item_details(item: &CodexThreadItem, theme: &gpui_component::The
             .when_some(*exit_code, |s, code| {
                 s.child(
                     div()
+                        .whitespace_normal()
                         .text_color(theme.muted_foreground)
                         .child(format!("Exit: {code}")),
                 )
@@ -1503,30 +1775,45 @@ fn render_codex_item_details(item: &CodexThreadItem, theme: &gpui_component::The
             .into_any_element(),
         CodexThreadItem::FileChange { changes, .. } => div()
             .mt_2()
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
             .flex()
             .flex_col()
             .gap_1()
             .children(changes.iter().map(|c| {
                 div()
+                    .w_full()
+                    .overflow_x_hidden()
+                    .whitespace_normal()
                     .text_color(theme.muted_foreground)
                     .child(format!("{:?}: {}", c.kind, c.path))
             }))
             .into_any_element(),
         CodexThreadItem::TodoList { items, .. } => div()
             .mt_2()
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
             .flex()
             .flex_col()
             .gap_1()
             .children(items.iter().map(|i| {
                 let prefix = if i.completed { "[x]" } else { "[ ]" };
                 div()
+                    .w_full()
+                    .overflow_x_hidden()
+                    .whitespace_normal()
                     .text_color(theme.muted_foreground)
                     .child(format!("{prefix} {}", i.text))
             }))
             .into_any_element(),
         CodexThreadItem::WebSearch { query, .. } => div()
             .mt_2()
-            .child(div().child(query.clone()))
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
+            .child(div().whitespace_normal().child(query.clone()))
             .into_any_element(),
         CodexThreadItem::McpToolCall {
             server,
@@ -1535,22 +1822,38 @@ fn render_codex_item_details(item: &CodexThreadItem, theme: &gpui_component::The
             ..
         } => div()
             .mt_2()
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().child(format!("{server}::{tool}")))
+            .child(div().whitespace_normal().child(format!("{server}::{tool}")))
             .child(
                 div()
+                    .whitespace_normal()
                     .text_color(theme.muted_foreground)
                     .child(format!("{status:?}")),
             )
             .into_any_element(),
         CodexThreadItem::Error { message, .. } => div()
             .mt_2()
+            .w_full()
+            .overflow_x_hidden()
+            .whitespace_normal()
             .text_color(theme.danger_foreground)
             .child(message.clone())
             .into_any_element(),
     }
+}
+
+fn chat_markdown_view(id: &str, source: &str) -> TextView {
+    TextView::markdown(
+        ElementId::Name(SharedString::from(format!("{id}-markdown"))),
+        source.to_owned(),
+    )
+    .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
+    .text_size(px(16.0))
 }
 
 fn codex_item_id(item: &CodexThreadItem) -> &str {
@@ -1581,7 +1884,7 @@ fn codex_item_summary(item: &CodexThreadItem, in_progress: bool) -> (&'static st
             if text.trim().is_empty() {
                 "…".to_owned()
             } else {
-                text.lines().next().unwrap_or("").to_owned()
+                collapse_inline_markdown_for_summary(text.lines().next().unwrap_or(""))
             },
         ),
         CodexThreadItem::CommandExecution {
@@ -1618,6 +1921,15 @@ fn codex_item_summary(item: &CodexThreadItem, in_progress: bool) -> (&'static st
     }
 }
 
+fn collapse_inline_markdown_for_summary(text: &str) -> String {
+    text.replace("**", "")
+        .replace("__", "")
+        .replace("`", "")
+        .replace('*', "")
+        .trim()
+        .to_owned()
+}
+
 fn codex_item_compact_summary(item: &CodexThreadItem) -> (&'static str, String) {
     match item {
         CodexThreadItem::AgentMessage { text, .. } => {
@@ -1627,7 +1939,7 @@ fn codex_item_compact_summary(item: &CodexThreadItem) -> (&'static str, String) 
             let summary = if text.trim().is_empty() {
                 "…".to_owned()
             } else {
-                text.lines().next().unwrap_or("").to_owned()
+                collapse_inline_markdown_for_summary(text.lines().next().unwrap_or(""))
             };
             ("Thinking", summary)
         }
@@ -1665,25 +1977,36 @@ fn codex_item_is_tool_call(item: &CodexThreadItem) -> bool {
     )
 }
 
-fn render_running_status_row(theme: &gpui_component::Theme, elapsed: Duration) -> AnyElement {
+fn render_turn_duration_row(
+    theme: &gpui_component::Theme,
+    elapsed: Duration,
+    in_progress: bool,
+) -> AnyElement {
+    let icon = if in_progress {
+        Spinner::new()
+            .with_size(Size::Small)
+            .color(theme.muted_foreground)
+            .into_any_element()
+    } else {
+        Icon::new(IconName::LoaderCircle)
+            .with_size(Size::Small)
+            .text_color(theme.muted_foreground)
+            .into_any_element()
+    };
     div()
-        .h(px(28.0))
+        .h(px(24.0))
         .w_full()
-        .px_1()
+        .px_2()
         .flex()
         .items_center()
         .gap_2()
-        .child(
-            Icon::new(IconName::LoaderCircle)
-                .with_size(Size::Small)
-                .text_color(theme.muted_foreground),
-        )
+        .text_color(theme.muted_foreground)
+        .child(icon)
         .child(
             div()
                 .flex_1()
                 .truncate()
-                .text_color(theme.muted_foreground)
-                .child(format!("Running: {}", format_duration_compact(elapsed))),
+                .child(format_duration_compact(elapsed)),
         )
         .into_any_element()
 }
@@ -1750,6 +2073,7 @@ fn workspace_agent_context(
 mod tests {
     use super::*;
     use gpui::Modifiers;
+    use luban_domain::ConversationEntry;
     use std::sync::Arc;
 
     #[derive(Default)]
@@ -1870,6 +2194,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn main_pane_title_tracks_selected_context() {
+        let mut state = AppState::new();
+        assert_eq!(main_pane_title(&state, MainPane::None), String::new());
+
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        let project_name = state.projects[0].name.clone();
+
+        assert_eq!(
+            main_pane_title(&state, MainPane::ProjectSettings(project_id)),
+            project_name
+        );
+
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        assert_eq!(
+            main_pane_title(&state, MainPane::Workspace(workspace_id)),
+            "abandon-about".to_owned()
+        );
+    }
+
     #[gpui::test]
     async fn clicking_project_header_toggles_expanded(cx: &mut gpui::TestAppContext) {
         cx.update(gpui_component::init);
@@ -1918,6 +2272,12 @@ mod tests {
         let (view, cx) = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
         cx.refresh().unwrap();
 
+        let row_bounds = cx
+            .debug_bounds("workspace-row-0-0")
+            .expect("missing debug bounds for workspace-row-0-0");
+        cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::none());
+        cx.refresh().unwrap();
+
         let bounds = cx
             .debug_bounds("workspace-archive-0-0")
             .expect("missing debug bounds for workspace-archive-0-0");
@@ -1930,6 +2290,12 @@ mod tests {
         let status = view.read_with(cx, |v, _| v.debug_state().projects[0].workspaces[0].status);
         assert_eq!(status, WorkspaceStatus::Active);
 
+        let row_bounds = cx
+            .debug_bounds("workspace-row-0-0")
+            .expect("missing debug bounds for workspace-row-0-0");
+        cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::none());
+        cx.refresh().unwrap();
+
         let bounds = cx
             .debug_bounds("workspace-archive-0-0")
             .expect("missing debug bounds for workspace-archive-0-0");
@@ -1941,5 +2307,158 @@ mod tests {
 
         let status = view.read_with(cx, |v, _| v.debug_state().projects[0].workspaces[0].status);
         assert_eq!(status, WorkspaceStatus::Archived);
+    }
+
+    #[gpui::test]
+    async fn markdown_messages_render_in_workspace(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "Hello **world**\n\n- a\n- b\n\n`inline`".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "item-1".to_owned(),
+                            text: "Reply with a link: [gpui](https://example.com)".to_owned(),
+                        }),
+                    },
+                ],
+            },
+        });
+
+        let _ = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        cx.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    async fn clicking_turn_summary_row_toggles_expanded(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "Test".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::CommandExecution {
+                            id: "item-1".to_owned(),
+                            command: "echo hello".to_owned(),
+                            aggregated_output: "hello".to_owned(),
+                            exit_code: Some(0),
+                            status: luban_domain::CodexCommandExecutionStatus::Completed,
+                        }),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "item-2".to_owned(),
+                            text: "Reply".to_owned(),
+                        }),
+                    },
+                ],
+            },
+        });
+
+        let (view, cx) = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        cx.refresh().unwrap();
+
+        let expanded = view.read_with(cx, |v, _| v.expanded_agent_turns.contains("agent-turn-0"));
+        assert!(!expanded);
+
+        let toggle_bounds = cx
+            .debug_bounds("agent-turn-toggle-agent-turn-0")
+            .expect("missing debug bounds for agent-turn-toggle-agent-turn-0");
+        cx.simulate_mouse_move(toggle_bounds.center(), None, Modifiers::none());
+        cx.refresh().unwrap();
+        cx.simulate_click(toggle_bounds.center(), Modifiers::none());
+        cx.refresh().unwrap();
+
+        let expanded = view.read_with(cx, |v, _| v.expanded_agent_turns.contains("agent-turn-0"));
+        assert!(expanded);
+    }
+
+    #[gpui::test]
+    async fn turn_duration_renders_below_messages(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "Test".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "item-1".to_owned(),
+                            text: "Reply".to_owned(),
+                        }),
+                    },
+                    ConversationEntry::TurnDuration { duration_ms: 6300 },
+                ],
+            },
+        });
+
+        let (_, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        let bounds = window_cx
+            .debug_bounds("turn-duration-2")
+            .expect("missing debug bounds for turn-duration-2");
+        assert!(bounds.size.width > px(0.0));
     }
 }
