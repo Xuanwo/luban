@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ProjectId(u64);
@@ -23,6 +26,166 @@ pub enum WorkspaceStatus {
 pub enum OperationStatus {
     Idle,
     Running,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexCommandExecutionStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexPatchChangeKind {
+    Add,
+    Delete,
+    Update,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodexFileUpdateChange {
+    pub path: String,
+    pub kind: CodexPatchChangeKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexPatchApplyStatus {
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexMcpToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodexErrorMessage {
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodexTodoItem {
+    pub text: String,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum CodexThreadItem {
+    #[serde(rename = "agent_message")]
+    AgentMessage { id: String, text: String },
+    #[serde(rename = "reasoning")]
+    Reasoning { id: String, text: String },
+    #[serde(rename = "command_execution")]
+    CommandExecution {
+        id: String,
+        command: String,
+        aggregated_output: String,
+        exit_code: Option<i32>,
+        status: CodexCommandExecutionStatus,
+    },
+    #[serde(rename = "file_change")]
+    FileChange {
+        id: String,
+        changes: Vec<CodexFileUpdateChange>,
+        status: CodexPatchApplyStatus,
+    },
+    #[serde(rename = "mcp_tool_call")]
+    McpToolCall {
+        id: String,
+        server: String,
+        tool: String,
+        arguments: serde_json::Value,
+        result: Option<serde_json::Value>,
+        error: Option<CodexErrorMessage>,
+        status: CodexMcpToolCallStatus,
+    },
+    #[serde(rename = "web_search")]
+    WebSearch { id: String, query: String },
+    #[serde(rename = "todo_list")]
+    TodoList {
+        id: String,
+        items: Vec<CodexTodoItem>,
+    },
+    #[serde(rename = "error")]
+    Error { id: String, message: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodexUsage {
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodexThreadError {
+    pub message: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum CodexThreadEvent {
+    #[serde(rename = "thread.started")]
+    ThreadStarted { thread_id: String },
+    #[serde(rename = "turn.started")]
+    TurnStarted,
+    #[serde(rename = "turn.completed")]
+    TurnCompleted { usage: CodexUsage },
+    #[serde(rename = "turn.duration")]
+    TurnDuration { duration_ms: u64 },
+    #[serde(rename = "turn.failed")]
+    TurnFailed { error: CodexThreadError },
+
+    #[serde(rename = "item.started")]
+    ItemStarted { item: CodexThreadItem },
+    #[serde(rename = "item.updated")]
+    ItemUpdated { item: CodexThreadItem },
+    #[serde(rename = "item.completed")]
+    ItemCompleted { item: CodexThreadItem },
+
+    #[serde(rename = "error")]
+    Error { message: String },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConversationEntry {
+    UserMessage { text: String },
+    CodexItem { item: Box<CodexThreadItem> },
+    TurnUsage { usage: Option<CodexUsage> },
+    TurnDuration { duration_ms: u64 },
+    TurnError { message: String },
+}
+
+fn entry_is_same_codex_item(entry: &ConversationEntry, item: &CodexThreadItem) -> bool {
+    match entry {
+        ConversationEntry::CodexItem { item: existing } => {
+            codex_item_id(existing) == codex_item_id(item)
+        }
+        _ => false,
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ConversationSnapshot {
+    pub thread_id: Option<String>,
+    pub entries: Vec<ConversationEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceConversation {
+    pub thread_id: Option<String>,
+    pub entries: Vec<ConversationEntry>,
+    pub run_status: OperationStatus,
+    pub in_progress_items: BTreeMap<String, CodexThreadItem>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +217,7 @@ pub struct AppState {
 
     pub projects: Vec<Project>,
     pub main_pane: MainPane,
+    pub conversations: HashMap<WorkspaceId, WorkspaceConversation>,
     pub last_error: Option<String>,
 }
 
@@ -97,13 +261,47 @@ pub enum Action {
         message: String,
     },
 
+    ConversationLoaded {
+        workspace_id: WorkspaceId,
+        snapshot: ConversationSnapshot,
+    },
+    ConversationLoadFailed {
+        workspace_id: WorkspaceId,
+        message: String,
+    },
+    SendAgentMessage {
+        workspace_id: WorkspaceId,
+        text: String,
+    },
+    AgentEventReceived {
+        workspace_id: WorkspaceId,
+        event: CodexThreadEvent,
+    },
+    AgentTurnFinished {
+        workspace_id: WorkspaceId,
+    },
+
     ClearError,
 }
 
 #[derive(Clone, Debug)]
 pub enum Effect {
-    CreateWorkspace { project_id: ProjectId },
-    ArchiveWorkspace { workspace_id: WorkspaceId },
+    CreateWorkspace {
+        project_id: ProjectId,
+    },
+    ArchiveWorkspace {
+        workspace_id: WorkspaceId,
+    },
+    EnsureConversation {
+        workspace_id: WorkspaceId,
+    },
+    LoadConversation {
+        workspace_id: WorkspaceId,
+    },
+    RunAgentTurn {
+        workspace_id: WorkspaceId,
+        text: String,
+    },
 }
 
 impl AppState {
@@ -113,6 +311,7 @@ impl AppState {
             next_workspace_id: 1,
             projects: Vec::new(),
             main_pane: MainPane::None,
+            conversations: HashMap::new(),
             last_error: None,
         }
     }
@@ -175,11 +374,21 @@ impl AppState {
                 branch_name,
                 worktree_path,
             } => {
-                self.insert_workspace(project_id, &workspace_name, &branch_name, worktree_path);
+                let workspace_id =
+                    self.insert_workspace(project_id, &workspace_name, &branch_name, worktree_path);
                 if let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id) {
                     project.create_workspace_status = OperationStatus::Idle;
                 }
-                Vec::new()
+                self.conversations.insert(
+                    workspace_id,
+                    WorkspaceConversation {
+                        thread_id: None,
+                        entries: Vec::new(),
+                        run_status: OperationStatus::Idle,
+                        in_progress_items: BTreeMap::new(),
+                    },
+                );
+                vec![Effect::EnsureConversation { workspace_id }]
             }
             Action::WorkspaceCreateFailed {
                 project_id,
@@ -194,7 +403,7 @@ impl AppState {
 
             Action::OpenWorkspace { workspace_id } => {
                 self.main_pane = MainPane::Workspace(workspace_id);
-                Vec::new()
+                vec![Effect::LoadConversation { workspace_id }]
             }
             Action::ArchiveWorkspace { workspace_id } => {
                 if let Some((project_idx, workspace_idx)) =
@@ -238,6 +447,125 @@ impl AppState {
                 Vec::new()
             }
 
+            Action::ConversationLoaded {
+                workspace_id,
+                snapshot,
+            } => {
+                self.conversations.insert(
+                    workspace_id,
+                    WorkspaceConversation {
+                        thread_id: snapshot.thread_id,
+                        entries: snapshot.entries,
+                        run_status: OperationStatus::Idle,
+                        in_progress_items: BTreeMap::new(),
+                    },
+                );
+                Vec::new()
+            }
+            Action::ConversationLoadFailed {
+                workspace_id: _,
+                message,
+            } => {
+                self.last_error = Some(message);
+                Vec::new()
+            }
+            Action::SendAgentMessage { workspace_id, text } => {
+                let conversation = self.conversations.entry(workspace_id).or_insert_with(|| {
+                    WorkspaceConversation {
+                        thread_id: None,
+                        entries: Vec::new(),
+                        run_status: OperationStatus::Idle,
+                        in_progress_items: BTreeMap::new(),
+                    }
+                });
+
+                if conversation.run_status == OperationStatus::Running {
+                    return Vec::new();
+                }
+
+                conversation
+                    .entries
+                    .push(ConversationEntry::UserMessage { text: text.clone() });
+                conversation.run_status = OperationStatus::Running;
+                conversation.in_progress_items.clear();
+                vec![Effect::RunAgentTurn { workspace_id, text }]
+            }
+            Action::AgentEventReceived {
+                workspace_id,
+                event,
+            } => {
+                let conversation = self.conversations.entry(workspace_id).or_insert_with(|| {
+                    WorkspaceConversation {
+                        thread_id: None,
+                        entries: Vec::new(),
+                        run_status: OperationStatus::Idle,
+                        in_progress_items: BTreeMap::new(),
+                    }
+                });
+
+                match event {
+                    CodexThreadEvent::ThreadStarted { thread_id } => {
+                        conversation.thread_id = Some(thread_id);
+                    }
+                    CodexThreadEvent::TurnStarted => {}
+                    CodexThreadEvent::TurnCompleted { usage } => {
+                        let _ = usage;
+                        conversation.run_status = OperationStatus::Idle;
+                        conversation.in_progress_items.clear();
+                    }
+                    CodexThreadEvent::TurnDuration { duration_ms } => {
+                        conversation
+                            .entries
+                            .push(ConversationEntry::TurnDuration { duration_ms });
+                    }
+                    CodexThreadEvent::TurnFailed { error } => {
+                        conversation.entries.push(ConversationEntry::TurnError {
+                            message: error.message.clone(),
+                        });
+                        conversation.run_status = OperationStatus::Idle;
+                        conversation.in_progress_items.clear();
+                        self.last_error = Some(error.message);
+                    }
+                    CodexThreadEvent::ItemStarted { item }
+                    | CodexThreadEvent::ItemUpdated { item } => {
+                        conversation
+                            .in_progress_items
+                            .insert(codex_item_id(&item).to_owned(), item);
+                    }
+                    CodexThreadEvent::ItemCompleted { item } => {
+                        conversation.in_progress_items.remove(codex_item_id(&item));
+                        let is_duplicate = conversation
+                            .entries
+                            .last()
+                            .is_some_and(|e| entry_is_same_codex_item(e, &item));
+                        if !is_duplicate {
+                            conversation.entries.push(ConversationEntry::CodexItem {
+                                item: Box::new(item),
+                            });
+                        }
+                    }
+                    CodexThreadEvent::Error { message } => {
+                        conversation.entries.push(ConversationEntry::TurnError {
+                            message: message.clone(),
+                        });
+                        conversation.run_status = OperationStatus::Idle;
+                        conversation.in_progress_items.clear();
+                        self.last_error = Some(message);
+                    }
+                }
+
+                Vec::new()
+            }
+            Action::AgentTurnFinished { workspace_id } => {
+                if let Some(conversation) = self.conversations.get_mut(&workspace_id)
+                    && conversation.run_status == OperationStatus::Running
+                {
+                    conversation.run_status = OperationStatus::Idle;
+                    conversation.in_progress_items.clear();
+                }
+                Vec::new()
+            }
+
             Action::ClearError => {
                 self.last_error = None;
                 Vec::new()
@@ -254,6 +582,13 @@ impl AppState {
             .iter()
             .flat_map(|p| &p.workspaces)
             .find(|w| w.id == workspace_id)
+    }
+
+    pub fn workspace_conversation(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<&WorkspaceConversation> {
+        self.conversations.get(&workspace_id)
     }
 
     fn add_project(&mut self, path: PathBuf) -> ProjectId {
@@ -344,6 +679,19 @@ impl Default for AppState {
     }
 }
 
+fn codex_item_id(item: &CodexThreadItem) -> &str {
+    match item {
+        CodexThreadItem::AgentMessage { id, .. } => id,
+        CodexThreadItem::Reasoning { id, .. } => id,
+        CodexThreadItem::CommandExecution { id, .. } => id,
+        CodexThreadItem::FileChange { id, .. } => id,
+        CodexThreadItem::McpToolCall { id, .. } => id,
+        CodexThreadItem::WebSearch { id, .. } => id,
+        CodexThreadItem::TodoList { id, .. } => id,
+        CodexThreadItem::Error { id, .. } => id,
+    }
+}
+
 fn sanitize_slug(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut prev_dash = false;
@@ -420,5 +768,69 @@ mod tests {
 
         let project = state.project(project_id).unwrap();
         assert_eq!(project.create_workspace_status, OperationStatus::Running);
+    }
+
+    #[test]
+    fn open_workspace_emits_conversation_load_effect() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        let effects = state.apply(Action::OpenWorkspace { workspace_id });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::LoadConversation { .. }));
+    }
+
+    #[test]
+    fn send_agent_message_sets_running_and_emits_effect() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        let effects = state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Hello".to_owned(),
+        });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::RunAgentTurn { .. }));
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.run_status, OperationStatus::Running);
+        assert_eq!(conversation.entries.len(), 1);
+        assert!(matches!(
+            &conversation.entries[0],
+            ConversationEntry::UserMessage { text } if text == "Hello"
+        ));
+    }
+
+    #[test]
+    fn agent_item_completed_is_idempotent() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Hello".to_owned(),
+        });
+
+        let item = CodexThreadItem::AgentMessage {
+            id: "item_0".to_owned(),
+            text: "Hi".to_owned(),
+        };
+
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemCompleted { item: item.clone() },
+        });
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemCompleted { item },
+        });
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        let completed_items = conversation
+            .entries
+            .iter()
+            .filter(|e| matches!(e, ConversationEntry::CodexItem { .. }))
+            .count();
+        assert_eq!(completed_items, 1);
     }
 }

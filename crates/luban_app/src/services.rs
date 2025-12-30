@@ -1,28 +1,55 @@
 use anyhow::{Context as _, anyhow};
 use bip39::Language;
+use luban_domain::{CodexThreadEvent, CodexThreadItem, ConversationEntry, ConversationSnapshot};
 use rand::{Rng as _, rngs::OsRng};
 use std::{
+    collections::HashSet,
     ffi::OsStr,
+    io::{BufRead as _, BufReader, Read as _, Write as _},
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use luban_ui::{CreatedWorkspace, ProjectWorkspaceService};
 
+fn codex_item_id(item: &CodexThreadItem) -> &str {
+    match item {
+        CodexThreadItem::AgentMessage { id, .. } => id,
+        CodexThreadItem::Reasoning { id, .. } => id,
+        CodexThreadItem::CommandExecution { id, .. } => id,
+        CodexThreadItem::FileChange { id, .. } => id,
+        CodexThreadItem::McpToolCall { id, .. } => id,
+        CodexThreadItem::WebSearch { id, .. } => id,
+        CodexThreadItem::TodoList { id, .. } => id,
+        CodexThreadItem::Error { id, .. } => id,
+    }
+}
+
 #[derive(Clone)]
 pub struct GitWorkspaceService {
     worktrees_root: PathBuf,
+    conversations_root: PathBuf,
+    agent_sidecar_dir: PathBuf,
 }
 
 impl GitWorkspaceService {
     pub fn new() -> anyhow::Result<Arc<Self>> {
         let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-        let mut worktrees_root = PathBuf::from(home);
-        worktrees_root.push("luban");
-        worktrees_root.push("worktrees");
+        let mut luban_root = PathBuf::from(home);
+        luban_root.push("luban");
 
-        Ok(Arc::new(Self { worktrees_root }))
+        let worktrees_root = luban_root.join("worktrees");
+        let conversations_root = luban_root.join("conversations");
+        let agent_sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("agent_sidecar");
+
+        Ok(Arc::new(Self {
+            worktrees_root,
+            conversations_root,
+            agent_sidecar_dir,
+        }))
     }
 
     fn run_git<I, S>(&self, repo_path: &Path, args: I) -> anyhow::Result<String>
@@ -110,6 +137,246 @@ impl GitWorkspaceService {
         path.push(project_slug);
         path.push(workspace_name);
         path
+    }
+
+    fn conversation_dir(&self, project_slug: &str, workspace_name: &str) -> PathBuf {
+        let mut path = self.conversations_root.clone();
+        path.push(project_slug);
+        path.push(workspace_name);
+        path
+    }
+
+    fn conversation_meta_path(&self, project_slug: &str, workspace_name: &str) -> PathBuf {
+        self.conversation_dir(project_slug, workspace_name)
+            .join("conversation.json")
+    }
+
+    fn conversation_events_path(&self, project_slug: &str, workspace_name: &str) -> PathBuf {
+        self.conversation_dir(project_slug, workspace_name)
+            .join("events.jsonl")
+    }
+
+    fn now_unix_seconds() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    fn ensure_sidecar_installed(&self) -> anyhow::Result<()> {
+        let node_modules = self.agent_sidecar_dir.join("node_modules");
+        if node_modules.is_dir() {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "missing Codex sidecar dependencies: run 'npm install' in {}",
+            self.agent_sidecar_dir.display()
+        ))
+    }
+
+    fn ensure_conversation_internal(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+    ) -> anyhow::Result<()> {
+        let dir = self.conversation_dir(project_slug, workspace_name);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create conversation dir {}", dir.display()))?;
+
+        let meta_path = self.conversation_meta_path(project_slug, workspace_name);
+        if !meta_path.exists() {
+            let meta = ConversationMeta {
+                version: 1,
+                thread_id: None,
+                created_at: Self::now_unix_seconds(),
+                updated_at: Self::now_unix_seconds(),
+            };
+            let content = serde_json::to_vec_pretty(&meta).context("failed to serialize meta")?;
+            std::fs::write(&meta_path, content)
+                .with_context(|| format!("failed to write {}", meta_path.display()))?;
+        }
+
+        let events_path = self.conversation_events_path(project_slug, workspace_name);
+        if !events_path.exists() {
+            std::fs::write(&events_path, "")
+                .with_context(|| format!("failed to write {}", events_path.display()))?;
+        }
+
+        Ok(())
+    }
+
+    fn read_conversation_meta(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+    ) -> anyhow::Result<ConversationMeta> {
+        let path = self.conversation_meta_path(project_slug, workspace_name);
+        let content =
+            std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        serde_json::from_slice(&content).context("failed to parse conversation meta")
+    }
+
+    fn write_conversation_meta(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+        meta: &ConversationMeta,
+    ) -> anyhow::Result<()> {
+        let path = self.conversation_meta_path(project_slug, workspace_name);
+        let content = serde_json::to_vec_pretty(meta).context("failed to serialize meta")?;
+        std::fs::write(&path, content)
+            .with_context(|| format!("failed to write {}", path.display()))
+    }
+
+    fn append_conversation_entries(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+        entries: &[ConversationEntry],
+    ) -> anyhow::Result<()> {
+        let path = self.conversation_events_path(project_slug, workspace_name);
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("failed to open {}", path.display()))?;
+
+        for entry in entries {
+            let line = serde_json::to_string(entry).context("failed to serialize entry")?;
+            file.write_all(line.as_bytes())
+                .context("failed to write entry")?;
+            file.write_all(b"\n").context("failed to write newline")?;
+        }
+
+        Ok(())
+    }
+
+    fn load_conversation_internal(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+    ) -> anyhow::Result<ConversationSnapshot> {
+        self.ensure_conversation_internal(project_slug, workspace_name)?;
+
+        let meta = self.read_conversation_meta(project_slug, workspace_name)?;
+        let events_path = self.conversation_events_path(project_slug, workspace_name);
+        let file = std::fs::File::open(&events_path)
+            .with_context(|| format!("failed to open {}", events_path.display()))?;
+        let reader = BufReader::new(file);
+
+        let mut entries = Vec::new();
+        for line in reader.lines() {
+            let line = line.context("failed to read line")?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let entry: ConversationEntry =
+                serde_json::from_str(trimmed).context("failed to parse entry")?;
+            if matches!(entry, ConversationEntry::TurnUsage { .. }) {
+                continue;
+            }
+            let is_duplicate = match (&entry, entries.last()) {
+                (
+                    ConversationEntry::CodexItem { item },
+                    Some(ConversationEntry::CodexItem { item: prev }),
+                ) => codex_item_id(item) == codex_item_id(prev),
+                _ => false,
+            };
+            if !is_duplicate {
+                entries.push(entry);
+            }
+        }
+
+        Ok(ConversationSnapshot {
+            thread_id: meta.thread_id,
+            entries,
+        })
+    }
+
+    fn run_codex_turn_streamed_via_sidecar(
+        &self,
+        thread_id: Option<String>,
+        worktree_path: &Path,
+        prompt: &str,
+        mut on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.ensure_sidecar_installed()?;
+
+        let script = self.agent_sidecar_dir.join("run.mjs");
+        let request = SidecarTurnRequest {
+            thread_id,
+            working_directory: worktree_path
+                .to_str()
+                .ok_or_else(|| anyhow!("invalid worktree path"))?
+                .to_owned(),
+            prompt: prompt.to_owned(),
+            sandbox_mode: "danger-full-access".to_owned(),
+            approval_policy: "never".to_owned(),
+            network_access_enabled: true,
+            web_search_enabled: true,
+            skip_git_repo_check: false,
+        };
+
+        let mut child = Command::new("node")
+            .arg(&script)
+            .current_dir(&self.agent_sidecar_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .with_context(|| format!("failed to spawn node for {}", script.display()))?;
+
+        let input = serde_json::to_vec(&request).context("failed to serialize request")?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("missing stdin"))?
+            .write_all(&input)
+            .context("failed to write stdin")?;
+        drop(child.stdin.take());
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("missing stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("missing stderr"))?;
+
+        let stderr_handle = std::thread::spawn(move || -> String {
+            let mut buf = Vec::new();
+            let mut reader = BufReader::new(stderr);
+            let _ = reader.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).to_string()
+        });
+
+        let stdout_reader = BufReader::new(stdout);
+        for line in stdout_reader.lines() {
+            let line = line.context("failed to read stdout line")?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let event: CodexThreadEvent =
+                serde_json::from_str(trimmed).context("failed to parse codex event")?;
+            on_event(event)?;
+        }
+
+        let status = child.wait().context("failed to wait for node")?;
+        let stderr_text = stderr_handle.join().unwrap_or_default();
+
+        if !status.success() {
+            return Err(anyhow!(
+                "codex sidecar failed ({}):\nstderr:\n{}",
+                status,
+                stderr_text.trim()
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -205,4 +472,210 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         })();
         result.map_err(|e| format!("{e:#}"))
     }
+
+    fn ensure_conversation(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+    ) -> Result<(), String> {
+        self.ensure_conversation_internal(&project_slug, &workspace_name)
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    fn load_conversation(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+    ) -> Result<ConversationSnapshot, String> {
+        self.load_conversation_internal(&project_slug, &workspace_name)
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    fn run_agent_turn_streamed(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        worktree_path: PathBuf,
+        thread_id: Option<String>,
+        prompt: String,
+        on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
+    ) -> Result<(), String> {
+        let turn_started_at = Instant::now();
+        let duration_appended = Arc::new(AtomicBool::new(false));
+        let mut appended_item_ids = HashSet::<String>::new();
+
+        let result: anyhow::Result<()> = (|| {
+            self.ensure_conversation_internal(&project_slug, &workspace_name)?;
+
+            self.append_conversation_entries(
+                &project_slug,
+                &workspace_name,
+                &[ConversationEntry::UserMessage {
+                    text: prompt.clone(),
+                }],
+            )?;
+
+            let existing_meta = self.read_conversation_meta(&project_slug, &workspace_name)?;
+            let resolved_thread_id = thread_id.or(existing_meta.thread_id.clone());
+
+            let mut meta = existing_meta;
+            let mut turn_error: Option<String> = None;
+            let duration_appended_for_events = duration_appended.clone();
+
+            self.run_codex_turn_streamed_via_sidecar(
+                resolved_thread_id,
+                &worktree_path,
+                &prompt,
+                |event| {
+                    on_event(event.clone());
+
+                    match &event {
+                        CodexThreadEvent::ThreadStarted { thread_id } => {
+                            if meta.thread_id.as_deref() != Some(thread_id.as_str()) {
+                                meta.thread_id = Some(thread_id.clone());
+                                meta.updated_at = Self::now_unix_seconds();
+                                self.write_conversation_meta(
+                                    &project_slug,
+                                    &workspace_name,
+                                    &meta,
+                                )?;
+                            }
+                        }
+                        CodexThreadEvent::ItemCompleted { item } => {
+                            let id = codex_item_id(item).to_owned();
+                            if appended_item_ids.insert(id) {
+                                self.append_conversation_entries(
+                                    &project_slug,
+                                    &workspace_name,
+                                    &[ConversationEntry::CodexItem {
+                                        item: Box::new(item.clone()),
+                                    }],
+                                )?;
+                            }
+                        }
+                        CodexThreadEvent::TurnCompleted { usage } => {
+                            let _ = usage;
+                            if duration_appended_for_events
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                self.append_conversation_entries(
+                                    &project_slug,
+                                    &workspace_name,
+                                    &[ConversationEntry::TurnDuration { duration_ms }],
+                                )?;
+                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                            }
+                        }
+                        CodexThreadEvent::TurnFailed { error } => {
+                            if turn_error.is_none() {
+                                turn_error = Some(error.message.clone());
+                            }
+                            self.append_conversation_entries(
+                                &project_slug,
+                                &workspace_name,
+                                &[ConversationEntry::TurnError {
+                                    message: error.message.clone(),
+                                }],
+                            )?;
+                            if duration_appended_for_events
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                self.append_conversation_entries(
+                                    &project_slug,
+                                    &workspace_name,
+                                    &[ConversationEntry::TurnDuration { duration_ms }],
+                                )?;
+                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                            }
+                        }
+                        CodexThreadEvent::Error { message } => {
+                            if turn_error.is_none() {
+                                turn_error = Some(message.clone());
+                            }
+                            self.append_conversation_entries(
+                                &project_slug,
+                                &workspace_name,
+                                &[ConversationEntry::TurnError {
+                                    message: message.clone(),
+                                }],
+                            )?;
+                            if duration_appended_for_events
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                self.append_conversation_entries(
+                                    &project_slug,
+                                    &workspace_name,
+                                    &[ConversationEntry::TurnDuration { duration_ms }],
+                                )?;
+                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                            }
+                        }
+                        CodexThreadEvent::TurnStarted
+                        | CodexThreadEvent::TurnDuration { .. }
+                        | CodexThreadEvent::ItemStarted { .. }
+                        | CodexThreadEvent::ItemUpdated { .. } => {}
+                    }
+
+                    Ok(())
+                },
+            )?;
+
+            if let Some(message) = turn_error {
+                return Err(anyhow!("{message}"));
+            }
+
+            Ok(())
+        })();
+
+        if let Err(err) = &result {
+            if duration_appended
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                let _ = self.append_conversation_entries(
+                    &project_slug,
+                    &workspace_name,
+                    &[ConversationEntry::TurnDuration { duration_ms }],
+                );
+                on_event(CodexThreadEvent::TurnDuration { duration_ms });
+            }
+            let _ = self.append_conversation_entries(
+                &project_slug,
+                &workspace_name,
+                &[ConversationEntry::TurnError {
+                    message: format!("{err:#}"),
+                }],
+            );
+        }
+
+        result.map_err(|e| format!("{e:#}"))
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct ConversationMeta {
+    version: u32,
+    thread_id: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarTurnRequest {
+    thread_id: Option<String>,
+    working_directory: String,
+    prompt: String,
+    sandbox_mode: String,
+    approval_policy: String,
+    network_access_enabled: bool,
+    web_search_enabled: bool,
+    skip_git_repo_check: bool,
 }

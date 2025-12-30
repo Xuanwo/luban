@@ -3093,18 +3093,26 @@ dependencies = [
  "bip39",
  "gpui",
  "gpui-component",
+ "luban_domain",
  "luban_ui",
  "rand 0.8.5",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "luban_domain"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "luban_ui"
 version = "0.1.0"
 dependencies = [
+ "async-channel 2.5.0",
  "gpui",
  "gpui-component",
  "luban_domain",

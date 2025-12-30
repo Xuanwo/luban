@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+async-channel.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 luban_domain = { path = "../luban_domain" }
