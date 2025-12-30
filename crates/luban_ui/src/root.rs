@@ -1,8 +1,8 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, PromptButton, PromptLevel,
-    Window, div, px, rgb,
+    AnyElement, Context, IntoElement, MouseButton, PromptButton, PromptLevel, Window, div, px,
 };
+use gpui_component::{ActiveTheme as _, Disableable as _, button::*};
 use luban_domain::{
     Action, AppState, Effect, MainPane, OperationStatus, ProjectId, WorkspaceId, WorkspaceStatus,
 };
@@ -172,13 +172,14 @@ impl LubanRootView {
 
 impl gpui::Render for LubanRootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
         let sidebar_width = px(340.0);
 
         div()
             .size_full()
             .flex()
-            .bg(rgb(0x0f111a))
-            .text_color(rgb(0xd7dae0))
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .text_sm()
             .child(render_sidebar(cx, &self.state, sidebar_width))
             .child(render_main(cx, &self.state))
@@ -190,6 +191,7 @@ fn render_sidebar(
     state: &AppState,
     sidebar_width: gpui::Pixels,
 ) -> impl IntoElement {
+    let theme = cx.theme();
     let view_handle = cx.entity().downgrade();
 
     div()
@@ -198,9 +200,10 @@ fn render_sidebar(
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .bg(rgb(0x11131d))
+        .bg(theme.sidebar)
+        .text_color(theme.sidebar_foreground)
         .border_r_1()
-        .border_color(rgb(0x23263a))
+        .border_color(theme.sidebar_border)
         .child(
             div()
                 .h(px(44.0))
@@ -209,51 +212,50 @@ fn render_sidebar(
                 .items_center()
                 .justify_between()
                 .border_b_1()
-                .border_color(rgb(0x23263a))
-                .child(div().text_color(rgb(0xffffff)).child("Projects"))
+                .border_color(theme.sidebar_border)
+                .child(div().child("Projects"))
                 .child(
                     div()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .bg(rgb(0x1a1d2c))
-                        .hover(|s| s.bg(rgb(0x23263a)))
                         .debug_selector(|| "add-project".to_owned())
-                        .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _window, app| {
-                            let view_handle = view_handle.clone();
-                            let options = gpui::PathPromptOptions {
-                                files: false,
-                                directories: true,
-                                multiple: false,
-                                prompt: Some("Add Project".into()),
-                            };
-
-                            let receiver = app.prompt_for_paths(options);
-                            app.spawn(move |cx: &mut gpui::AsyncApp| {
-                                let mut async_cx = cx.clone();
-                                async move {
-                                    let Ok(result) = receiver.await else {
-                                        return;
-                                    };
-                                    let Ok(Some(mut paths)) = result else {
-                                        return;
-                                    };
-                                    let Some(path) = paths.pop() else {
-                                        return;
+                        .child(
+                            Button::new("add-project")
+                                .ghost()
+                                .compact()
+                                .label("+")
+                                .on_click(move |_, _window, app| {
+                                    let view_handle = view_handle.clone();
+                                    let options = gpui::PathPromptOptions {
+                                        files: false,
+                                        directories: true,
+                                        multiple: false,
+                                        prompt: Some("Add Project".into()),
                                     };
 
-                                    let _ = view_handle.update(
-                                        &mut async_cx,
-                                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
-                                            view.dispatch(Action::AddProject { path }, view_cx);
-                                        },
-                                    );
-                                }
-                            })
-                            .detach();
-                        })
-                        .child("+"),
+                                    let receiver = app.prompt_for_paths(options);
+                                    app.spawn(move |cx: &mut gpui::AsyncApp| {
+                                        let mut async_cx = cx.clone();
+                                        async move {
+                                            let Ok(result) = receiver.await else {
+                                                return;
+                                            };
+                                            let Ok(Some(mut paths)) = result else {
+                                                return;
+                                            };
+                                            let Some(path) = paths.pop() else {
+                                                return;
+                                            };
+
+                                            let _ = view_handle.update(
+                                                &mut async_cx,
+                                                |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                                                    view.dispatch(Action::AddProject { path }, view_cx);
+                                                },
+                                            );
+                                        }
+                                    })
+                                    .detach();
+                                }),
+                        ),
                 ),
         )
         .child(
@@ -274,6 +276,7 @@ fn render_project(
     project: &luban_domain::Project,
     main_pane: MainPane,
 ) -> AnyElement {
+    let theme = cx.theme();
     let is_selected = matches!(main_pane, MainPane::ProjectSettings(id) if id == project.id);
     let view_handle = cx.entity().downgrade();
 
@@ -290,11 +293,16 @@ fn render_project(
         .items_center()
         .gap_2()
         .bg(if is_selected {
-            rgb(0x1a1d2c)
+            theme.sidebar_accent
         } else {
-            rgb(0x11131d)
+            theme.sidebar
         })
-        .hover(|s| s.bg(rgb(0x1a1d2c)))
+        .hover(move |s| s.bg(theme.sidebar_accent))
+        .text_color(if is_selected {
+            theme.sidebar_accent_foreground
+        } else {
+            theme.sidebar_foreground
+        })
         .debug_selector(move || format!("project-header-{project_index}"))
         .child(
             div()
@@ -315,7 +323,7 @@ fn render_project(
                 .child(
                     div()
                         .w(px(16.0))
-                        .text_color(rgb(0xbac3d4))
+                        .text_color(theme.muted_foreground)
                         .debug_selector(move || format!("project-toggle-{project_index}"))
                         .child(disclosure),
                 )
@@ -323,43 +331,45 @@ fn render_project(
         )
         .child(
             div()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .cursor_pointer()
-                .bg(rgb(0x11131d))
-                .hover(|s| s.bg(rgb(0x23263a)))
                 .debug_selector(move || format!("project-create-workspace-{project_index}"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener({
-                        let project_id = project.id;
-                        move |this, _, _, cx| {
-                            this.dispatch(Action::CreateWorkspace { project_id }, cx)
-                        }
-                    }),
-                )
-                .child(create_label),
+                .child(
+                    Button::new(format!("project-create-workspace-{project_index}"))
+                        .ghost()
+                        .compact()
+                        .disabled(matches!(
+                            project.create_workspace_status,
+                            OperationStatus::Running
+                        ))
+                        .label(create_label)
+                        .on_click({
+                            let view_handle = view_handle.clone();
+                            let project_id = project.id;
+                            move |_, _, app| {
+                                let _ = view_handle.update(app, |view, cx| {
+                                    view.dispatch(Action::CreateWorkspace { project_id }, cx);
+                                });
+                            }
+                        }),
+                ),
         )
         .child(
             div()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .cursor_pointer()
-                .bg(rgb(0x11131d))
-                .hover(|s| s.bg(rgb(0x23263a)))
                 .debug_selector(move || format!("project-settings-{project_index}"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener({
-                        let project_id = project.id;
-                        move |this, _, _, cx| {
-                            this.dispatch(Action::OpenProjectSettings { project_id }, cx)
-                        }
-                    }),
-                )
-                .child("⋯"),
+                .child(
+                    Button::new(format!("project-settings-{project_index}"))
+                        .ghost()
+                        .compact()
+                        .label("⋯")
+                        .on_click({
+                            let view_handle = view_handle.clone();
+                            let project_id = project.id;
+                            move |_, _, app| {
+                                let _ = view_handle.update(app, |view, cx| {
+                                    view.dispatch(Action::OpenProjectSettings { project_id }, cx);
+                                });
+                            }
+                        }),
+                ),
         );
 
     let children = project
@@ -398,6 +408,7 @@ fn render_workspace_row(
     workspace: &luban_domain::Workspace,
     main_pane: MainPane,
 ) -> AnyElement {
+    let theme = cx.theme();
     let is_selected = matches!(main_pane, MainPane::Workspace(id) if id == workspace.id);
     let workspace_id = workspace.id;
     let archive_disabled = workspace.archive_status == OperationStatus::Running;
@@ -409,11 +420,16 @@ fn render_workspace_row(
         .items_center()
         .gap_2()
         .bg(if is_selected {
-            rgb(0x1a1d2c)
+            theme.sidebar_accent
         } else {
-            rgb(0x11131d)
+            theme.sidebar
         })
-        .hover(|s| s.bg(rgb(0x1a1d2c)))
+        .hover(move |s| s.bg(theme.sidebar_accent))
+        .text_color(if is_selected {
+            theme.sidebar_accent_foreground
+        } else {
+            theme.sidebar_foreground
+        })
         .debug_selector(move || format!("workspace-row-{project_index}-{workspace_index}"))
         .child(
             div()
@@ -429,74 +445,73 @@ fn render_workspace_row(
                     }),
                 )
                 .child(div().flex_1().child(workspace.workspace_name.clone()))
-                .child(div().text_color(rgb(0x6c7485)).child("—")),
+                .child(div().text_color(theme.muted_foreground).child("—")),
         )
         .child(
             div()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .cursor_pointer()
-                .text_color(rgb(0xff5c5c))
-                .bg(rgb(0x11131d))
-                .hover(|s| s.bg(rgb(0x23263a)))
                 .debug_selector(move || {
                     format!("workspace-archive-{project_index}-{workspace_index}")
                 })
-                .when(archive_disabled, |s| s.opacity(0.5))
-                .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, app| {
-                    if archive_disabled {
-                        return;
-                    }
-
-                    let receiver = window.prompt(
-                        PromptLevel::Warning,
-                        "Archive workspace?",
-                        Some("This will remove the git worktree on disk."),
-                        &[PromptButton::ok("Archive"), PromptButton::cancel("Cancel")],
-                        app,
-                    );
-
-                    let view_handle = view_handle.clone();
-                    app.spawn(move |cx: &mut gpui::AsyncApp| {
-                        let mut async_cx = cx.clone();
-                        async move {
-                            let Ok(choice) = receiver.await else {
-                                return;
-                            };
-                            if choice != 0 {
+                .child(
+                    Button::new(format!("workspace-archive-{project_index}-{workspace_index}"))
+                        .danger()
+                        .compact()
+                        .disabled(archive_disabled)
+                        .label(if archive_disabled { "…" } else { "Archive" })
+                        .on_click(move |_, window, app| {
+                            if archive_disabled {
                                 return;
                             }
-                            let _ = view_handle.update(
-                                &mut async_cx,
-                                |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
-                                    view.dispatch(
-                                        Action::ArchiveWorkspace { workspace_id },
-                                        view_cx,
-                                    );
-                                },
+
+                            let receiver = window.prompt(
+                                PromptLevel::Warning,
+                                "Archive workspace?",
+                                Some("This will remove the git worktree on disk."),
+                                &[PromptButton::ok("Archive"), PromptButton::cancel("Cancel")],
+                                app,
                             );
-                        }
-                    })
-                    .detach();
-                })
-                .child(if archive_disabled { "…" } else { "Archive" }),
+
+                            let view_handle = view_handle.clone();
+                            app.spawn(move |cx: &mut gpui::AsyncApp| {
+                                let mut async_cx = cx.clone();
+                                async move {
+                                    let Ok(choice) = receiver.await else {
+                                        return;
+                                    };
+                                    if choice != 0 {
+                                        return;
+                                    }
+                                    let _ = view_handle.update(
+                                        &mut async_cx,
+                                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                                            view.dispatch(
+                                                Action::ArchiveWorkspace { workspace_id },
+                                                view_cx,
+                                            );
+                                        },
+                                    );
+                                }
+                            })
+                            .detach();
+                        }),
+                ),
         );
 
     row.into_any_element()
 }
 
 fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement {
+    let theme = cx.theme();
     let content = match state.main_pane {
         MainPane::None => div()
             .p_3()
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_color(rgb(0xffffff)).child("Welcome"))
+            .child(div().child("Welcome"))
             .child(
                 div()
-                    .text_color(rgb(0xbac3d4))
+                    .text_color(theme.muted_foreground)
                     .child("Select a workspace to begin."),
             )
             .into_any_element(),
@@ -511,15 +526,23 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(div().text_color(rgb(0xffffff)).child(title))
-                .child(div().text_color(rgb(0xbac3d4)).child("No settings yet."))
+                .child(div().child(title))
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child("No settings yet."),
+                )
                 .into_any_element()
         }
         MainPane::Workspace(workspace_id) => {
             let Some(workspace) = state.workspace(workspace_id) else {
                 return div()
                     .p_3()
-                    .child(div().text_color(rgb(0xff5c5c)).child("Workspace not found"))
+                    .child(
+                        div()
+                            .text_color(theme.danger_foreground)
+                            .child("Workspace not found"),
+                    )
                     .into_any_element();
             };
 
@@ -528,19 +551,15 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
                 .flex()
                 .flex_col()
                 .gap_2()
+                .child(div().child(workspace.workspace_name.clone()))
                 .child(
                     div()
-                        .text_color(rgb(0xffffff))
-                        .child(workspace.workspace_name.clone()),
-                )
-                .child(
-                    div()
-                        .text_color(rgb(0xbac3d4))
+                        .text_color(theme.muted_foreground)
                         .child(format!("Branch: {}", workspace.branch_name)),
                 )
                 .child(
                     div()
-                        .text_color(rgb(0x6c7485))
+                        .text_color(theme.muted_foreground)
                         .child(format!("Worktree: {}", workspace.worktree_path.display())),
                 )
                 .child(
@@ -548,9 +567,9 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
                         .mt_3()
                         .p_2()
                         .rounded_md()
-                        .bg(rgb(0x11131d))
+                        .bg(theme.muted)
                         .border_1()
-                        .border_color(rgb(0x23263a))
+                        .border_color(theme.border)
                         .child("Agent interaction placeholder"),
                 )
                 .into_any_element()
@@ -562,7 +581,7 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(0x0f111a))
+        .bg(theme.background)
         .child(
             div()
                 .h(px(44.0))
@@ -571,10 +590,12 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
                 .items_center()
                 .justify_between()
                 .border_b_1()
-                .border_color(rgb(0x23263a))
-                .child(div().text_color(rgb(0xffffff)).child("Workspace")),
+                .border_color(theme.title_bar_border)
+                .bg(theme.title_bar)
+                .child(div().child("Workspace")),
         )
         .when_some(state.last_error.clone(), |s, message| {
+            let theme = cx.theme();
             let view_handle = cx.entity().downgrade();
             s.child(
                 div()
@@ -582,28 +603,26 @@ fn render_main(cx: &mut Context<LubanRootView>, state: &AppState) -> AnyElement 
                     .mt_3()
                     .p_2()
                     .rounded_md()
-                    .bg(rgb(0x2a1b1b))
+                    .bg(theme.danger)
                     .border_1()
-                    .border_color(rgb(0xff5c5c))
+                    .border_color(theme.danger_hover)
                     .flex()
                     .items_center()
                     .justify_between()
+                    .text_color(theme.danger_foreground)
                     .child(div().child(message))
                     .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .bg(rgb(0x3a2323))
-                            .hover(|st| st.bg(rgb(0x4a2b2b)))
-                            .debug_selector(|| "error-dismiss".to_owned())
-                            .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _, app| {
-                                let _ = view_handle.update(app, |view, cx| {
-                                    view.dispatch(Action::ClearError, cx);
-                                });
-                            })
-                            .child("Dismiss"),
+                        div().debug_selector(|| "error-dismiss".to_owned()).child(
+                            Button::new("error-dismiss")
+                                .ghost()
+                                .compact()
+                                .label("Dismiss")
+                                .on_click(move |_, _, app| {
+                                    let _ = view_handle.update(app, |view, cx| {
+                                        view.dispatch(Action::ClearError, cx);
+                                    });
+                                }),
+                        ),
                     ),
             )
         })
@@ -655,6 +674,8 @@ mod tests {
 
     #[gpui::test]
     async fn clicking_project_header_toggles_expanded(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
         let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
 
         let mut state = AppState::new();
@@ -679,6 +700,8 @@ mod tests {
 
     #[gpui::test]
     async fn archiving_workspace_shows_prompt_and_updates_state(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
         let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
 
         let mut state = AppState::new();

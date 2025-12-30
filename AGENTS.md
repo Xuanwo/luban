@@ -56,6 +56,12 @@ Goal: UI is replaceable, logic is testable, and IO is isolated.
   - large allocations / sorting / traversing full datasets
   - uncontrollable lock contention
 
+### 3.3 gpui-component usage (required)
+- Use `gpui-component = "0.6.0-preview0"` as the component library.
+- If `0.6.0-preview0` is unavailable on crates.io, pin to the upstream git tag `v0.6.0-preview0`.
+- Prefer reusable components: when a suitable component exists in `gpui-component`, always use it instead of building a custom implementation.
+- Only implement custom components when `gpui-component` does not provide an equivalent.
+
 ## 4. State management and actions (recommended pattern, unless the repo already defines one)
 Prefer writing interactions as an "action-driven" state machine:
 - `State`: minimal state needed by the UI (serializable is better)

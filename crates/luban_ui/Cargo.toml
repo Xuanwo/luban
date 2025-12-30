@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 gpui.workspace = true
+gpui-component.workspace = true
 luban_domain = { path = "../luban_domain" }
 
 [dev-dependencies]
