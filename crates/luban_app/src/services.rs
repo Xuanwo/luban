@@ -20,6 +20,45 @@ use luban_ui::{CreatedWorkspace, ProjectWorkspaceService, RunAgentTurnRequest};
 
 const SIDECAR_EVENT_PREFIX: &str = "__LUBAN_EVENT__ ";
 
+fn contains_attempt_fraction(text: &str) -> bool {
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if !ch.is_ascii_digit() {
+            continue;
+        }
+
+        while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
+            let _ = chars.next();
+        }
+
+        if !matches!(chars.peek(), Some('/')) {
+            continue;
+        }
+        let _ = chars.next();
+
+        if !matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
+            continue;
+        }
+        return true;
+    }
+
+    false
+}
+
+fn is_transient_reconnect_notice(message: &str) -> bool {
+    let message = message.trim();
+    if message.is_empty() {
+        return false;
+    }
+
+    let lower = message.to_ascii_lowercase();
+    if !lower.contains("reconnecting") {
+        return false;
+    }
+
+    contains_attempt_fraction(&lower)
+}
+
 fn codex_item_id(item: &CodexThreadItem) -> &str {
     match item {
         CodexThreadItem::AgentMessage { id, .. } => id,
@@ -533,6 +572,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transient_reconnect_notice_detection_is_stable() {
+        assert!(is_transient_reconnect_notice("reconnecting ...1/5"));
+        assert!(is_transient_reconnect_notice("Reconnecting (12/100)"));
+        assert!(!is_transient_reconnect_notice("retry/reconnect"));
+        assert!(!is_transient_reconnect_notice("connection failed"));
+        assert!(!is_transient_reconnect_notice("reconnecting soon"));
+    }
+
+    #[test]
     fn sidecar_stdout_parsing_accepts_prefixed_events() {
         let parsed = parse_sidecar_stdout_line("__LUBAN_EVENT__ {\"type\":\"turn.started\"}")
             .expect("parse should succeed");
@@ -736,6 +784,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let resolved_thread_id = thread_id.or(existing_thread_id);
 
             let mut turn_error: Option<String> = None;
+            let mut transient_error_seq: u64 = 0;
             let duration_appended_for_events = duration_appended.clone();
 
             self.run_codex_turn_streamed_via_sidecar(
@@ -744,95 +793,128 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 &prompt,
                 cancel.clone(),
                 |event| {
-                    on_event(event.clone());
-
+                    let mut events_to_process = Vec::with_capacity(1);
                     match &event {
-                        CodexThreadEvent::ThreadStarted { thread_id } => {
-                            self.sqlite.set_conversation_thread_id(
-                                project_slug.clone(),
-                                workspace_name.clone(),
-                                thread_id.clone(),
-                            )?;
+                        CodexThreadEvent::Error { message }
+                            if is_transient_reconnect_notice(message) =>
+                        {
+                            transient_error_seq = transient_error_seq.saturating_add(1);
+                            events_to_process.push(CodexThreadEvent::ItemCompleted {
+                                item: CodexThreadItem::Error {
+                                    id: format!("transient-error-{transient_error_seq}"),
+                                    message: message.clone(),
+                                },
+                            });
                         }
-                        CodexThreadEvent::ItemCompleted { item } => {
-                            let id = codex_item_id(item).to_owned();
-                            if appended_item_ids.insert(id) {
+                        _ => events_to_process.push(event),
+                    }
+
+                    for event in events_to_process {
+                        on_event(event.clone());
+
+                        match &event {
+                            CodexThreadEvent::ThreadStarted { thread_id } => {
+                                self.sqlite.set_conversation_thread_id(
+                                    project_slug.clone(),
+                                    workspace_name.clone(),
+                                    thread_id.clone(),
+                                )?;
+                            }
+                            CodexThreadEvent::ItemCompleted { item } => {
+                                let id = codex_item_id(item).to_owned();
+                                if appended_item_ids.insert(id) {
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        vec![ConversationEntry::CodexItem {
+                                            item: Box::new(item.clone()),
+                                        }],
+                                    )?;
+                                }
+                            }
+                            CodexThreadEvent::TurnCompleted { usage } => {
+                                let _ = usage;
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        vec![ConversationEntry::TurnDuration { duration_ms }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
+                            }
+                            CodexThreadEvent::TurnFailed { error } => {
+                                if turn_error.is_none() {
+                                    turn_error = Some(error.message.clone());
+                                }
                                 self.sqlite.append_conversation_entries(
                                     project_slug.clone(),
                                     workspace_name.clone(),
-                                    vec![ConversationEntry::CodexItem {
-                                        item: Box::new(item.clone()),
+                                    vec![ConversationEntry::TurnError {
+                                        message: error.message.clone(),
                                     }],
                                 )?;
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        vec![ConversationEntry::TurnDuration { duration_ms }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
                             }
-                        }
-                        CodexThreadEvent::TurnCompleted { usage } => {
-                            let _ = usage;
-                            if duration_appended_for_events
-                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                            CodexThreadEvent::Error { message } => {
+                                if turn_error.is_none() {
+                                    turn_error = Some(message.clone());
+                                }
                                 self.sqlite.append_conversation_entries(
                                     project_slug.clone(),
                                     workspace_name.clone(),
-                                    vec![ConversationEntry::TurnDuration { duration_ms }],
+                                    vec![ConversationEntry::TurnError {
+                                        message: message.clone(),
+                                    }],
                                 )?;
-                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        vec![ConversationEntry::TurnDuration { duration_ms }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
                             }
+                            CodexThreadEvent::TurnStarted
+                            | CodexThreadEvent::TurnDuration { .. }
+                            | CodexThreadEvent::ItemStarted { .. }
+                            | CodexThreadEvent::ItemUpdated { .. } => {}
                         }
-                        CodexThreadEvent::TurnFailed { error } => {
-                            if turn_error.is_none() {
-                                turn_error = Some(error.message.clone());
-                            }
-                            self.sqlite.append_conversation_entries(
-                                project_slug.clone(),
-                                workspace_name.clone(),
-                                vec![ConversationEntry::TurnError {
-                                    message: error.message.clone(),
-                                }],
-                            )?;
-                            if duration_appended_for_events
-                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
-                                self.sqlite.append_conversation_entries(
-                                    project_slug.clone(),
-                                    workspace_name.clone(),
-                                    vec![ConversationEntry::TurnDuration { duration_ms }],
-                                )?;
-                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
-                            }
-                        }
-                        CodexThreadEvent::Error { message } => {
-                            if turn_error.is_none() {
-                                turn_error = Some(message.clone());
-                            }
-                            self.sqlite.append_conversation_entries(
-                                project_slug.clone(),
-                                workspace_name.clone(),
-                                vec![ConversationEntry::TurnError {
-                                    message: message.clone(),
-                                }],
-                            )?;
-                            if duration_appended_for_events
-                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                let duration_ms = turn_started_at.elapsed().as_millis() as u64;
-                                self.sqlite.append_conversation_entries(
-                                    project_slug.clone(),
-                                    workspace_name.clone(),
-                                    vec![ConversationEntry::TurnDuration { duration_ms }],
-                                )?;
-                                on_event(CodexThreadEvent::TurnDuration { duration_ms });
-                            }
-                        }
-                        CodexThreadEvent::TurnStarted
-                        | CodexThreadEvent::TurnDuration { .. }
-                        | CodexThreadEvent::ItemStarted { .. }
-                        | CodexThreadEvent::ItemUpdated { .. } => {}
                     }
 
                     Ok(())

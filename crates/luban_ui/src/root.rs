@@ -1900,6 +1900,11 @@ fn build_workspace_history_children(
                         continue;
                     }
 
+                    if matches!(item, CodexThreadItem::Error { .. }) {
+                        turn.summary_items.push(item);
+                        continue;
+                    }
+
                     if codex_item_is_tool_call(item) {
                         turn.tool_calls += 1;
                         turn.summary_items.push(item);
@@ -3171,6 +3176,60 @@ mod tests {
             v.expanded_agent_items.contains("agent-turn-0::item-1")
         });
         assert!(expanded);
+    }
+
+    #[gpui::test]
+    async fn turn_summary_includes_error_items(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "Test".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::Error {
+                            id: "err-1".to_owned(),
+                            message: "reconnecting ...1/5".to_owned(),
+                        }),
+                    },
+                ],
+            },
+        });
+
+        let (view, cx) = cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        cx.refresh().unwrap();
+
+        let row_bounds = cx
+            .debug_bounds("agent-turn-summary-agent-turn-0")
+            .expect("missing debug bounds for agent-turn-summary-agent-turn-0");
+        cx.simulate_click(row_bounds.center(), Modifiers::none());
+        cx.refresh().unwrap();
+
+        let expanded = view.read_with(cx, |v, _| v.expanded_agent_turns.contains("agent-turn-0"));
+        assert!(expanded);
+
+        let _ = cx
+            .debug_bounds("agent-turn-item-summary-agent-turn-0-err-1")
+            .expect("missing debug bounds for agent-turn-item-summary-agent-turn-0-err-1");
     }
 
     #[gpui::test]
