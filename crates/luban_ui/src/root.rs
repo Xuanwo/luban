@@ -92,9 +92,6 @@ pub struct LubanRootView {
     turn_generation: HashMap<WorkspaceId, u64>,
     turn_cancel_flags: HashMap<WorkspaceId, Arc<AtomicBool>>,
     chat_scroll_handle: gpui::ScrollHandle,
-    chat_unseen_counts: HashMap<WorkspaceId, usize>,
-    chat_last_seen_entries_len: HashMap<WorkspaceId, usize>,
-    chat_last_seen_in_progress_len: HashMap<WorkspaceId, usize>,
     last_chat_workspace_id: Option<WorkspaceId>,
     last_chat_item_count: usize,
     _subscriptions: Vec<gpui::Subscription>,
@@ -117,9 +114,6 @@ impl LubanRootView {
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
-            chat_unseen_counts: HashMap::new(),
-            chat_last_seen_entries_len: HashMap::new(),
-            chat_last_seen_in_progress_len: HashMap::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
             _subscriptions: Vec::new(),
@@ -150,9 +144,6 @@ impl LubanRootView {
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
-            chat_unseen_counts: HashMap::new(),
-            chat_last_seen_entries_len: HashMap::new(),
-            chat_last_seen_in_progress_len: HashMap::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
             _subscriptions: Vec::new(),
@@ -1252,14 +1243,12 @@ impl LubanRootView {
                 } else {
                     None
                 };
-                let tail_duration = running_elapsed
-                    .map(|elapsed| (elapsed, true))
-                    .or_else(|| {
-                        self.pending_turn_durations
-                            .get(&workspace_id)
-                            .copied()
-                            .map(|elapsed| (elapsed, false))
-                    });
+                let tail_duration = running_elapsed.map(|elapsed| (elapsed, true)).or_else(|| {
+                    self.pending_turn_durations
+                        .get(&workspace_id)
+                        .copied()
+                        .map(|elapsed| (elapsed, false))
+                });
 
                 let expanded = self.expanded_agent_items.clone();
                 let expanded_turns = self.expanded_agent_turns.clone();
@@ -1353,46 +1342,6 @@ impl LubanRootView {
                     &running_turn_summary_items,
                     force_expand_current_turn,
                 );
-
-                let pinned_to_bottom = {
-                    let offset = self.chat_scroll_handle.offset();
-                    let max_offset = self.chat_scroll_handle.max_offset();
-                    let threshold = if max_offset.height > px(24.0) {
-                        max_offset.height - px(24.0)
-                    } else {
-                        px(0.0)
-                    };
-                    (-offset.y) >= threshold
-                };
-
-                let prev_entries_len = self
-                    .chat_last_seen_entries_len
-                    .get(&workspace_id)
-                    .copied()
-                    .unwrap_or(entries_len);
-                let prev_in_progress_len = self
-                    .chat_last_seen_in_progress_len
-                    .get(&workspace_id)
-                    .copied()
-                    .unwrap_or(ordered_in_progress_items.len());
-                let mut unseen = self
-                    .chat_unseen_counts
-                    .get(&workspace_id)
-                    .copied()
-                    .unwrap_or(0);
-                if workspace_changed || pinned_to_bottom {
-                    unseen = 0;
-                } else {
-                    unseen += entries_len.saturating_sub(prev_entries_len);
-                    unseen += ordered_in_progress_items
-                        .len()
-                        .saturating_sub(prev_in_progress_len);
-                }
-                self.chat_unseen_counts.insert(workspace_id, unseen);
-                self.chat_last_seen_entries_len
-                    .insert(workspace_id, entries_len);
-                self.chat_last_seen_in_progress_len
-                    .insert(workspace_id, ordered_in_progress_items.len());
                 self.last_chat_workspace_id = Some(workspace_id);
                 self.last_chat_item_count = entries_len;
 
@@ -1434,57 +1383,13 @@ impl LubanRootView {
                             .pb(px(160.0))
                             .children(history_children)
                             .when_some(tail_duration, |s, (elapsed, running)| {
-                                s.child(render_turn_duration_row(theme, elapsed, running))
+                                s.child(
+                                    div()
+                                        .debug_selector(|| "chat-tail-turn-duration".to_owned())
+                                        .child(render_turn_duration_row(theme, elapsed, running)),
+                                )
                             }),
                     ));
-
-                let new_items_badge = {
-                    let unseen = self
-                        .chat_unseen_counts
-                        .get(&workspace_id)
-                        .copied()
-                        .unwrap_or(0);
-                    if unseen == 0 {
-                        div().hidden().into_any_element()
-                    } else {
-                        let view_handle = view_handle.clone();
-                        div()
-                            .debug_selector(|| "chat-new-items".to_owned())
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom(px(184.0))
-                            .flex()
-                            .justify_center()
-                            .child(
-                                Button::new("chat-new-items-button")
-                                    .primary()
-                                    .compact()
-                                    .label(format!("New ({unseen})"))
-                                    .tooltip("Scroll to latest")
-                                    .on_click(move |_, _, app| {
-                                        let _ = view_handle.update(app, |view, cx| {
-                                            view.chat_unseen_counts.insert(workspace_id, 0);
-                                            if let Some(conversation) =
-                                                view.state.workspace_conversation(workspace_id)
-                                            {
-                                                view.chat_last_seen_entries_len.insert(
-                                                    workspace_id,
-                                                    conversation.entries.len(),
-                                                );
-                                                view.chat_last_seen_in_progress_len.insert(
-                                                    workspace_id,
-                                                    conversation.in_progress_order.len(),
-                                                );
-                                            }
-                                            view.chat_scroll_handle.scroll_to_bottom();
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .into_any_element()
-                    }
-                };
 
                 let queue_panel = if !queued_prompts.is_empty() {
                     let theme = cx.theme();
@@ -1757,7 +1662,6 @@ impl LubanRootView {
                     .h_full()
                     .relative()
                     .child(history)
-                    .child(new_items_badge)
                     .child(composer)
                     .into_any_element()
             }
@@ -4055,6 +3959,170 @@ mod tests {
             .debug_bounds("turn-duration-2")
             .expect("missing debug bounds for turn-duration-2");
         assert!(bounds.size.width > px(0.0));
+    }
+
+    #[gpui::test]
+    async fn tail_turn_duration_renders_from_view_pending_state(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![ConversationEntry::UserMessage {
+                    text: "Test".to_owned(),
+                }],
+            },
+        });
+
+        let (view, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+
+        view.update(window_cx, |v, cx| {
+            v.pending_turn_durations
+                .insert(workspace_id, Duration::from_millis(1234));
+            cx.notify();
+        });
+        window_cx.refresh().unwrap();
+
+        let bounds = window_cx
+            .debug_bounds("chat-tail-turn-duration")
+            .expect("missing debug bounds for chat-tail-turn-duration");
+        assert!(bounds.size.width > px(0.0));
+    }
+
+    #[gpui::test]
+    async fn agent_messages_with_scoped_ids_render_in_multiple_turns(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "First".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "turn-a/item_0".to_owned(),
+                            text: "A".to_owned(),
+                        }),
+                    },
+                    ConversationEntry::TurnDuration { duration_ms: 1000 },
+                    ConversationEntry::UserMessage {
+                        text: "Second".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "turn-b/item_0".to_owned(),
+                            text: "B".to_owned(),
+                        }),
+                    },
+                    ConversationEntry::TurnDuration { duration_ms: 2000 },
+                ],
+            },
+        });
+
+        let (_, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        let a = window_cx
+            .debug_bounds("conversation-agent-message-agent-turn-0-turn-a/item_0")
+            .expect("missing agent message A");
+        let b = window_cx
+            .debug_bounds("conversation-agent-message-agent-turn-1-turn-b/item_0")
+            .expect("missing agent message B");
+        assert!(a.size.width > px(0.0));
+        assert!(b.size.width > px(0.0));
+    }
+
+    #[gpui::test]
+    async fn chat_new_items_badge_is_not_rendered(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "First".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "turn-a/item_0".to_owned(),
+                            text: "A".to_owned(),
+                        }),
+                    },
+                    ConversationEntry::TurnDuration { duration_ms: 1000 },
+                    ConversationEntry::UserMessage {
+                        text: "Second".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "turn-b/item_0".to_owned(),
+                            text: "B".to_owned(),
+                        }),
+                    },
+                ],
+            },
+        });
+
+        let (_, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        assert!(window_cx.debug_bounds("chat-new-items").is_none());
+        assert!(window_cx.debug_bounds("chat-new-items-button").is_none());
     }
 
     #[gpui::test]

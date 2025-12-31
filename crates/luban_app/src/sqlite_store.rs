@@ -793,4 +793,67 @@ mod tests {
             .count();
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn conversation_append_allows_same_raw_id_across_turns_when_scoped() {
+        let path = temp_db_path("conversation_append_allows_same_raw_id_across_turns_when_scoped");
+        let mut db = SqliteDatabase::open(&path).unwrap();
+
+        let snapshot = PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                slug: "p".to_owned(),
+                name: "P".to_owned(),
+                path: PathBuf::from("/tmp/p"),
+                workspaces: vec![PersistedWorkspace {
+                    id: 2,
+                    workspace_name: "w".to_owned(),
+                    branch_name: "luban/w".to_owned(),
+                    worktree_path: PathBuf::from("/tmp/p/worktrees/w"),
+                    status: WorkspaceStatus::Active,
+                    last_activity_at_unix_seconds: None,
+                }],
+            }],
+        };
+        db.save_app_state(&snapshot).unwrap();
+
+        db.ensure_conversation("p", "w").unwrap();
+
+        let entry_a = ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: "turn-a/item_0".to_owned(),
+                text: "A".to_owned(),
+            }),
+        };
+        let entry_b = ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: "turn-b/item_0".to_owned(),
+                text: "B".to_owned(),
+            }),
+        };
+
+        db.append_conversation_entries("p", "w", std::slice::from_ref(&entry_a))
+            .unwrap();
+        db.append_conversation_entries("p", "w", std::slice::from_ref(&entry_b))
+            .unwrap();
+
+        let snapshot = db.load_conversation("p", "w").unwrap();
+        let messages = snapshot
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ConversationEntry::CodexItem { item } => match item.as_ref() {
+                    CodexThreadItem::AgentMessage { id, text } => {
+                        Some((id.as_str(), text.as_str()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            vec![("turn-a/item_0", "A"), ("turn-b/item_0", "B")]
+        );
+    }
 }

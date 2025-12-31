@@ -1490,6 +1490,43 @@ mod tests {
     }
 
     #[test]
+    fn agent_item_completed_is_idempotent_even_if_not_last_entry() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Hello".to_owned(),
+        });
+
+        let item = CodexThreadItem::AgentMessage {
+            id: "item_0".to_owned(),
+            text: "Hi".to_owned(),
+        };
+
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemCompleted { item: item.clone() },
+        });
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::TurnDuration { duration_ms: 1000 },
+        });
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemCompleted { item },
+        });
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        let completed_items = conversation
+            .entries
+            .iter()
+            .filter(|e| matches!(e, ConversationEntry::CodexItem { .. }))
+            .count();
+        assert_eq!(completed_items, 1);
+    }
+
+    #[test]
     fn cancel_agent_turn_sets_idle_and_emits_effect() {
         let mut state = AppState::demo();
         let workspace_id = state.projects[0].workspaces[0].id;
