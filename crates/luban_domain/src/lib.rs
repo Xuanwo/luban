@@ -162,6 +162,7 @@ pub enum ConversationEntry {
     CodexItem { item: Box<CodexThreadItem> },
     TurnUsage { usage: Option<CodexUsage> },
     TurnDuration { duration_ms: u64 },
+    TurnCanceled,
     TurnError { message: String },
 }
 
@@ -280,6 +281,9 @@ pub enum Action {
     AgentTurnFinished {
         workspace_id: WorkspaceId,
     },
+    CancelAgentTurn {
+        workspace_id: WorkspaceId,
+    },
 
     ClearError,
 }
@@ -301,6 +305,9 @@ pub enum Effect {
     RunAgentTurn {
         workspace_id: WorkspaceId,
         text: String,
+    },
+    CancelAgentTurn {
+        workspace_id: WorkspaceId,
     },
 }
 
@@ -564,6 +571,18 @@ impl AppState {
                     conversation.in_progress_items.clear();
                 }
                 Vec::new()
+            }
+            Action::CancelAgentTurn { workspace_id } => {
+                let Some(conversation) = self.conversations.get_mut(&workspace_id) else {
+                    return Vec::new();
+                };
+                if conversation.run_status != OperationStatus::Running {
+                    return Vec::new();
+                }
+                conversation.run_status = OperationStatus::Idle;
+                conversation.in_progress_items.clear();
+                conversation.entries.push(ConversationEntry::TurnCanceled);
+                vec![Effect::CancelAgentTurn { workspace_id }]
             }
 
             Action::ClearError => {
@@ -832,5 +851,28 @@ mod tests {
             .filter(|e| matches!(e, ConversationEntry::CodexItem { .. }))
             .count();
         assert_eq!(completed_items, 1);
+    }
+
+    #[test]
+    fn cancel_agent_turn_sets_idle_and_emits_effect() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Hello".to_owned(),
+        });
+
+        let effects = state.apply(Action::CancelAgentTurn { workspace_id });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::CancelAgentTurn { .. }));
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.run_status, OperationStatus::Idle);
+        assert!(conversation.in_progress_items.is_empty());
+        assert!(matches!(
+            conversation.entries.last(),
+            Some(ConversationEntry::TurnCanceled)
+        ));
     }
 }

@@ -20,6 +20,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -27,6 +28,15 @@ pub struct CreatedWorkspace {
     pub workspace_name: String,
     pub branch_name: String,
     pub worktree_path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunAgentTurnRequest {
+    pub project_slug: String,
+    pub workspace_name: String,
+    pub worktree_path: PathBuf,
+    pub thread_id: Option<String>,
+    pub prompt: String,
 }
 
 pub trait ProjectWorkspaceService: Send + Sync {
@@ -56,11 +66,8 @@ pub trait ProjectWorkspaceService: Send + Sync {
 
     fn run_agent_turn_streamed(
         &self,
-        project_slug: String,
-        workspace_name: String,
-        worktree_path: PathBuf,
-        thread_id: Option<String>,
-        prompt: String,
+        request: RunAgentTurnRequest,
+        cancel: Arc<AtomicBool>,
         on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
     ) -> Result<(), String>;
 }
@@ -74,6 +81,8 @@ pub struct LubanRootView {
     chat_column_width: Option<Pixels>,
     running_turn_started_at: HashMap<WorkspaceId, Instant>,
     running_turn_tickers: HashSet<WorkspaceId>,
+    turn_generation: HashMap<WorkspaceId, u64>,
+    turn_cancel_flags: HashMap<WorkspaceId, Arc<AtomicBool>>,
     chat_scroll_handle: gpui::ScrollHandle,
     last_chat_workspace_id: Option<WorkspaceId>,
     last_chat_item_count: usize,
@@ -91,6 +100,8 @@ impl LubanRootView {
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            turn_generation: HashMap::new(),
+            turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
@@ -113,6 +124,8 @@ impl LubanRootView {
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            turn_generation: HashMap::new(),
+            turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
@@ -139,6 +152,7 @@ impl LubanRootView {
                     | CodexThreadEvent::Error { .. },
             }
             | Action::AgentTurnFinished { workspace_id } => Some(*workspace_id),
+            Action::CancelAgentTurn { workspace_id } => Some(*workspace_id),
             _ => None,
         };
 
@@ -164,6 +178,12 @@ impl LubanRootView {
         for effect in effects {
             self.run_effect(effect, cx);
         }
+    }
+
+    fn bump_turn_generation(&mut self, workspace_id: WorkspaceId) -> u64 {
+        let entry = self.turn_generation.entry(workspace_id).or_insert(0);
+        *entry += 1;
+        *entry
     }
 
     fn toggle_agent_turn_expanded(&mut self, id: &str) {
@@ -233,6 +253,12 @@ impl LubanRootView {
             }
             Effect::RunAgentTurn { workspace_id, text } => {
                 self.run_agent_turn(workspace_id, text, cx)
+            }
+            Effect::CancelAgentTurn { workspace_id } => {
+                self.bump_turn_generation(workspace_id);
+                if let Some(flag) = self.turn_cancel_flags.get(&workspace_id) {
+                    flag.store(true, Ordering::SeqCst);
+                }
             }
         }
     }
@@ -442,10 +468,22 @@ impl LubanRootView {
             return;
         };
 
+        let generation = self.bump_turn_generation(workspace_id);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        self.turn_cancel_flags
+            .insert(workspace_id, cancel_flag.clone());
+
         let thread_id = self
             .state
             .workspace_conversation(workspace_id)
             .and_then(|c| c.thread_id.clone());
+        let request = RunAgentTurnRequest {
+            project_slug: agent_context.project_slug,
+            workspace_name: agent_context.workspace_name,
+            worktree_path: agent_context.worktree_path,
+            thread_id,
+            prompt: text,
+        };
         let services = self.services.clone();
 
         cx.spawn(
@@ -462,14 +500,8 @@ impl LubanRootView {
                         });
 
                     std::thread::spawn(move || {
-                        let result = services.run_agent_turn_streamed(
-                            agent_context.project_slug,
-                            agent_context.workspace_name,
-                            agent_context.worktree_path,
-                            thread_id,
-                            text,
-                            on_event,
-                        );
+                        let result =
+                            services.run_agent_turn_streamed(request, cancel_flag, on_event);
 
                         if let Err(message) = result {
                             let _ = tx_for_error.send_blocking(CodexThreadEvent::Error { message });
@@ -482,13 +514,31 @@ impl LubanRootView {
                         let _ = this.update(
                             &mut async_cx,
                             |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                                let current_generation = view
+                                    .turn_generation
+                                    .get(&workspace_id)
+                                    .copied()
+                                    .unwrap_or(0);
+                                if current_generation != generation {
+                                    return;
+                                }
+
+                                let still_running = view
+                                    .state
+                                    .workspace_conversation(workspace_id)
+                                    .map(|c| c.run_status == OperationStatus::Running)
+                                    .unwrap_or(false);
+                                if !still_running {
+                                    return;
+                                }
+
                                 view.dispatch(
                                     Action::AgentEventReceived {
                                         workspace_id,
                                         event,
                                     },
                                     view_cx,
-                                )
+                                );
                             },
                         );
                     }
@@ -496,7 +546,15 @@ impl LubanRootView {
                     let _ = this.update(
                         &mut async_cx,
                         |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
-                            view.dispatch(Action::AgentTurnFinished { workspace_id }, view_cx)
+                            let current_generation = view
+                                .turn_generation
+                                .get(&workspace_id)
+                                .copied()
+                                .unwrap_or(0);
+                            if current_generation != generation {
+                                return;
+                            }
+                            view.dispatch(Action::AgentTurnFinished { workspace_id }, view_cx);
                         },
                     );
                 }
@@ -936,8 +994,11 @@ impl LubanRootView {
 
         let subscription = cx.subscribe_in(&input_state, window, {
             let input_state = input_state.clone();
-            move |this: &mut LubanRootView, _, ev: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { secondary: true } = ev {
+            move |this: &mut LubanRootView, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change => {
+                    cx.notify();
+                }
+                InputEvent::PressEnter { secondary: true } => {
                     let text = input_state.read(cx).value().trim().to_owned();
                     if text.is_empty() {
                         return;
@@ -948,6 +1009,7 @@ impl LubanRootView {
                     input_state.update(cx, |state, cx| state.set_value("", window, cx));
                     this.dispatch(Action::SendAgentMessage { workspace_id, text }, cx);
                 }
+                InputEvent::PressEnter { .. } | InputEvent::Focus | InputEvent::Blur => {}
             }
         });
 
@@ -1020,6 +1082,8 @@ impl LubanRootView {
                 let _thread_id = conversation.and_then(|c| c.thread_id.as_deref());
 
                 let is_running = run_status == OperationStatus::Running;
+                let draft = input_state.read(cx).value().trim().to_owned();
+                let send_disabled = draft.is_empty();
                 let running_elapsed = if is_running {
                     self.running_turn_started_at
                         .get(&workspace_id)
@@ -1166,10 +1230,66 @@ impl LubanRootView {
                             .border_1()
                             .border_color(theme.border)
                             .child(
-                                Input::new(&input_state)
-                                    .appearance(false)
-                                    .with_size(Size::Large)
-                                    .disabled(is_running),
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .items_end()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().child(
+                                            Input::new(&input_state)
+                                                .appearance(false)
+                                                .with_size(Size::Large)
+                                                .disabled(is_running),
+                                        ),
+                                    )
+                                    .child(if is_running {
+                                        let view_handle = view_handle.clone();
+                                        Button::new("chat-cancel-turn")
+                                            .danger()
+                                            .compact()
+                                            .icon(Icon::new(IconName::CircleX))
+                                            .tooltip("Cancel")
+                                            .on_click(move |_, _, app| {
+                                                let _ = view_handle.update(app, |view, cx| {
+                                                    view.dispatch(
+                                                        Action::CancelAgentTurn { workspace_id },
+                                                        cx,
+                                                    );
+                                                });
+                                            })
+                                            .into_any_element()
+                                    } else {
+                                        let view_handle = view_handle.clone();
+                                        let input_state = input_state.clone();
+                                        let draft = draft.clone();
+                                        Button::new("chat-send-message")
+                                            .primary()
+                                            .compact()
+                                            .disabled(send_disabled)
+                                            .icon(Icon::new(IconName::ArrowUp))
+                                            .tooltip("Send")
+                                            .on_click(move |_, window, app| {
+                                                if draft.trim().is_empty() {
+                                                    return;
+                                                }
+
+                                                input_state.update(app, |state, cx| {
+                                                    state.set_value("", window, cx);
+                                                });
+
+                                                let _ = view_handle.update(app, |view, cx| {
+                                                    view.dispatch(
+                                                        Action::SendAgentMessage {
+                                                            workspace_id,
+                                                            text: draft.clone(),
+                                                        },
+                                                        cx,
+                                                    );
+                                                });
+                                            })
+                                            .into_any_element()
+                                    }),
                             ),
                     );
 
@@ -1335,6 +1455,16 @@ fn render_conversation_entry(
                 Duration::from_millis(*duration_ms),
                 false,
             ))
+            .into_any_element(),
+        luban_domain::ConversationEntry::TurnCanceled => div()
+            .id(format!("conversation-canceled-{entry_index}"))
+            .p_2()
+            .rounded_md()
+            .bg(theme.muted)
+            .border_1()
+            .border_color(theme.border)
+            .text_color(theme.muted_foreground)
+            .child(div().child("Canceled"))
             .into_any_element(),
         luban_domain::ConversationEntry::TurnError { message } => div()
             .id(format!("conversation-error-{entry_index}"))
@@ -1508,6 +1638,7 @@ fn build_workspace_history_children(
                 }
             }
             luban_domain::ConversationEntry::TurnDuration { .. }
+            | luban_domain::ConversationEntry::TurnCanceled
             | luban_domain::ConversationEntry::TurnError { .. } => {
                 if let Some(turn) = current_turn.take() {
                     flush_turn(turn, &mut children);
@@ -2322,6 +2453,7 @@ mod tests {
     use gpui::{Modifiers, px, size};
     use luban_domain::ConversationEntry;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     #[derive(Default)]
     struct FakeService;
@@ -2368,14 +2500,11 @@ mod tests {
 
         fn run_agent_turn_streamed(
             &self,
-            _project_slug: String,
-            _workspace_name: String,
-            _worktree_path: PathBuf,
-            thread_id: Option<String>,
-            prompt: String,
+            request: RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
             on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
         ) -> Result<(), String> {
-            let thread_id = thread_id.unwrap_or_else(|| "thread-1".to_owned());
+            let thread_id = request.thread_id.unwrap_or_else(|| "thread-1".to_owned());
             on_event(CodexThreadEvent::ThreadStarted {
                 thread_id: thread_id.clone(),
             });
@@ -2391,7 +2520,7 @@ mod tests {
             on_event(CodexThreadEvent::ItemCompleted {
                 item: CodexThreadItem::AgentMessage {
                     id: "item-1".to_owned(),
-                    text: format!("Echo: {prompt}"),
+                    text: format!("Echo: {}", request.prompt),
                 },
             });
             on_event(CodexThreadEvent::TurnCompleted {

@@ -10,10 +10,10 @@ use std::{
     process::Command,
     sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use luban_ui::{CreatedWorkspace, ProjectWorkspaceService};
+use luban_ui::{CreatedWorkspace, ProjectWorkspaceService, RunAgentTurnRequest};
 
 fn codex_item_id(item: &CodexThreadItem) -> &str {
     match item {
@@ -300,6 +300,7 @@ impl GitWorkspaceService {
         thread_id: Option<String>,
         worktree_path: &Path,
         prompt: &str,
+        cancel: Arc<AtomicBool>,
         mut on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         self.ensure_sidecar_installed()?;
@@ -346,6 +347,24 @@ impl GitWorkspaceService {
             .take()
             .ok_or_else(|| anyhow!("missing stderr"))?;
 
+        let finished = Arc::new(AtomicBool::new(false));
+        let child = Arc::new(std::sync::Mutex::new(child));
+        let killer = {
+            let child = child.clone();
+            let cancel = cancel.clone();
+            let finished = finished.clone();
+            std::thread::spawn(move || {
+                while !finished.load(Ordering::SeqCst) && !cancel.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                if cancel.load(Ordering::SeqCst)
+                    && let Ok(mut child) = child.lock()
+                {
+                    let _ = child.kill();
+                }
+            })
+        };
+
         let stderr_handle = std::thread::spawn(move || -> String {
             let mut buf = Vec::new();
             let mut reader = BufReader::new(stderr);
@@ -355,18 +374,46 @@ impl GitWorkspaceService {
 
         let stdout_reader = BufReader::new(stdout);
         for line in stdout_reader.lines() {
-            let line = line.context("failed to read stdout line")?;
+            let line = match line {
+                Ok(line) => line,
+                Err(err) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    return Err(err).context("failed to read stdout line");
+                }
+            };
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let event: CodexThreadEvent =
-                serde_json::from_str(trimmed).context("failed to parse codex event")?;
+            if cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            let event: CodexThreadEvent = match serde_json::from_str(trimmed) {
+                Ok(event) => event,
+                Err(err) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    return Err(err).context("failed to parse codex event");
+                }
+            };
             on_event(event)?;
         }
 
-        let status = child.wait().context("failed to wait for node")?;
+        let status = child
+            .lock()
+            .map_err(|_| anyhow!("failed to lock node child"))?
+            .wait()
+            .context("failed to wait for node")?;
+        finished.store(true, Ordering::SeqCst);
+        let _ = killer.join();
         let stderr_text = stderr_handle.join().unwrap_or_default();
+
+        if cancel.load(Ordering::SeqCst) {
+            return Ok(());
+        }
 
         if !status.success() {
             return Err(anyhow!(
@@ -493,13 +540,18 @@ impl ProjectWorkspaceService for GitWorkspaceService {
 
     fn run_agent_turn_streamed(
         &self,
-        project_slug: String,
-        workspace_name: String,
-        worktree_path: PathBuf,
-        thread_id: Option<String>,
-        prompt: String,
+        request: RunAgentTurnRequest,
+        cancel: Arc<AtomicBool>,
         on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
     ) -> Result<(), String> {
+        let RunAgentTurnRequest {
+            project_slug,
+            workspace_name,
+            worktree_path,
+            thread_id,
+            prompt,
+        } = request;
+
         let turn_started_at = Instant::now();
         let duration_appended = Arc::new(AtomicBool::new(false));
         let mut appended_item_ids = HashSet::<String>::new();
@@ -526,6 +578,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 resolved_thread_id,
                 &worktree_path,
                 &prompt,
+                cancel.clone(),
                 |event| {
                     on_event(event.clone());
 
@@ -625,6 +678,27 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     Ok(())
                 },
             )?;
+
+            if cancel.load(Ordering::SeqCst) {
+                if duration_appended
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                    self.append_conversation_entries(
+                        &project_slug,
+                        &workspace_name,
+                        &[ConversationEntry::TurnDuration { duration_ms }],
+                    )?;
+                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                }
+                self.append_conversation_entries(
+                    &project_slug,
+                    &workspace_name,
+                    &[ConversationEntry::TurnCanceled],
+                )?;
+                return Ok(());
+            }
 
             if let Some(message) = turn_error {
                 return Err(anyhow!("{message}"));
