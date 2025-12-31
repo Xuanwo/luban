@@ -18,6 +18,8 @@ use std::{
 use crate::sqlite_store::SqliteStore;
 use luban_ui::{CreatedWorkspace, ProjectWorkspaceService, RunAgentTurnRequest};
 
+const SIDECAR_EVENT_PREFIX: &str = "__LUBAN_EVENT__ ";
+
 fn codex_item_id(item: &CodexThreadItem) -> &str {
     match item {
         CodexThreadItem::AgentMessage { id, .. } => id,
@@ -28,6 +30,61 @@ fn codex_item_id(item: &CodexThreadItem) -> &str {
         CodexThreadItem::WebSearch { id, .. } => id,
         CodexThreadItem::TodoList { id, .. } => id,
         CodexThreadItem::Error { id, .. } => id,
+    }
+}
+
+enum SidecarStdoutLine {
+    Event(Box<CodexThreadEvent>),
+    Ignored { message: String },
+    Noise { message: String },
+}
+
+fn parse_sidecar_stdout_line(line: &str) -> anyhow::Result<SidecarStdoutLine> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(SidecarStdoutLine::Noise {
+            message: String::new(),
+        });
+    }
+
+    let (payload, is_protocol) = if let Some(payload) = trimmed.strip_prefix(SIDECAR_EVENT_PREFIX) {
+        (payload.trim_start(), true)
+    } else {
+        (trimmed, false)
+    };
+
+    let looks_like_json = payload.starts_with('{') || payload.starts_with('[');
+    if !looks_like_json {
+        return Ok(SidecarStdoutLine::Noise {
+            message: payload.to_owned(),
+        });
+    }
+
+    match serde_json::from_str::<CodexThreadEvent>(payload) {
+        Ok(event) => Ok(SidecarStdoutLine::Event(Box::new(event))),
+        Err(err) => {
+            let value = match serde_json::from_str::<serde_json::Value>(payload) {
+                Ok(value) => value,
+                Err(_) if is_protocol => {
+                    return Err(err).context("failed to parse sidecar protocol JSON");
+                }
+                Err(_) => {
+                    return Ok(SidecarStdoutLine::Noise {
+                        message: payload.to_owned(),
+                    });
+                }
+            };
+
+            let type_name = value
+                .as_object()
+                .and_then(|obj| obj.get("type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing type>");
+
+            Ok(SidecarStdoutLine::Ignored {
+                message: format!("ignored sidecar event: {type_name}"),
+            })
+        }
     }
 }
 
@@ -400,6 +457,7 @@ impl GitWorkspaceService {
         });
 
         let stdout_reader = BufReader::new(stdout);
+        let mut stdout_noise: Vec<String> = Vec::new();
         for line in stdout_reader.lines() {
             let line = match line {
                 Ok(line) => line,
@@ -417,16 +475,26 @@ impl GitWorkspaceService {
             if cancel.load(Ordering::SeqCst) {
                 break;
             }
-            let event: CodexThreadEvent = match serde_json::from_str(trimmed) {
-                Ok(event) => event,
+
+            match parse_sidecar_stdout_line(trimmed) {
+                Ok(SidecarStdoutLine::Event(event)) => on_event(*event)?,
+                Ok(
+                    SidecarStdoutLine::Ignored { message } | SidecarStdoutLine::Noise { message },
+                ) => {
+                    if message.is_empty() {
+                        continue;
+                    }
+                    if stdout_noise.len() < 64 {
+                        stdout_noise.push(message);
+                    }
+                }
                 Err(err) => {
                     if cancel.load(Ordering::SeqCst) {
                         break;
                     }
-                    return Err(err).context("failed to parse codex event");
+                    return Err(err).context("failed to parse codex sidecar stdout");
                 }
-            };
-            on_event(event)?;
+            }
         }
 
         let status = child
@@ -443,14 +511,60 @@ impl GitWorkspaceService {
         }
 
         if !status.success() {
+            let sidecar_noise = if stdout_noise.is_empty() {
+                String::new()
+            } else {
+                format!("\nstdout (non-protocol):\n{}\n", stdout_noise.join("\n"))
+            };
             return Err(anyhow!(
-                "codex sidecar failed ({}):\nstderr:\n{}",
+                "codex sidecar failed ({}):\nstderr:\n{}{}",
                 status,
-                stderr_text.trim()
+                stderr_text.trim(),
+                sidecar_noise
             ));
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_stdout_parsing_accepts_prefixed_events() {
+        let parsed = parse_sidecar_stdout_line("__LUBAN_EVENT__ {\"type\":\"turn.started\"}")
+            .expect("parse should succeed");
+        assert!(matches!(
+            parsed,
+            SidecarStdoutLine::Event(event) if matches!(*event, CodexThreadEvent::TurnStarted)
+        ));
+    }
+
+    #[test]
+    fn sidecar_stdout_parsing_accepts_legacy_json_events() {
+        let parsed =
+            parse_sidecar_stdout_line("{\"type\":\"turn.started\"}").expect("parse should succeed");
+        assert!(matches!(
+            parsed,
+            SidecarStdoutLine::Event(event) if matches!(*event, CodexThreadEvent::TurnStarted)
+        ));
+    }
+
+    #[test]
+    fn sidecar_stdout_parsing_ignores_unknown_events() {
+        let parsed = parse_sidecar_stdout_line(
+            "__LUBAN_EVENT__ {\"type\":\"turn.reconnect\",\"detail\":\"x\"}",
+        )
+        .expect("parse should succeed");
+        assert!(matches!(parsed, SidecarStdoutLine::Ignored { .. }));
+    }
+
+    #[test]
+    fn sidecar_stdout_parsing_treats_plain_text_as_noise() {
+        let parsed = parse_sidecar_stdout_line("retry/reconnect").expect("parse should succeed");
+        assert!(matches!(parsed, SidecarStdoutLine::Noise { .. }));
     }
 }
 
