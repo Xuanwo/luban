@@ -225,8 +225,34 @@ pub struct AppState {
     pub last_error: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistedAppState {
+    pub projects: Vec<PersistedProject>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistedProject {
+    pub id: u64,
+    pub name: String,
+    pub path: PathBuf,
+    pub slug: String,
+    pub workspaces: Vec<PersistedWorkspace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistedWorkspace {
+    pub id: u64,
+    pub workspace_name: String,
+    pub branch_name: String,
+    pub worktree_path: PathBuf,
+    pub status: WorkspaceStatus,
+    pub last_activity_at_unix_seconds: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
+    AppStarted,
+
     AddProject {
         path: PathBuf,
     },
@@ -298,11 +324,25 @@ pub enum Action {
         workspace_id: WorkspaceId,
     },
 
+    AppStateLoaded {
+        persisted: PersistedAppState,
+    },
+    AppStateLoadFailed {
+        message: String,
+    },
+    AppStateSaved,
+    AppStateSaveFailed {
+        message: String,
+    },
+
     ClearError,
 }
 
 #[derive(Clone, Debug)]
 pub enum Effect {
+    LoadAppState,
+    SaveAppState,
+
     CreateWorkspace {
         project_id: ProjectId,
     },
@@ -364,9 +404,11 @@ impl AppState {
 
     pub fn apply(&mut self, action: Action) -> Vec<Effect> {
         match action {
+            Action::AppStarted => vec![Effect::LoadAppState],
+
             Action::AddProject { path } => {
                 self.add_project(path);
-                Vec::new()
+                vec![Effect::SaveAppState]
             }
             Action::ToggleProjectExpanded { project_id } => {
                 if let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id) {
@@ -410,7 +452,10 @@ impl AppState {
                         queue_paused: false,
                     },
                 );
-                vec![Effect::EnsureConversation { workspace_id }]
+                vec![
+                    Effect::SaveAppState,
+                    Effect::EnsureConversation { workspace_id },
+                ]
             }
             Action::WorkspaceCreateFailed {
                 project_id,
@@ -453,7 +498,7 @@ impl AppState {
                 if matches!(self.main_pane, MainPane::Workspace(id) if id == workspace_id) {
                     self.main_pane = MainPane::None;
                 }
-                Vec::new()
+                vec![Effect::SaveAppState]
             }
             Action::WorkspaceArchiveFailed {
                 workspace_id,
@@ -660,10 +705,98 @@ impl AppState {
                 vec![Effect::CancelAgentTurn { workspace_id }]
             }
 
+            Action::AppStateLoaded { persisted } => {
+                if !self.projects.is_empty() {
+                    return Vec::new();
+                }
+
+                self.projects = persisted
+                    .projects
+                    .into_iter()
+                    .map(|p| Project {
+                        id: ProjectId(p.id),
+                        name: p.name,
+                        path: p.path,
+                        slug: p.slug,
+                        expanded: false,
+                        create_workspace_status: OperationStatus::Idle,
+                        workspaces: p
+                            .workspaces
+                            .into_iter()
+                            .map(|w| Workspace {
+                                id: WorkspaceId(w.id),
+                                workspace_name: w.workspace_name,
+                                branch_name: w.branch_name,
+                                worktree_path: w.worktree_path,
+                                status: w.status,
+                                last_activity_at: w.last_activity_at_unix_seconds.map(|secs| {
+                                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+                                }),
+                                archive_status: OperationStatus::Idle,
+                            })
+                            .collect(),
+                    })
+                    .collect();
+
+                let max_project_id = self.projects.iter().map(|p| p.id.0).max().unwrap_or(0);
+                let max_workspace_id = self
+                    .projects
+                    .iter()
+                    .flat_map(|p| &p.workspaces)
+                    .map(|w| w.id.0)
+                    .max()
+                    .unwrap_or(0);
+
+                self.next_project_id = max_project_id + 1;
+                self.next_workspace_id = max_workspace_id + 1;
+                self.main_pane = MainPane::None;
+                Vec::new()
+            }
+            Action::AppStateLoadFailed { message } => {
+                self.last_error = Some(message);
+                Vec::new()
+            }
+            Action::AppStateSaved => Vec::new(),
+            Action::AppStateSaveFailed { message } => {
+                self.last_error = Some(message);
+                Vec::new()
+            }
+
             Action::ClearError => {
                 self.last_error = None;
                 Vec::new()
             }
+        }
+    }
+
+    pub fn to_persisted(&self) -> PersistedAppState {
+        PersistedAppState {
+            projects: self
+                .projects
+                .iter()
+                .map(|p| PersistedProject {
+                    id: p.id.0,
+                    name: p.name.clone(),
+                    path: p.path.clone(),
+                    slug: p.slug.clone(),
+                    workspaces: p
+                        .workspaces
+                        .iter()
+                        .map(|w| PersistedWorkspace {
+                            id: w.id.0,
+                            workspace_name: w.workspace_name.clone(),
+                            branch_name: w.branch_name.clone(),
+                            worktree_path: w.worktree_path.clone(),
+                            status: w.status,
+                            last_activity_at_unix_seconds: w.last_activity_at.and_then(|t| {
+                                t.duration_since(std::time::UNIX_EPOCH)
+                                    .ok()
+                                    .map(|d| d.as_secs())
+                            }),
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 
@@ -843,6 +976,24 @@ fn start_next_queued_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_started_emits_load_app_state_effect() {
+        let mut state = AppState::new();
+        let effects = state.apply(Action::AppStarted);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::LoadAppState));
+    }
+
+    #[test]
+    fn add_project_emits_save_app_state_effect() {
+        let mut state = AppState::new();
+        let effects = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SaveAppState));
+    }
 
     #[test]
     fn demo_state_is_consistent() {

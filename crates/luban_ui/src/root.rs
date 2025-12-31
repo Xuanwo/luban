@@ -14,7 +14,7 @@ use gpui_component::{
 };
 use luban_domain::{
     Action, AppState, CodexThreadEvent, CodexThreadItem, ConversationSnapshot, Effect, MainPane,
-    OperationStatus, ProjectId, WorkspaceId, WorkspaceStatus,
+    OperationStatus, PersistedAppState, ProjectId, WorkspaceId, WorkspaceStatus,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -40,6 +40,10 @@ pub struct RunAgentTurnRequest {
 }
 
 pub trait ProjectWorkspaceService: Send + Sync {
+    fn load_app_state(&self) -> Result<PersistedAppState, String>;
+
+    fn save_app_state(&self, snapshot: PersistedAppState) -> Result<(), String>;
+
     fn create_workspace(
         &self,
         project_path: PathBuf,
@@ -90,8 +94,8 @@ pub struct LubanRootView {
 }
 
 impl LubanRootView {
-    pub fn new(services: Arc<dyn ProjectWorkspaceService>, _cx: &mut Context<Self>) -> Self {
-        Self {
+    pub fn new(services: Arc<dyn ProjectWorkspaceService>, cx: &mut Context<Self>) -> Self {
+        let mut this = Self {
             state: AppState::new(),
             services,
             chat_input: None,
@@ -106,7 +110,10 @@ impl LubanRootView {
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
             _subscriptions: Vec::new(),
-        }
+        };
+
+        this.dispatch(Action::AppStarted, cx);
+        this
     }
 
     #[cfg(test)]
@@ -241,6 +248,8 @@ impl LubanRootView {
 
     fn run_effect(&mut self, effect: Effect, cx: &mut Context<Self>) {
         match effect {
+            Effect::LoadAppState => self.run_load_app_state(cx),
+            Effect::SaveAppState => self.run_save_app_state(cx),
             Effect::CreateWorkspace { project_id } => self.run_create_workspace(project_id, cx),
             Effect::ArchiveWorkspace { workspace_id } => {
                 self.run_archive_workspace(workspace_id, cx)
@@ -261,6 +270,63 @@ impl LubanRootView {
                 }
             }
         }
+    }
+
+    fn run_load_app_state(&mut self, cx: &mut Context<Self>) {
+        let services = self.services.clone();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(async move { services.load_app_state() })
+                        .await;
+
+                    let action = match result {
+                        Ok(persisted) => Action::AppStateLoaded { persisted },
+                        Err(message) => Action::AppStateLoadFailed { message },
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(action, view_cx)
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn run_save_app_state(&mut self, cx: &mut Context<Self>) {
+        let services = self.services.clone();
+        let snapshot = self.state.to_persisted();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(async move { services.save_app_state(snapshot) })
+                        .await;
+
+                    let action = match result {
+                        Ok(()) => Action::AppStateSaved,
+                        Err(message) => Action::AppStateSaveFailed { message },
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(action, view_cx)
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
     }
 
     fn toggle_agent_item_expanded(&mut self, id: &str) {
@@ -2647,6 +2713,16 @@ mod tests {
     struct FakeService;
 
     impl ProjectWorkspaceService for FakeService {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Ok(PersistedAppState {
+                projects: Vec::new(),
+            })
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Ok(())
+        }
+
         fn create_workspace(
             &self,
             _project_path: PathBuf,

@@ -4,6 +4,7 @@ use luban_ui::{LubanRootView, apply_linear_theme};
 
 mod app_assets;
 mod services;
+mod sqlite_store;
 use services::GitWorkspaceService;
 
 fn init_components(cx: &mut App) {
