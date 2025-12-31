@@ -131,7 +131,7 @@ fn parse_sidecar_stdout_line(line: &str) -> anyhow::Result<SidecarStdoutLine> {
 pub struct GitWorkspaceService {
     worktrees_root: PathBuf,
     conversations_root: PathBuf,
-    agent_sidecar_dir: PathBuf,
+    codex_sidecar_dir: PathBuf,
     sqlite: SqliteStore,
 }
 
@@ -147,13 +147,17 @@ impl GitWorkspaceService {
         let worktrees_root = luban_root.join("worktrees");
         let conversations_root = luban_root.join("conversations");
         let sqlite_path = luban_root.join("luban.db");
-        let agent_sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("agent_sidecar");
+        let codex_sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("tools")
+            .join("codex_sidecar");
         let sqlite = SqliteStore::new(sqlite_path).context("failed to init sqlite store")?;
 
         Ok(Arc::new(Self {
             worktrees_root,
             conversations_root,
-            agent_sidecar_dir,
+            codex_sidecar_dir,
             sqlite,
         }))
     }
@@ -269,15 +273,19 @@ impl GitWorkspaceService {
             .as_secs()
     }
 
+    fn sidecar_bundled_script_path(&self) -> PathBuf {
+        self.codex_sidecar_dir.join("dist").join("run.mjs")
+    }
+
     fn ensure_sidecar_installed(&self) -> anyhow::Result<()> {
-        let node_modules = self.agent_sidecar_dir.join("node_modules");
-        if node_modules.is_dir() {
+        let bundled = self.sidecar_bundled_script_path();
+        if bundled.is_file() {
             return Ok(());
         }
 
         Err(anyhow!(
-            "missing Codex sidecar dependencies: run 'npm install' in {}",
-            self.agent_sidecar_dir.display()
+            "missing Codex sidecar bundle: run 'just sidecar-build' to generate {}",
+            bundled.display()
         ))
     }
 
@@ -428,7 +436,7 @@ impl GitWorkspaceService {
     ) -> anyhow::Result<()> {
         self.ensure_sidecar_installed()?;
 
-        let script = self.agent_sidecar_dir.join("run.mjs");
+        let script = self.sidecar_bundled_script_path();
         let request = SidecarTurnRequest {
             thread_id,
             working_directory: worktree_path
@@ -445,7 +453,7 @@ impl GitWorkspaceService {
 
         let mut child = Command::new("node")
             .arg(&script)
-            .current_dir(&self.agent_sidecar_dir)
+            .current_dir(&self.codex_sidecar_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -601,6 +609,78 @@ mod tests {
     }
 
     #[test]
+    fn ensure_sidecar_installed_accepts_bundled_script() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be valid")
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!(
+            "luban-sidecar-bundle-check-{}-{}",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let sidecar_dir = base_dir.join("sidecar");
+        let dist_dir = sidecar_dir.join("dist");
+        std::fs::create_dir_all(&dist_dir).expect("dist dir should be created");
+
+        let bundled_script = dist_dir.join("run.mjs");
+        std::fs::write(&bundled_script, b"// stub\n").expect("write should succeed");
+
+        let sqlite = SqliteStore::new(base_dir.join("luban.db")).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: base_dir.join("worktrees"),
+            conversations_root: base_dir.join("conversations"),
+            codex_sidecar_dir: sidecar_dir,
+            sqlite,
+        };
+
+        service
+            .ensure_sidecar_installed()
+            .expect("bundled sidecar should be accepted");
+
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn ensure_sidecar_installed_rejects_node_modules_without_bundle() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be valid")
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!(
+            "luban-sidecar-node-modules-only-check-{}-{}",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let sidecar_dir = base_dir.join("sidecar");
+        let node_modules = sidecar_dir.join("node_modules");
+        std::fs::create_dir_all(&node_modules).expect("node_modules dir should be created");
+
+        let sqlite = SqliteStore::new(base_dir.join("luban.db")).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: base_dir.join("worktrees"),
+            conversations_root: base_dir.join("conversations"),
+            codex_sidecar_dir: sidecar_dir,
+            sqlite,
+        };
+
+        let err = service
+            .ensure_sidecar_installed()
+            .expect_err("node_modules should not be accepted without bundled script");
+        assert!(err.to_string().contains("missing Codex sidecar bundle"));
+
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
     fn sidecar_stdout_parsing_accepts_prefixed_events() {
         let parsed = parse_sidecar_stdout_line("__LUBAN_EVENT__ {\"type\":\"turn.started\"}")
             .expect("parse should succeed");
@@ -698,7 +778,7 @@ mod tests {
         let service = GitWorkspaceService {
             worktrees_root: base_dir.join("worktrees"),
             conversations_root: base_dir.join("conversations"),
-            agent_sidecar_dir: base_dir.join("sidecar"),
+            codex_sidecar_dir: base_dir.join("sidecar"),
             sqlite,
         };
 

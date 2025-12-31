@@ -7,6 +7,11 @@
   },
   "dependencies": {
     "@openai/codex-sdk": "^0.77.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  },
+  "scripts": {
+    "bundle": "esbuild run.mjs --bundle --platform=node --format=esm --outfile=dist/run.mjs"
   }
 }
-

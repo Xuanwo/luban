@@ -1,3 +1,4 @@
 target/
 .DS_Store
 node_modules/
+tools/codex_sidecar/dist/
