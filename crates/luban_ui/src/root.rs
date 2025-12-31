@@ -3,6 +3,7 @@ use gpui::{
     AnyElement, Context, ElementId, IntoElement, MouseButton, Pixels, PromptButton, PromptLevel,
     SharedString, Window, div, px, rems,
 };
+use gpui_component::input::RopeExt as _;
 use gpui_component::{
     ActiveTheme as _, Disableable as _, ElementExt as _, Icon, IconName, IconNamed as _,
     Sizable as _, Size, StyledExt as _,
@@ -1172,9 +1173,19 @@ impl LubanRootView {
                 if workspace_changed {
                     let saved_draft = conversation.map(|c| c.draft.clone()).unwrap_or_default();
                     let current_value = input_state.read(cx).value().to_owned();
-                    if current_value != saved_draft.as_str() {
+                    let should_move_cursor = !saved_draft.is_empty();
+                    if current_value != saved_draft.as_str() || should_move_cursor {
                         input_state.update(cx, move |state, cx| {
-                            state.set_value(&saved_draft, window, cx);
+                            if current_value != saved_draft.as_str() {
+                                state.set_value(&saved_draft, window, cx);
+                            }
+
+                            if should_move_cursor {
+                                let end = state.text().offset_to_position(state.text().len());
+                                if state.cursor_position() != end {
+                                    state.set_cursor_position(end, window, cx);
+                                }
+                            }
                         });
                     }
                 }
@@ -3575,8 +3586,20 @@ mod tests {
         });
         state.main_pane = MainPane::Workspace(w1);
 
-        let (view, window_cx) =
-            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let view_slot_for_window = view_slot.clone();
+
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+            *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
+            gpui_component::Root::new(view, window, cx)
+        });
+        let view = view_slot
+            .lock()
+            .expect("poisoned mutex")
+            .clone()
+            .expect("missing view handle");
         window_cx.refresh().unwrap();
 
         let value = view.read_with(window_cx, |v, cx| {
@@ -3613,5 +3636,77 @@ mod tests {
                 .map(|input| input.read(cx).value().to_string())
         });
         assert_eq!(value, Some("draft-1".to_owned()));
+    }
+
+    #[gpui::test]
+    async fn chat_input_cursor_moves_to_end_on_workspace_switch(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w2".to_owned(),
+            branch_name: "repo/w2".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w2"),
+        });
+        let w1 = state.projects[0].workspaces[0].id;
+        let w2 = state.projects[0].workspaces[1].id;
+
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w1,
+            text: "draft-1".to_owned(),
+        });
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w2,
+            text: "draft-2".to_owned(),
+        });
+        state.main_pane = MainPane::Workspace(w1);
+
+        let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let view_slot_for_window = view_slot.clone();
+
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+            *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
+            gpui_component::Root::new(view, window, cx)
+        });
+        let view = view_slot
+            .lock()
+            .expect("poisoned mutex")
+            .clone()
+            .expect("missing view handle");
+        window_cx.refresh().unwrap();
+
+        window_cx.update(|_, app| {
+            view.update(app, |view, cx| {
+                view.dispatch(Action::OpenWorkspace { workspace_id: w2 }, cx);
+            });
+        });
+        window_cx.refresh().unwrap();
+
+        let (value, cursor_at_end) = view.read_with(window_cx, |v, cx| {
+            let Some(input) = v.chat_input.as_ref() else {
+                return (None, false);
+            };
+            let state = input.read(cx);
+            let value = state.value().to_string();
+            let end = state.text().offset_to_position(state.text().len());
+            (Some(value), state.cursor_position() == end)
+        });
+        assert_eq!(value, Some("draft-2".to_owned()));
+        assert!(cursor_at_end);
     }
 }
