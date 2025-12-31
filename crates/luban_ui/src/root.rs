@@ -1079,6 +1079,10 @@ impl LubanRootView {
                 let run_status = conversation
                     .map(|c| c.run_status)
                     .unwrap_or(OperationStatus::Idle);
+                let queued_prompts: Vec<String> = conversation
+                    .map(|c| c.pending_prompts.iter().cloned().collect())
+                    .unwrap_or_default();
+                let queue_paused = conversation.map(|c| c.queue_paused).unwrap_or(false);
                 let _thread_id = conversation.and_then(|c| c.thread_id.as_deref());
 
                 let is_running = run_status == OperationStatus::Running;
@@ -1212,6 +1216,171 @@ impl LubanRootView {
                             }),
                     ));
 
+                let queue_panel = if !queued_prompts.is_empty() {
+                    let theme = cx.theme();
+                    let view_handle = view_handle.clone();
+                    let input_state = input_state.clone();
+
+                    let toolbar = div()
+                        .h(px(24.0))
+                        .w_full()
+                        .px_1()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(
+                            if queue_paused {
+                                "Queued • Paused"
+                            } else {
+                                "Queued"
+                            },
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .when(queue_paused && !is_running, |s| {
+                                    let view_handle = view_handle.clone();
+                                    s.child(
+                                        Button::new("queued-resume")
+                                            .primary()
+                                            .compact()
+                                            .icon(IconName::Redo2)
+                                            .tooltip("Resume queued messages")
+                                            .on_click(move |_, _, app| {
+                                                let _ = view_handle.update(app, |view, cx| {
+                                                    view.dispatch(
+                                                        Action::ResumeQueuedPrompts {
+                                                            workspace_id,
+                                                        },
+                                                        cx,
+                                                    );
+                                                });
+                                            }),
+                                    )
+                                })
+                                .child(
+                                    Button::new("queued-clear-all")
+                                        .ghost()
+                                        .compact()
+                                        .icon(IconName::Delete)
+                                        .tooltip("Clear queued messages")
+                                        .on_click({
+                                            let view_handle = view_handle.clone();
+                                            move |_, window, app| {
+                                                let receiver = window.prompt(
+                                                    PromptLevel::Warning,
+                                                    "Clear queued messages?",
+                                                    Some("This will remove all queued messages."),
+                                                    &[
+                                                        PromptButton::ok("Clear"),
+                                                        PromptButton::cancel("Cancel"),
+                                                    ],
+                                                    app,
+                                                );
+
+                                                let view_handle = view_handle.clone();
+                                                app.spawn(move |cx: &mut gpui::AsyncApp| {
+                                                    let mut async_cx = cx.clone();
+                                                    async move {
+                                                        let Ok(choice) = receiver.await else {
+                                                            return;
+                                                        };
+                                                        if choice != 0 {
+                                                            return;
+                                                        }
+                                                        let _ = view_handle.update(
+                                                            &mut async_cx,
+                                                            |view: &mut LubanRootView, view_cx| {
+                                                                view.dispatch(
+                                                                    Action::ClearQueuedPrompts {
+                                                                        workspace_id,
+                                                                    },
+                                                                    view_cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                })
+                                                .detach();
+                                            }
+                                        }),
+                                ),
+                        );
+
+                    let content = div().pt_2().px_2().flex().flex_col().gap_1().children(
+                        queued_prompts.iter().enumerate().map(|(idx, text)| {
+                            let view_handle_for_edit = view_handle.clone();
+                            let view_handle_for_remove = view_handle.clone();
+                            let input_state = input_state.clone();
+                            let text = text.clone();
+                            div()
+                                .h(px(28.0))
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .truncate()
+                                        .text_color(theme.muted_foreground)
+                                        .child(text.clone()),
+                                )
+                                .child(
+                                    Button::new(format!("queued-edit-{idx}"))
+                                        .ghost()
+                                        .compact()
+                                        .icon(IconName::Replace)
+                                        .tooltip("Move to input and remove from queue")
+                                        .on_click(move |_, window, app| {
+                                            input_state.update(app, |state, cx| {
+                                                state.set_value(&text, window, cx);
+                                            });
+                                            let _ = view_handle_for_edit.update(app, |view, cx| {
+                                                view.dispatch(
+                                                    Action::RemoveQueuedPrompt {
+                                                        workspace_id,
+                                                        index: idx,
+                                                    },
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
+                                .child({
+                                    Button::new(format!("queued-remove-{idx}"))
+                                        .ghost()
+                                        .compact()
+                                        .icon(IconName::Close)
+                                        .tooltip("Remove from queue")
+                                        .on_click(move |_, _, app| {
+                                            let _ =
+                                                view_handle_for_remove.update(app, |view, cx| {
+                                                    view.dispatch(
+                                                        Action::RemoveQueuedPrompt {
+                                                            workspace_id,
+                                                            index: idx,
+                                                        },
+                                                        cx,
+                                                    );
+                                                });
+                                        })
+                                })
+                                .into_any_element()
+                        }),
+                    );
+
+                    div()
+                        .w_full()
+                        .child(toolbar)
+                        .child(content)
+                        .into_any_element()
+                } else {
+                    div().hidden().into_any_element()
+                };
+
                 let composer = div()
                     .absolute()
                     .left_0()
@@ -1233,63 +1402,82 @@ impl LubanRootView {
                                 div()
                                     .w_full()
                                     .flex()
-                                    .items_end()
+                                    .flex_col()
                                     .gap_2()
+                                    .child(queue_panel)
                                     .child(
-                                        div().flex_1().child(
-                                            Input::new(&input_state)
-                                                .appearance(false)
-                                                .with_size(Size::Large)
-                                                .disabled(is_running),
-                                        ),
-                                    )
-                                    .child(if is_running {
-                                        let view_handle = view_handle.clone();
-                                        Button::new("chat-cancel-turn")
-                                            .danger()
-                                            .compact()
-                                            .icon(Icon::new(IconName::CircleX))
-                                            .tooltip("Cancel")
-                                            .on_click(move |_, _, app| {
-                                                let _ = view_handle.update(app, |view, cx| {
-                                                    view.dispatch(
-                                                        Action::CancelAgentTurn { workspace_id },
-                                                        cx,
-                                                    );
-                                                });
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        let view_handle = view_handle.clone();
-                                        let input_state = input_state.clone();
-                                        let draft = draft.clone();
-                                        Button::new("chat-send-message")
-                                            .primary()
-                                            .compact()
-                                            .disabled(send_disabled)
-                                            .icon(Icon::new(IconName::ArrowUp))
-                                            .tooltip("Send")
-                                            .on_click(move |_, window, app| {
-                                                if draft.trim().is_empty() {
-                                                    return;
-                                                }
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_end()
+                                            .gap_2()
+                                            .child(
+                                                div().flex_1().child(
+                                                    Input::new(&input_state)
+                                                        .appearance(false)
+                                                        .with_size(Size::Large),
+                                                ),
+                                            )
+                                            .child({
+                                                let view_handle = view_handle.clone();
+                                                let input_state = input_state.clone();
+                                                let draft = draft.clone();
+                                                Button::new("chat-send-message")
+                                                    .primary()
+                                                    .compact()
+                                                    .disabled(send_disabled)
+                                                    .icon(Icon::new(IconName::ArrowUp))
+                                                    .tooltip(if is_running {
+                                                        "Queue"
+                                                    } else {
+                                                        "Send"
+                                                    })
+                                                    .on_click(move |_, window, app| {
+                                                        if draft.trim().is_empty() {
+                                                            return;
+                                                        }
 
-                                                input_state.update(app, |state, cx| {
-                                                    state.set_value("", window, cx);
-                                                });
+                                                        input_state.update(app, |state, cx| {
+                                                            state.set_value("", window, cx);
+                                                        });
 
-                                                let _ = view_handle.update(app, |view, cx| {
-                                                    view.dispatch(
-                                                        Action::SendAgentMessage {
-                                                            workspace_id,
-                                                            text: draft.clone(),
-                                                        },
-                                                        cx,
-                                                    );
-                                                });
+                                                        let _ =
+                                                            view_handle.update(app, |view, cx| {
+                                                                view.dispatch(
+                                                                    Action::SendAgentMessage {
+                                                                        workspace_id,
+                                                                        text: draft.clone(),
+                                                                    },
+                                                                    cx,
+                                                                );
+                                                            });
+                                                    })
+                                                    .into_any_element()
                                             })
-                                            .into_any_element()
-                                    }),
+                                            .when(is_running, |s| {
+                                                let view_handle = view_handle.clone();
+                                                s.child(
+                                                    Button::new("chat-cancel-turn")
+                                                        .danger()
+                                                        .compact()
+                                                        .icon(Icon::new(IconName::CircleX))
+                                                        .tooltip("Cancel")
+                                                        .on_click(move |_, _, app| {
+                                                            let _ = view_handle.update(
+                                                                app,
+                                                                |view, cx| {
+                                                                    view.dispatch(
+                                                                        Action::CancelAgentTurn {
+                                                                            workspace_id,
+                                                                        },
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            );
+                                                        }),
+                                                )
+                                            }),
+                                    ),
                             ),
                     );
 

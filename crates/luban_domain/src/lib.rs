@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -187,6 +188,8 @@ pub struct WorkspaceConversation {
     pub entries: Vec<ConversationEntry>,
     pub run_status: OperationStatus,
     pub in_progress_items: BTreeMap<String, CodexThreadItem>,
+    pub pending_prompts: VecDeque<String>,
+    pub queue_paused: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -273,6 +276,16 @@ pub enum Action {
     SendAgentMessage {
         workspace_id: WorkspaceId,
         text: String,
+    },
+    RemoveQueuedPrompt {
+        workspace_id: WorkspaceId,
+        index: usize,
+    },
+    ClearQueuedPrompts {
+        workspace_id: WorkspaceId,
+    },
+    ResumeQueuedPrompts {
+        workspace_id: WorkspaceId,
     },
     AgentEventReceived {
         workspace_id: WorkspaceId,
@@ -393,6 +406,8 @@ impl AppState {
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
+                        pending_prompts: VecDeque::new(),
+                        queue_paused: false,
                     },
                 );
                 vec![Effect::EnsureConversation { workspace_id }]
@@ -465,6 +480,8 @@ impl AppState {
                         entries: snapshot.entries,
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
+                        pending_prompts: VecDeque::new(),
+                        queue_paused: false,
                     },
                 );
                 Vec::new()
@@ -483,19 +500,65 @@ impl AppState {
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
+                        pending_prompts: VecDeque::new(),
+                        queue_paused: false,
                     }
                 });
 
                 if conversation.run_status == OperationStatus::Running {
+                    conversation.pending_prompts.push_back(text);
                     return Vec::new();
                 }
 
-                conversation
-                    .entries
-                    .push(ConversationEntry::UserMessage { text: text.clone() });
-                conversation.run_status = OperationStatus::Running;
-                conversation.in_progress_items.clear();
-                vec![Effect::RunAgentTurn { workspace_id, text }]
+                if conversation.queue_paused && !conversation.pending_prompts.is_empty() {
+                    conversation
+                        .entries
+                        .push(ConversationEntry::UserMessage { text: text.clone() });
+                    conversation.run_status = OperationStatus::Running;
+                    conversation.in_progress_items.clear();
+                    return vec![Effect::RunAgentTurn { workspace_id, text }];
+                }
+
+                if conversation.pending_prompts.is_empty() {
+                    conversation.queue_paused = false;
+                    conversation
+                        .entries
+                        .push(ConversationEntry::UserMessage { text: text.clone() });
+                    conversation.run_status = OperationStatus::Running;
+                    conversation.in_progress_items.clear();
+                    return vec![Effect::RunAgentTurn { workspace_id, text }];
+                }
+
+                conversation.pending_prompts.push_back(text);
+                start_next_queued_prompt(conversation, workspace_id)
+                    .into_iter()
+                    .collect()
+            }
+            Action::RemoveQueuedPrompt {
+                workspace_id,
+                index,
+            } => {
+                let Some(conversation) = self.conversations.get_mut(&workspace_id) else {
+                    return Vec::new();
+                };
+                let _ = conversation.pending_prompts.remove(index);
+                Vec::new()
+            }
+            Action::ClearQueuedPrompts { workspace_id } => {
+                let Some(conversation) = self.conversations.get_mut(&workspace_id) else {
+                    return Vec::new();
+                };
+                conversation.pending_prompts.clear();
+                Vec::new()
+            }
+            Action::ResumeQueuedPrompts { workspace_id } => {
+                let Some(conversation) = self.conversations.get_mut(&workspace_id) else {
+                    return Vec::new();
+                };
+                conversation.queue_paused = false;
+                start_next_queued_prompt(conversation, workspace_id)
+                    .into_iter()
+                    .collect()
             }
             Action::AgentEventReceived {
                 workspace_id,
@@ -507,23 +570,30 @@ impl AppState {
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
+                        pending_prompts: VecDeque::new(),
+                        queue_paused: false,
                     }
                 });
 
                 match event {
                     CodexThreadEvent::ThreadStarted { thread_id } => {
                         conversation.thread_id = Some(thread_id);
+                        Vec::new()
                     }
-                    CodexThreadEvent::TurnStarted => {}
+                    CodexThreadEvent::TurnStarted => Vec::new(),
                     CodexThreadEvent::TurnCompleted { usage } => {
                         let _ = usage;
                         conversation.run_status = OperationStatus::Idle;
                         conversation.in_progress_items.clear();
+                        start_next_queued_prompt(conversation, workspace_id)
+                            .into_iter()
+                            .collect()
                     }
                     CodexThreadEvent::TurnDuration { duration_ms } => {
                         conversation
                             .entries
                             .push(ConversationEntry::TurnDuration { duration_ms });
+                        Vec::new()
                     }
                     CodexThreadEvent::TurnFailed { error } => {
                         conversation.entries.push(ConversationEntry::TurnError {
@@ -531,13 +601,16 @@ impl AppState {
                         });
                         conversation.run_status = OperationStatus::Idle;
                         conversation.in_progress_items.clear();
+                        conversation.queue_paused = true;
                         self.last_error = Some(error.message);
+                        Vec::new()
                     }
                     CodexThreadEvent::ItemStarted { item }
                     | CodexThreadEvent::ItemUpdated { item } => {
                         conversation
                             .in_progress_items
                             .insert(codex_item_id(&item).to_owned(), item);
+                        Vec::new()
                     }
                     CodexThreadEvent::ItemCompleted { item } => {
                         conversation.in_progress_items.remove(codex_item_id(&item));
@@ -550,6 +623,7 @@ impl AppState {
                                 item: Box::new(item),
                             });
                         }
+                        Vec::new()
                     }
                     CodexThreadEvent::Error { message } => {
                         conversation.entries.push(ConversationEntry::TurnError {
@@ -557,11 +631,11 @@ impl AppState {
                         });
                         conversation.run_status = OperationStatus::Idle;
                         conversation.in_progress_items.clear();
+                        conversation.queue_paused = true;
                         self.last_error = Some(message);
+                        Vec::new()
                     }
                 }
-
-                Vec::new()
             }
             Action::AgentTurnFinished { workspace_id } => {
                 if let Some(conversation) = self.conversations.get_mut(&workspace_id)
@@ -581,6 +655,7 @@ impl AppState {
                 }
                 conversation.run_status = OperationStatus::Idle;
                 conversation.in_progress_items.clear();
+                conversation.queue_paused = true;
                 conversation.entries.push(ConversationEntry::TurnCanceled);
                 vec![Effect::CancelAgentTurn { workspace_id }]
             }
@@ -747,6 +822,24 @@ fn sanitize_slug(input: &str) -> String {
     }
 }
 
+fn start_next_queued_prompt(
+    conversation: &mut WorkspaceConversation,
+    workspace_id: WorkspaceId,
+) -> Option<Effect> {
+    if conversation.queue_paused || conversation.run_status != OperationStatus::Idle {
+        return None;
+    }
+
+    let text = conversation.pending_prompts.pop_front()?;
+
+    conversation
+        .entries
+        .push(ConversationEntry::UserMessage { text: text.clone() });
+    conversation.run_status = OperationStatus::Running;
+    conversation.in_progress_items.clear();
+    Some(Effect::RunAgentTurn { workspace_id, text })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,6 +966,114 @@ mod tests {
         assert!(matches!(
             conversation.entries.last(),
             Some(ConversationEntry::TurnCanceled)
+        ));
+    }
+
+    #[test]
+    fn send_agent_message_while_running_is_queued() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "First".to_owned(),
+        });
+        let effects = state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Second".to_owned(),
+        });
+        assert!(effects.is_empty());
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.entries.len(), 1);
+        assert_eq!(conversation.pending_prompts.len(), 1);
+        assert_eq!(conversation.pending_prompts[0], "Second");
+        assert_eq!(conversation.run_status, OperationStatus::Running);
+    }
+
+    #[test]
+    fn completed_turn_auto_sends_next_queued_prompt() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "First".to_owned(),
+        });
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Second".to_owned(),
+        });
+
+        let effects = state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::TurnCompleted {
+                usage: CodexUsage {
+                    input_tokens: 0,
+                    cached_input_tokens: 0,
+                    output_tokens: 0,
+                },
+            },
+        });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            &effects[0],
+            Effect::RunAgentTurn {
+                workspace_id: wid,
+                text
+            } if *wid == workspace_id && text == "Second"
+        ));
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.run_status, OperationStatus::Running);
+        assert!(conversation.pending_prompts.is_empty());
+        assert!(matches!(
+            &conversation.entries[0],
+            ConversationEntry::UserMessage { text } if text == "First"
+        ));
+        assert!(matches!(
+            &conversation.entries[1],
+            ConversationEntry::UserMessage { text } if text == "Second"
+        ));
+    }
+
+    #[test]
+    fn failed_turn_pauses_queue_until_resumed() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "First".to_owned(),
+        });
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Second".to_owned(),
+        });
+
+        let effects = state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::TurnFailed {
+                error: CodexThreadError {
+                    message: "boom".to_owned(),
+                },
+            },
+        });
+        assert!(effects.is_empty());
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.run_status, OperationStatus::Idle);
+        assert_eq!(conversation.pending_prompts.len(), 1);
+        assert!(conversation.queue_paused);
+
+        let effects = state.apply(Action::ResumeQueuedPrompts { workspace_id });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            &effects[0],
+            Effect::RunAgentTurn {
+                workspace_id: wid,
+                text
+            } if *wid == workspace_id && text == "Second"
         ));
     }
 }
