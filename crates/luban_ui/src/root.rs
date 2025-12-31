@@ -1169,6 +1169,11 @@ impl LubanRootView {
                 let _thread_id = conversation.and_then(|c| c.thread_id.as_deref());
 
                 let is_running = run_status == OperationStatus::Running;
+                let generation = self
+                    .turn_generation
+                    .get(&workspace_id)
+                    .copied()
+                    .unwrap_or(0);
                 let workspace_changed = self.last_chat_workspace_id != Some(workspace_id);
                 if workspace_changed {
                     let saved_draft = conversation.map(|c| c.draft.clone()).unwrap_or_default();
@@ -1239,8 +1244,9 @@ impl LubanRootView {
                 self.last_chat_item_count = rendered_item_count;
 
                 let mut in_progress_children = Vec::with_capacity(in_progress_items.len());
-                for item in in_progress_items {
+                for (index, item) in in_progress_items.into_iter().enumerate() {
                     in_progress_children.push(render_codex_item(
+                        &format!("in-progress-{generation}-{index}"),
                         item,
                         theme,
                         true,
@@ -1728,6 +1734,7 @@ fn render_conversation_entry(
             ))
             .w_full()
             .child(render_codex_item(
+                &format!("entry-{entry_index}-{}", codex_item_id(item.as_ref())),
                 item.as_ref(),
                 theme,
                 false,
@@ -1863,6 +1870,7 @@ fn build_workspace_history_children(
 
         for item in turn.agent_messages {
             children.push(render_codex_item(
+                &format!("{}-{}", turn_id, codex_item_id(item)),
                 item,
                 theme,
                 false,
@@ -1924,6 +1932,7 @@ fn build_workspace_history_children(
                 }
 
                 children.push(render_codex_item(
+                    &format!("entry-{entry_index}-{}", codex_item_id(item)),
                     item,
                     theme,
                     false,
@@ -2107,6 +2116,7 @@ fn render_tool_summary_item(
         .whitespace_normal()
         .pl_6()
         .child(render_codex_item_details(
+            &element_id,
             item,
             theme,
             chat_column_width,
@@ -2127,6 +2137,7 @@ fn render_tool_summary_item(
 }
 
 fn render_codex_item(
+    render_id: &str,
     item: &CodexThreadItem,
     theme: &gpui_component::Theme,
     in_progress: bool,
@@ -2134,18 +2145,19 @@ fn render_codex_item(
     chat_column_width: Option<Pixels>,
     view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
-    if !in_progress && let CodexThreadItem::AgentMessage { id, text } = item {
+    let item_id = codex_item_id(item);
+    if !in_progress && let CodexThreadItem::AgentMessage { id: _, text } = item {
         let wrap_width = chat_column_width.map(|w| (w - px(32.0)).max(px(0.0)));
         let message = chat_message_view(
-            &format!("agent-message-{id}"),
+            &format!("agent-message-{render_id}"),
             text,
             wrap_width,
             theme.foreground,
         );
-        let debug_id = format!("conversation-agent-message-{id}");
+        let debug_id = format!("conversation-agent-message-{render_id}");
         return div()
             .debug_selector(move || debug_id.clone())
-            .id(format!("codex-agent-message-{id}"))
+            .id(format!("codex-agent-message-{render_id}"))
             .w_full()
             .overflow_x_hidden()
             .px_2()
@@ -2158,9 +2170,8 @@ fn render_codex_item(
             .into_any_element();
     }
 
-    let id = codex_item_id(item);
     let always_expanded = matches!(item, CodexThreadItem::AgentMessage { .. });
-    let expanded = always_expanded || expanded_items.contains(id);
+    let expanded = always_expanded || expanded_items.contains(item_id);
 
     let (title, summary) = codex_item_summary(item, in_progress);
 
@@ -2168,7 +2179,7 @@ fn render_codex_item(
         None
     } else {
         let view_handle = view_handle.clone();
-        let id = id.to_owned();
+        let id = item_id.to_owned();
         let icon = if expanded {
             IconName::ChevronDown
         } else {
@@ -2176,7 +2187,7 @@ fn render_codex_item(
         };
         let tooltip = if expanded { "Hide" } else { "Show" };
         Some(
-            Button::new(format!("agent-item-toggle-{id}"))
+            Button::new(format!("agent-item-toggle-{render_id}"))
                 .ghost()
                 .compact()
                 .icon(icon)
@@ -2205,7 +2216,7 @@ fn render_codex_item(
                 .into_any_element()
         };
         return div()
-            .id(format!("codex-compact-{id}"))
+            .id(format!("codex-compact-{render_id}"))
             .h(px(28.0))
             .w_full()
             .px_1()
@@ -2247,7 +2258,7 @@ fn render_codex_item(
         .when_some(toggle_button, |s, b| s.child(b));
 
     div()
-        .id(format!("codex-item-{id}"))
+        .id(format!("codex-item-{render_id}"))
         .w_full()
         .child(
             Collapsible::new()
@@ -2260,6 +2271,7 @@ fn render_codex_item(
                 .border_color(theme.border)
                 .child(header)
                 .content(render_codex_item_details(
+                    render_id,
                     item,
                     theme,
                     chat_column_width,
@@ -2270,16 +2282,17 @@ fn render_codex_item(
 }
 
 fn render_codex_item_details(
+    render_id: &str,
     item: &CodexThreadItem,
     theme: &gpui_component::Theme,
     chat_column_width: Option<Pixels>,
     _view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
     match item {
-        CodexThreadItem::AgentMessage { id, text } => {
+        CodexThreadItem::AgentMessage { id: _, text } => {
             let wrap_width = chat_column_width.map(|w| (w - px(80.0)).max(px(0.0)));
             let message = chat_message_view(
-                &format!("agent-message-{id}-details"),
+                &format!("agent-message-{render_id}-details"),
                 text,
                 wrap_width,
                 theme.foreground,
@@ -2293,10 +2306,10 @@ fn render_codex_item_details(
                 ))
                 .into_any_element()
         }
-        CodexThreadItem::Reasoning { id, text } => {
+        CodexThreadItem::Reasoning { id: _, text } => {
             let wrap_width = chat_column_width.map(|w| (w - px(80.0)).max(px(0.0)));
             let message = chat_message_view(
-                &format!("reasoning-{id}-details"),
+                &format!("reasoning-{render_id}-details"),
                 text,
                 wrap_width,
                 theme.muted_foreground,
@@ -2311,7 +2324,7 @@ fn render_codex_item_details(
                 .into_any_element()
         }
         CodexThreadItem::CommandExecution {
-            id,
+            id: _,
             command,
             aggregated_output,
             exit_code,
@@ -2331,7 +2344,7 @@ fn render_codex_item_details(
                     .whitespace_normal()
                     .child(
                         chat_markdown_view(
-                            &format!("command-{id}-details"),
+                            &format!("command-{render_id}-details"),
                             &fenced_code_block("sh", command),
                             chat_column_width.map(|w| (w - px(80.0)).max(px(0.0))),
                         )
@@ -2346,7 +2359,7 @@ fn render_codex_item_details(
                         .whitespace_normal()
                         .child(
                             chat_markdown_view(
-                                &format!("command-{id}-output"),
+                                &format!("command-{render_id}-output"),
                                 &fenced_code_block("", aggregated_output),
                                 chat_column_width.map(|w| (w - px(80.0)).max(px(0.0))),
                             )
@@ -3055,9 +3068,71 @@ mod tests {
         window_cx.refresh().unwrap();
 
         let bounds = window_cx
-            .debug_bounds("conversation-agent-message-item-1")
-            .expect("missing debug bounds for conversation-agent-message-item-1");
+            .debug_bounds("conversation-agent-message-agent-turn-0-item-1")
+            .expect("missing debug bounds for conversation-agent-message-agent-turn-0-item-1");
         assert!(bounds.size.height > px(0.0));
+    }
+
+    #[gpui::test]
+    async fn duplicate_agent_message_ids_render_independently(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: vec![
+                    ConversationEntry::UserMessage {
+                        text: "First".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "item-1".to_owned(),
+                            text: "First reply".to_owned(),
+                        }),
+                    },
+                    ConversationEntry::UserMessage {
+                        text: "Second".to_owned(),
+                    },
+                    ConversationEntry::CodexItem {
+                        item: Box::new(CodexThreadItem::AgentMessage {
+                            id: "item-1".to_owned(),
+                            text: "Second reply".to_owned(),
+                        }),
+                    },
+                ],
+            },
+        });
+
+        let (_, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        let first = window_cx
+            .debug_bounds("conversation-agent-message-agent-turn-0-item-1")
+            .expect("missing debug bounds for conversation-agent-message-agent-turn-0-item-1");
+        let second = window_cx
+            .debug_bounds("conversation-agent-message-agent-turn-1-item-1")
+            .expect("missing debug bounds for conversation-agent-message-agent-turn-1-item-1");
+
+        assert!(first.size.height > px(0.0));
+        assert!(second.size.height > px(0.0));
+        assert!(second.top() > first.top());
     }
 
     #[gpui::test]
