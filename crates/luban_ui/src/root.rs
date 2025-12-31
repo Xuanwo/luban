@@ -1770,7 +1770,13 @@ fn min_width_zero(mut element: gpui::Div) -> gpui::Div {
 struct TurnSummaryCounts {
     tool_calls: usize,
     reasonings: usize,
-    messages: usize,
+}
+
+fn format_agent_turn_summary(counts: TurnSummaryCounts) -> String {
+    format!(
+        "{} tool calls, {} thinking",
+        counts.tool_calls, counts.reasonings
+    )
 }
 
 fn build_workspace_history_children(
@@ -1785,7 +1791,6 @@ fn build_workspace_history_children(
         id: String,
         tool_calls: usize,
         reasonings: usize,
-        messages: usize,
         summary_items: Vec<&'a CodexThreadItem>,
         agent_messages: Vec<&'a CodexThreadItem>,
     }
@@ -1807,7 +1812,6 @@ fn build_workspace_history_children(
             TurnSummaryCounts {
                 tool_calls: turn.tool_calls,
                 reasonings: turn.reasonings,
-                messages: turn.messages,
             },
             !turn.summary_items.is_empty(),
             expanded,
@@ -1877,7 +1881,6 @@ fn build_workspace_history_children(
                     id: format!("agent-turn-{turn_index}"),
                     tool_calls: 0,
                     reasonings: 0,
-                    messages: 0,
                     summary_items: Vec::new(),
                     agent_messages: Vec::new(),
                 });
@@ -1887,7 +1890,6 @@ fn build_workspace_history_children(
                 let item = item.as_ref();
                 if let Some(turn) = &mut current_turn {
                     if matches!(item, CodexThreadItem::AgentMessage { .. }) {
-                        turn.messages += 1;
                         turn.agent_messages.push(item);
                         continue;
                     }
@@ -1994,10 +1996,7 @@ fn render_agent_turn_summary_row(
                     .truncate()
                     .text_left()
                     .text_color(theme.muted_foreground)
-                    .child(format!(
-                        "{} tool calls, {} reasoning, {} messages",
-                        counts.tool_calls, counts.reasonings, counts.messages
-                    )),
+                    .child(format_agent_turn_summary(counts)),
             ))
             .child(div().w(px(16.0)).when(has_ops, |s| {
                 let debug_id = format!("agent-turn-toggle-{id}");
@@ -2736,6 +2735,17 @@ mod tests {
     use luban_domain::ConversationEntry;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn agent_turn_summary_uses_thinking_label_and_omits_messages() {
+        let summary = format_agent_turn_summary(TurnSummaryCounts {
+            tool_calls: 2,
+            reasonings: 3,
+        });
+        assert_eq!(summary, "2 tool calls, 3 thinking");
+        assert!(!summary.contains("message"));
+        assert!(!summary.contains("reasoning"));
+    }
 
     #[derive(Default)]
     struct FakeService;
