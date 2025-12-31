@@ -176,6 +176,52 @@ fn entry_is_same_codex_item(entry: &ConversationEntry, item: &CodexThreadItem) -
     }
 }
 
+fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
+    match (a, b) {
+        (
+            ConversationEntry::UserMessage { text: a },
+            ConversationEntry::UserMessage { text: b },
+        ) => a == b,
+        (ConversationEntry::CodexItem { item: a }, ConversationEntry::CodexItem { item: b }) => {
+            codex_item_id(a) == codex_item_id(b)
+        }
+        (ConversationEntry::TurnUsage { usage: a }, ConversationEntry::TurnUsage { usage: b }) => {
+            a == b
+        }
+        (
+            ConversationEntry::TurnDuration { duration_ms: a },
+            ConversationEntry::TurnDuration { duration_ms: b },
+        ) => a == b,
+        (ConversationEntry::TurnCanceled, ConversationEntry::TurnCanceled) => true,
+        (
+            ConversationEntry::TurnError { message: a },
+            ConversationEntry::TurnError { message: b },
+        ) => a == b,
+        _ => false,
+    }
+}
+
+fn entries_is_prefix(prefix: &[ConversationEntry], full: &[ConversationEntry]) -> bool {
+    if prefix.len() > full.len() {
+        return false;
+    }
+    prefix
+        .iter()
+        .zip(full.iter())
+        .all(|(a, b)| entry_is_same(a, b))
+}
+
+fn entries_is_suffix(suffix: &[ConversationEntry], full: &[ConversationEntry]) -> bool {
+    if suffix.len() > full.len() {
+        return false;
+    }
+    let offset = full.len() - suffix.len();
+    suffix
+        .iter()
+        .zip(full.iter().skip(offset))
+        .all(|(a, b)| entry_is_same(a, b))
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConversationSnapshot {
     pub thread_id: Option<String>,
@@ -524,6 +570,28 @@ impl AppState {
                 workspace_id,
                 snapshot,
             } => {
+                if let Some(conversation) = self.conversations.get_mut(&workspace_id)
+                    && conversation.run_status == OperationStatus::Running
+                {
+                    if conversation.thread_id.is_none() {
+                        conversation.thread_id = snapshot.thread_id;
+                    }
+
+                    if conversation.entries.is_empty() {
+                        conversation.entries = snapshot.entries;
+                        return Vec::new();
+                    }
+
+                    let snapshot_is_newer =
+                        entries_is_prefix(&conversation.entries, &snapshot.entries)
+                            || entries_is_suffix(&conversation.entries, &snapshot.entries);
+                    if snapshot_is_newer {
+                        conversation.entries = snapshot.entries;
+                    }
+
+                    return Vec::new();
+                }
+
                 let draft = self
                     .conversations
                     .get(&workspace_id)
@@ -1117,6 +1185,60 @@ mod tests {
             },
         });
         assert_eq!(state.workspace_conversation(w1).unwrap().draft, "draft-1");
+    }
+
+    #[test]
+    fn conversation_loaded_does_not_reset_running_turn_state() {
+        let mut state = AppState::demo();
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Hello".to_owned(),
+        });
+
+        let item = CodexThreadItem::AgentMessage {
+            id: "item_0".to_owned(),
+            text: "Hi".to_owned(),
+        };
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemStarted { item },
+        });
+
+        assert_eq!(
+            state
+                .workspace_conversation(workspace_id)
+                .unwrap()
+                .run_status,
+            OperationStatus::Running
+        );
+        assert_eq!(
+            state
+                .workspace_conversation(workspace_id)
+                .unwrap()
+                .in_progress_items
+                .len(),
+            1
+        );
+
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            snapshot: ConversationSnapshot {
+                thread_id: Some("thread_0".to_owned()),
+                entries: Vec::new(),
+            },
+        });
+
+        let conversation = state.workspace_conversation(workspace_id).unwrap();
+        assert_eq!(conversation.run_status, OperationStatus::Running);
+        assert_eq!(conversation.in_progress_items.len(), 1);
+        assert_eq!(conversation.entries.len(), 1);
+        assert!(matches!(
+            &conversation.entries[0],
+            ConversationEntry::UserMessage { text } if text == "Hello"
+        ));
+        assert_eq!(conversation.thread_id.as_deref(), Some("thread_0"));
     }
 
     #[test]
