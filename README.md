@@ -32,7 +32,9 @@ just run
 
 The Agent chat panel uses the `@openai/codex-sdk` TypeScript SDK via a small sidecar.
 
-Preferred: bundle the sidecar into a single script (so running the app does not require `npm install`):
+The bundled sidecar (`tools/codex_sidecar/dist/run.mjs`) is checked in. You generally should not rebuild it unless you bump the SDK version.
+
+To rebuild the bundled script:
 
 ```bash
 just sidecar-build

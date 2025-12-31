@@ -20,10 +20,10 @@ test:
 test-fast:
   cargo test -p luban_domain
 
-run: sidecar-build
+run:
   cargo run -p luban_app
 
-build: sidecar-build
+build:
   cargo build -p luban_app
 
 ci: fmt lint test
