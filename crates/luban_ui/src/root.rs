@@ -1062,6 +1062,23 @@ impl LubanRootView {
             let input_state = input_state.clone();
             move |this: &mut LubanRootView, _, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Change => {
+                    if let MainPane::Workspace(workspace_id) = this.state.main_pane {
+                        let text = input_state.read(cx).value().to_owned();
+                        let existing = this
+                            .state
+                            .workspace_conversation(workspace_id)
+                            .map(|c| c.draft.as_str())
+                            .unwrap_or("");
+                        if text != existing {
+                            this.dispatch(
+                                Action::ChatDraftChanged {
+                                    workspace_id,
+                                    text: text.to_string(),
+                                },
+                                cx,
+                            );
+                        }
+                    }
                     cx.notify();
                 }
                 InputEvent::PressEnter { secondary: true } => {
@@ -1134,7 +1151,6 @@ impl LubanRootView {
                 }
 
                 let input_state = self.ensure_chat_input(window, cx);
-                let theme = cx.theme();
 
                 let conversation = self.state.workspace_conversation(workspace_id);
                 let entries: &[luban_domain::ConversationEntry] =
@@ -1152,6 +1168,19 @@ impl LubanRootView {
                 let _thread_id = conversation.and_then(|c| c.thread_id.as_deref());
 
                 let is_running = run_status == OperationStatus::Running;
+                let workspace_changed = self.last_chat_workspace_id != Some(workspace_id);
+                if workspace_changed {
+                    let saved_draft = conversation.map(|c| c.draft.clone()).unwrap_or_default();
+                    let current_value = input_state.read(cx).value().to_owned();
+                    if current_value != saved_draft.as_str() {
+                        input_state.update(cx, move |state, cx| {
+                            state.set_value(&saved_draft, window, cx);
+                        });
+                    }
+                }
+
+                let theme = cx.theme();
+
                 let draft = input_state.read(cx).value().trim().to_owned();
                 let send_disabled = draft.is_empty();
                 let running_elapsed = if is_running {
@@ -1190,7 +1219,6 @@ impl LubanRootView {
                     (-offset.y) >= threshold
                 };
 
-                let workspace_changed = self.last_chat_workspace_id != Some(workspace_id);
                 let item_count_increased =
                     !workspace_changed && rendered_item_count > self.last_chat_item_count;
                 if workspace_changed || (item_count_increased && pinned_to_bottom) {
@@ -3440,5 +3468,81 @@ mod tests {
             .debug_bounds("turn-duration-2")
             .expect("missing debug bounds for turn-duration-2");
         assert!(bounds.size.width > px(0.0));
+    }
+
+    #[gpui::test]
+    async fn chat_input_draft_is_isolated_per_workspace(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w2".to_owned(),
+            branch_name: "repo/w2".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w2"),
+        });
+        let w1 = state.projects[0].workspaces[0].id;
+        let w2 = state.projects[0].workspaces[1].id;
+
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w1,
+            text: "draft-1".to_owned(),
+        });
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w2,
+            text: "draft-2".to_owned(),
+        });
+        state.main_pane = MainPane::Workspace(w1);
+
+        let (view, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        let value = view.read_with(window_cx, |v, cx| {
+            v.chat_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+        });
+        assert_eq!(value, Some("draft-1".to_owned()));
+
+        window_cx.update(|_, app| {
+            view.update(app, |view, cx| {
+                view.dispatch(Action::OpenWorkspace { workspace_id: w2 }, cx);
+            });
+        });
+        window_cx.refresh().unwrap();
+
+        let value = view.read_with(window_cx, |v, cx| {
+            v.chat_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+        });
+        assert_eq!(value, Some("draft-2".to_owned()));
+
+        window_cx.update(|_, app| {
+            view.update(app, |view, cx| {
+                view.dispatch(Action::OpenWorkspace { workspace_id: w1 }, cx);
+            });
+        });
+        window_cx.refresh().unwrap();
+
+        let value = view.read_with(window_cx, |v, cx| {
+            v.chat_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+        });
+        assert_eq!(value, Some("draft-1".to_owned()));
     }
 }

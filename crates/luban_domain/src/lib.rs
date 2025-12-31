@@ -185,6 +185,7 @@ pub struct ConversationSnapshot {
 #[derive(Clone, Debug)]
 pub struct WorkspaceConversation {
     pub thread_id: Option<String>,
+    pub draft: String,
     pub entries: Vec<ConversationEntry>,
     pub run_status: OperationStatus,
     pub in_progress_items: BTreeMap<String, CodexThreadItem>,
@@ -300,6 +301,10 @@ pub enum Action {
         message: String,
     },
     SendAgentMessage {
+        workspace_id: WorkspaceId,
+        text: String,
+    },
+    ChatDraftChanged {
         workspace_id: WorkspaceId,
         text: String,
     },
@@ -445,6 +450,7 @@ impl AppState {
                     workspace_id,
                     WorkspaceConversation {
                         thread_id: None,
+                        draft: String::new(),
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
@@ -518,10 +524,16 @@ impl AppState {
                 workspace_id,
                 snapshot,
             } => {
+                let draft = self
+                    .conversations
+                    .get(&workspace_id)
+                    .map(|c| c.draft.clone())
+                    .unwrap_or_default();
                 self.conversations.insert(
                     workspace_id,
                     WorkspaceConversation {
                         thread_id: snapshot.thread_id,
+                        draft,
                         entries: snapshot.entries,
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
@@ -542,6 +554,7 @@ impl AppState {
                 let conversation = self.conversations.entry(workspace_id).or_insert_with(|| {
                     WorkspaceConversation {
                         thread_id: None,
+                        draft: String::new(),
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
@@ -549,6 +562,7 @@ impl AppState {
                         queue_paused: false,
                     }
                 });
+                conversation.draft.clear();
 
                 if conversation.run_status == OperationStatus::Running {
                     conversation.pending_prompts.push_back(text);
@@ -578,6 +592,21 @@ impl AppState {
                 start_next_queued_prompt(conversation, workspace_id)
                     .into_iter()
                     .collect()
+            }
+            Action::ChatDraftChanged { workspace_id, text } => {
+                let conversation = self.conversations.entry(workspace_id).or_insert_with(|| {
+                    WorkspaceConversation {
+                        thread_id: None,
+                        draft: String::new(),
+                        entries: Vec::new(),
+                        run_status: OperationStatus::Idle,
+                        in_progress_items: BTreeMap::new(),
+                        pending_prompts: VecDeque::new(),
+                        queue_paused: false,
+                    }
+                });
+                conversation.draft = text;
+                Vec::new()
             }
             Action::RemoveQueuedPrompt {
                 workspace_id,
@@ -612,6 +641,7 @@ impl AppState {
                 let conversation = self.conversations.entry(workspace_id).or_insert_with(|| {
                     WorkspaceConversation {
                         thread_id: None,
+                        draft: String::new(),
                         entries: Vec::new(),
                         run_status: OperationStatus::Idle,
                         in_progress_items: BTreeMap::new(),
@@ -1041,6 +1071,52 @@ mod tests {
         let effects = state.apply(Action::OpenWorkspace { workspace_id });
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], Effect::LoadConversation { .. }));
+    }
+
+    #[test]
+    fn chat_drafts_are_isolated_and_preserved_on_reload() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/repo/worktrees/w1"),
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w2".to_owned(),
+            branch_name: "repo/w2".to_owned(),
+            worktree_path: PathBuf::from("/tmp/repo/worktrees/w2"),
+        });
+
+        let w1 = state.projects[0].workspaces[0].id;
+        let w2 = state.projects[0].workspaces[1].id;
+
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w1,
+            text: "draft-1".to_owned(),
+        });
+        state.apply(Action::ChatDraftChanged {
+            workspace_id: w2,
+            text: "draft-2".to_owned(),
+        });
+
+        assert_eq!(state.workspace_conversation(w1).unwrap().draft, "draft-1");
+        assert_eq!(state.workspace_conversation(w2).unwrap().draft, "draft-2");
+
+        state.apply(Action::ConversationLoaded {
+            workspace_id: w1,
+            snapshot: ConversationSnapshot {
+                thread_id: None,
+                entries: Vec::new(),
+            },
+        });
+        assert_eq!(state.workspace_conversation(w1).unwrap().draft, "draft-1");
     }
 
     #[test]
