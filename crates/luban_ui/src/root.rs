@@ -51,6 +51,8 @@ pub trait ProjectWorkspaceService: Send + Sync {
         project_slug: String,
     ) -> Result<CreatedWorkspace, String>;
 
+    fn open_workspace_in_ide(&self, worktree_path: PathBuf) -> Result<(), String>;
+
     fn archive_workspace(
         &self,
         project_path: PathBuf,
@@ -275,6 +277,9 @@ impl LubanRootView {
             Effect::LoadAppState => self.run_load_app_state(cx),
             Effect::SaveAppState => self.run_save_app_state(cx),
             Effect::CreateWorkspace { project_id } => self.run_create_workspace(project_id, cx),
+            Effect::OpenWorkspaceInIde { workspace_id } => {
+                self.run_open_workspace_in_ide(workspace_id, cx)
+            }
             Effect::ArchiveWorkspace { workspace_id } => {
                 self.run_archive_workspace(workspace_id, cx)
             }
@@ -345,6 +350,46 @@ impl LubanRootView {
                         &mut async_cx,
                         |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
                             view.dispatch(action, view_cx)
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn run_open_workspace_in_ide(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        let Some(workspace) = self.state.workspace(workspace_id) else {
+            self.dispatch(
+                Action::OpenWorkspaceInIdeFailed {
+                    message: "Workspace not found".to_owned(),
+                },
+                cx,
+            );
+            return;
+        };
+
+        let services = self.services.clone();
+        let worktree_path = workspace.worktree_path.clone();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(
+                            async move { services.open_workspace_in_ide(worktree_path) },
+                        )
+                        .await;
+
+                    let Err(message) = result else {
+                        return;
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(Action::OpenWorkspaceInIdeFailed { message }, view_cx)
                         },
                     );
                 }
@@ -1128,7 +1173,6 @@ impl LubanRootView {
     fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let view_handle = cx.entity().downgrade();
         let title = main_pane_title(&self.state, self.state.main_pane);
-        let show_title_bar = matches!(self.state.main_pane, MainPane::ProjectSettings(_));
 
         let content = match self.state.main_pane {
             MainPane::None => {
@@ -1673,6 +1717,49 @@ impl LubanRootView {
         };
 
         let theme = cx.theme();
+        let ide_workspace_id = match self.state.main_pane {
+            MainPane::Workspace(workspace_id) if self.state.workspace(workspace_id).is_some() => {
+                Some(workspace_id)
+            }
+            _ => None,
+        };
+        let ide_tooltip = if ide_workspace_id.is_some() {
+            "Open in Zed"
+        } else {
+            "Select a workspace to open in Zed"
+        };
+        let open_in_zed_button = {
+            let view_handle = view_handle.clone();
+            Button::new("open-in-zed")
+                .ghost()
+                .compact()
+                .disabled(ide_workspace_id.is_none())
+                .icon(
+                    Icon::empty()
+                        .path("icons/zed.svg")
+                        .with_size(Size::Small)
+                        .text_color(theme.muted_foreground),
+                )
+                .label("Zed")
+                .tooltip(ide_tooltip)
+                .on_click(move |_, _, app| {
+                    let Some(workspace_id) = ide_workspace_id else {
+                        return;
+                    };
+                    let _ = view_handle.update(app, |view, cx| {
+                        view.dispatch(Action::OpenWorkspaceInIde { workspace_id }, cx);
+                    });
+                })
+        };
+        let ide_tile = div()
+            .h(px(28.0))
+            .px_1()
+            .flex()
+            .items_center()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .child(open_in_zed_button);
         let title_bar = div()
             .h(px(44.0))
             .px_4()
@@ -1682,7 +1769,8 @@ impl LubanRootView {
             .border_b_1()
             .border_color(theme.title_bar_border)
             .bg(theme.title_bar)
-            .child(div().text_sm().child(title));
+            .child(div().text_sm().child(title))
+            .child(ide_tile);
 
         min_width_zero(
             div()
@@ -1691,7 +1779,7 @@ impl LubanRootView {
                 .flex()
                 .flex_col()
                 .bg(theme.background)
-                .when(show_title_bar, |s| s.child(title_bar))
+                .child(title_bar)
                 .when_some(self.state.last_error.clone(), |s, message| {
                     let theme = cx.theme();
                     let view_handle = cx.entity().downgrade();
@@ -3124,6 +3212,10 @@ mod tests {
                 branch_name: "luban/abandon-about".to_owned(),
                 worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
             })
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Ok(())
         }
 
         fn archive_workspace(

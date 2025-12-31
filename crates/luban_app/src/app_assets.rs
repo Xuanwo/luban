@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 const BRAIN_SVG: &[u8] = include_bytes!("../assets/icons/brain.svg");
 const TIMER_SVG: &[u8] = include_bytes!("../assets/icons/timer.svg");
+const ZED_SVG: &[u8] = include_bytes!("../assets/icons/zed.svg");
 
 pub struct AppAssets {
     fallback: ComponentAssets,
@@ -26,6 +27,7 @@ impl AssetSource for AppAssets {
         match path {
             "icons/brain.svg" => Ok(Some(Cow::Borrowed(BRAIN_SVG))),
             "icons/timer.svg" => Ok(Some(Cow::Borrowed(TIMER_SVG))),
+            "icons/zed.svg" => Ok(Some(Cow::Borrowed(ZED_SVG))),
             _ => self.fallback.load(path),
         }
     }
@@ -38,6 +40,9 @@ impl AssetSource for AppAssets {
         }
         if "icons/timer.svg".starts_with(path) {
             assets.push("icons/timer.svg".into());
+        }
+        if "icons/zed.svg".starts_with(path) {
+            assets.push("icons/zed.svg".into());
         }
 
         assets.sort();

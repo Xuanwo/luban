@@ -799,6 +799,38 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         result.map_err(|e| format!("{e:#}"))
     }
 
+    fn open_workspace_in_ide(&self, worktree_path: PathBuf) -> Result<(), String> {
+        let result: anyhow::Result<()> = (|| {
+            if !worktree_path.exists() {
+                return Err(anyhow!(
+                    "workspace path does not exist: {}",
+                    worktree_path.display()
+                ));
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                let status = Command::new("open")
+                    .args(["-a", "Zed"])
+                    .arg(&worktree_path)
+                    .status()
+                    .context("failed to spawn 'open -a Zed'")?;
+                if !status.success() {
+                    return Err(anyhow!("'open -a Zed' exited with status: {status}"));
+                }
+                Ok(())
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = worktree_path;
+                Err(anyhow!("open in IDE is only supported on macOS for now"))
+            }
+        })();
+
+        result.map_err(|e| format!("{e:#}"))
+    }
+
     fn archive_workspace(
         &self,
         project_path: PathBuf,
