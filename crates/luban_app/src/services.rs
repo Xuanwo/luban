@@ -571,6 +571,26 @@ impl GitWorkspaceService {
 mod tests {
     use super::*;
 
+    fn run_git(repo_path: &Path, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .expect("git should spawn")
+    }
+
+    fn assert_git_success(repo_path: &Path, args: &[&str]) {
+        let output = run_git(repo_path, args);
+        if !output.status.success() {
+            panic!(
+                "git failed ({:?}):\nstdout:\n{}\nstderr:\n{}",
+                args,
+                String::from_utf8_lossy(&output.stdout).trim(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+    }
+
     #[test]
     fn transient_reconnect_notice_detection_is_stable() {
         assert!(is_transient_reconnect_notice("reconnecting ...1/5"));
@@ -613,6 +633,85 @@ mod tests {
     fn sidecar_stdout_parsing_treats_plain_text_as_noise() {
         let parsed = parse_sidecar_stdout_line("retry/reconnect").expect("parse should succeed");
         assert!(matches!(parsed, SidecarStdoutLine::Noise { .. }));
+    }
+
+    #[test]
+    fn worktree_remove_force_allows_dirty_worktree() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be valid")
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!(
+            "luban-worktree-remove-force-{}-{}",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let repo_path = base_dir.join("repo");
+        std::fs::create_dir_all(&repo_path).expect("repo dir should be created");
+
+        assert_git_success(&repo_path, &["init"]);
+        assert_git_success(&repo_path, &["config", "user.name", "Test User"]);
+        assert_git_success(&repo_path, &["config", "user.email", "test@example.com"]);
+
+        let tracked_file = repo_path.join("tracked.txt");
+        std::fs::write(&tracked_file, "hello\n").expect("write should succeed");
+        assert_git_success(&repo_path, &["add", "."]);
+        assert_git_success(&repo_path, &["commit", "-m", "init"]);
+
+        let worktree_path = base_dir.join("worktree");
+        let branch_name = format!("luban-test-branch-{unique}");
+        assert_git_success(
+            &repo_path,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &branch_name,
+                worktree_path
+                    .to_str()
+                    .expect("worktree path should be utf-8"),
+            ],
+        );
+
+        let dirty_file = worktree_path.join("tracked.txt");
+        std::fs::write(&dirty_file, "hello\ndirty\n").expect("write should succeed");
+
+        let no_force = run_git(
+            &repo_path,
+            &[
+                "worktree",
+                "remove",
+                worktree_path
+                    .to_str()
+                    .expect("worktree path should be utf-8"),
+            ],
+        );
+        assert!(
+            !no_force.status.success(),
+            "worktree remove without --force should fail for dirty worktree"
+        );
+
+        let sqlite = SqliteStore::new(base_dir.join("luban.db")).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: base_dir.join("worktrees"),
+            conversations_root: base_dir.join("conversations"),
+            agent_sidecar_dir: base_dir.join("sidecar"),
+            sqlite,
+        };
+
+        ProjectWorkspaceService::archive_workspace(
+            &service,
+            repo_path.clone(),
+            worktree_path.clone(),
+        )
+        .expect("archive_workspace should remove dirty worktree with --force");
+        assert!(!worktree_path.exists(), "worktree path should be removed");
+
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
     }
 }
 
@@ -709,7 +808,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let path_str = worktree_path
                 .to_str()
                 .ok_or_else(|| anyhow!("invalid worktree path"))?;
-            self.run_git(&project_path, ["worktree", "remove", path_str])
+            self.run_git(&project_path, ["worktree", "remove", "--force", path_str])
                 .with_context(|| {
                     format!("failed to remove worktree at {}", worktree_path.display())
                 })?;
