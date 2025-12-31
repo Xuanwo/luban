@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Context, ElementId, IntoElement, MouseButton, Pixels,
-    PromptButton, PromptLevel, SharedString, Window, div, ease_out_quint, px, rems,
+    AnyElement, Context, ElementId, IntoElement, MouseButton, Pixels, PromptButton, PromptLevel,
+    SharedString, Window, div, px, rems,
 };
 use gpui_component::input::RopeExt as _;
 use gpui_component::{
@@ -83,10 +83,11 @@ pub struct LubanRootView {
     chat_input: Option<gpui::Entity<InputState>>,
     expanded_agent_items: HashSet<String>,
     expanded_agent_turns: HashSet<String>,
-    expanded_running_summaries: HashSet<WorkspaceId>,
     chat_column_width: Option<Pixels>,
     running_turn_started_at: HashMap<WorkspaceId, Instant>,
     running_turn_tickers: HashSet<WorkspaceId>,
+    running_turn_user_message_count: HashMap<WorkspaceId, usize>,
+    running_turn_summary_order: HashMap<WorkspaceId, Vec<String>>,
     turn_generation: HashMap<WorkspaceId, u64>,
     turn_cancel_flags: HashMap<WorkspaceId, Arc<AtomicBool>>,
     chat_scroll_handle: gpui::ScrollHandle,
@@ -106,10 +107,11 @@ impl LubanRootView {
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
-            expanded_running_summaries: HashSet::new(),
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            running_turn_user_message_count: HashMap::new(),
+            running_turn_summary_order: HashMap::new(),
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
@@ -137,10 +139,11 @@ impl LubanRootView {
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
-            expanded_running_summaries: HashSet::new(),
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            running_turn_user_message_count: HashMap::new(),
+            running_turn_summary_order: HashMap::new(),
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
@@ -176,6 +179,12 @@ impl LubanRootView {
             _ => None,
         };
 
+        let stop_timer_turn_id = stop_timer_workspace.and_then(|workspace_id| {
+            self.state
+                .workspace_conversation(workspace_id)
+                .and_then(|c| latest_agent_turn_id(&c.entries))
+        });
+
         let effects = self.state.apply(action);
         cx.notify();
 
@@ -193,6 +202,12 @@ impl LubanRootView {
         if let Some(workspace_id) = stop_timer_workspace {
             self.running_turn_started_at.remove(&workspace_id);
             self.running_turn_tickers.remove(&workspace_id);
+            self.running_turn_user_message_count.remove(&workspace_id);
+            self.running_turn_summary_order.remove(&workspace_id);
+            if let Some(turn_id) = stop_timer_turn_id {
+                self.collapse_agent_turn_summary(&turn_id);
+            }
+            cx.notify();
         }
 
         for effect in effects {
@@ -206,23 +221,19 @@ impl LubanRootView {
         *entry
     }
 
+    fn collapse_agent_turn_summary(&mut self, id: &str) {
+        self.expanded_agent_turns.remove(id);
+        let prefix = format!("{id}::");
+        self.expanded_agent_items
+            .retain(|item_id| !item_id.starts_with(&prefix));
+    }
+
     fn toggle_agent_turn_expanded(&mut self, id: &str) {
         if self.expanded_agent_turns.contains(id) {
             self.expanded_agent_turns.remove(id);
         } else {
             self.expanded_agent_turns.insert(id.to_owned());
             let prefix = format!("{id}::");
-            self.expanded_agent_items
-                .retain(|item_id| !item_id.starts_with(&prefix));
-        }
-    }
-
-    fn toggle_running_summary_expanded(&mut self, workspace_id: WorkspaceId) {
-        if self.expanded_running_summaries.contains(&workspace_id) {
-            self.expanded_running_summaries.remove(&workspace_id);
-        } else {
-            self.expanded_running_summaries.insert(workspace_id);
-            let prefix = format!("running-{workspace_id:?}::");
             self.expanded_agent_items
                 .retain(|item_id| !item_id.starts_with(&prefix));
         }
@@ -1234,8 +1245,84 @@ impl LubanRootView {
                 let expanded = self.expanded_agent_items.clone();
                 let expanded_turns = self.expanded_agent_turns.clone();
                 let has_in_progress_items = !ordered_in_progress_items.is_empty();
-                let running_summary_expanded =
-                    self.expanded_running_summaries.contains(&workspace_id);
+                let force_expand_current_turn = is_running || has_in_progress_items;
+
+                let running_turn_summary_items: Vec<&CodexThreadItem> = if force_expand_current_turn
+                {
+                    let turn_count = agent_turn_count(entries);
+                    if self
+                        .running_turn_user_message_count
+                        .get(&workspace_id)
+                        .copied()
+                        != Some(turn_count)
+                    {
+                        self.running_turn_user_message_count
+                            .insert(workspace_id, turn_count);
+                        self.running_turn_summary_order
+                            .insert(workspace_id, Vec::new());
+                    }
+
+                    let order = self
+                        .running_turn_summary_order
+                        .entry(workspace_id)
+                        .or_default();
+
+                    if let Some(conversation) = conversation {
+                        for id in conversation.in_progress_order.iter() {
+                            let Some(item) = conversation.in_progress_items.get(id) else {
+                                continue;
+                            };
+                            if !codex_item_is_summary_item(item) {
+                                continue;
+                            }
+                            if order.iter().any(|v| v == id) {
+                                continue;
+                            }
+                            order.push(id.clone());
+                        }
+                    }
+
+                    if let Some(last_user_message_index) = entries.iter().rposition(|e| {
+                        matches!(e, luban_domain::ConversationEntry::UserMessage { .. })
+                    }) {
+                        for entry in &entries[(last_user_message_index + 1)..] {
+                            let luban_domain::ConversationEntry::CodexItem { item } = entry else {
+                                continue;
+                            };
+                            let item = item.as_ref();
+                            if !codex_item_is_summary_item(item) {
+                                continue;
+                            }
+                            let id = codex_item_id(item);
+                            if order.iter().any(|v| v == id) {
+                                continue;
+                            }
+                            order.push(id.to_owned());
+                        }
+                    }
+
+                    let order_snapshot = order.clone();
+                    let mut items = Vec::new();
+                    if let Some(conversation) = conversation {
+                        for id in &order_snapshot {
+                            if let Some(item) = conversation.in_progress_items.get(id) {
+                                if codex_item_is_summary_item(item) {
+                                    items.push(item);
+                                }
+                                continue;
+                            }
+
+                            if let Some(item) = find_summary_item_in_current_turn(entries, id) {
+                                items.push(item);
+                            }
+                        }
+                    }
+                    items
+                } else {
+                    self.running_turn_user_message_count.remove(&workspace_id);
+                    self.running_turn_summary_order.remove(&workspace_id);
+                    Vec::new()
+                };
 
                 let history_children = build_workspace_history_children(
                     entries,
@@ -1244,6 +1331,8 @@ impl LubanRootView {
                     &expanded_turns,
                     self.chat_column_width,
                     &view_handle,
+                    &running_turn_summary_items,
+                    force_expand_current_turn,
                 );
 
                 let pinned_to_bottom = {
@@ -1288,22 +1377,6 @@ impl LubanRootView {
                 self.last_chat_workspace_id = Some(workspace_id);
                 self.last_chat_item_count = entries_len;
 
-                let should_show_running_summary = is_running || has_in_progress_items;
-                let running_summary = if should_show_running_summary {
-                    Some(render_running_summary_panel(
-                        workspace_id,
-                        is_running,
-                        &ordered_in_progress_items,
-                        running_summary_expanded,
-                        theme,
-                        &expanded,
-                        self.chat_column_width,
-                        &view_handle,
-                    ))
-                } else {
-                    None
-                };
-
                 let history = div()
                     .flex_1()
                     .id("workspace-chat-scroll")
@@ -1341,7 +1414,6 @@ impl LubanRootView {
                             .whitespace_normal()
                             .pb(px(160.0))
                             .children(history_children)
-                            .when_some(running_summary, |s, summary| s.child(summary))
                             .when_some(running_elapsed, |s, elapsed| {
                                 s.child(render_turn_duration_row(theme, elapsed, true))
                             }),
@@ -1866,261 +1938,60 @@ fn format_agent_turn_summary(counts: TurnSummaryCounts) -> String {
     )
 }
 
-fn format_running_summary_header(
-    is_running: bool,
-    counts: TurnSummaryCounts,
-    has_items: bool,
-) -> String {
-    if is_running && !has_items {
-        "Thinking…".to_owned()
-    } else if is_running {
-        format!("{} • In progress", format_agent_turn_summary(counts))
-    } else {
-        format_agent_turn_summary(counts)
+fn format_agent_turn_summary_header(counts: TurnSummaryCounts, in_progress: bool) -> String {
+    if !in_progress {
+        return format_agent_turn_summary(counts);
     }
+
+    if counts.tool_calls == 0 && counts.reasonings == 0 {
+        return "In progress".to_owned();
+    }
+
+    format!("{} • In progress", format_agent_turn_summary(counts))
 }
 
-fn running_turn_id(workspace_id: WorkspaceId) -> String {
-    format!("running-{workspace_id:?}")
+fn agent_turn_count(entries: &[luban_domain::ConversationEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|e| matches!(e, luban_domain::ConversationEntry::UserMessage { .. }))
+        .count()
 }
 
-fn count_summary_items<'a>(items: impl Iterator<Item = &'a CodexThreadItem>) -> TurnSummaryCounts {
-    let mut tool_calls = 0usize;
-    let mut reasonings = 0usize;
-    for item in items {
-        if matches!(item, CodexThreadItem::Reasoning { .. }) {
-            reasonings += 1;
+fn latest_agent_turn_id(entries: &[luban_domain::ConversationEntry]) -> Option<String> {
+    let turn_count = agent_turn_count(entries);
+    if turn_count == 0 {
+        return None;
+    }
+    Some(format!("agent-turn-{}", turn_count - 1))
+}
+
+fn codex_item_is_summary_item(item: &CodexThreadItem) -> bool {
+    matches!(
+        item,
+        CodexThreadItem::Reasoning { .. } | CodexThreadItem::Error { .. }
+    ) || codex_item_is_tool_call(item)
+}
+
+fn find_summary_item_in_current_turn<'a>(
+    entries: &'a [luban_domain::ConversationEntry],
+    item_id: &str,
+) -> Option<&'a CodexThreadItem> {
+    for entry in entries.iter().rev() {
+        match entry {
+            luban_domain::ConversationEntry::UserMessage { .. } => break,
+            luban_domain::ConversationEntry::CodexItem { item } => {
+                let item = item.as_ref();
+                if codex_item_id(item) == item_id && codex_item_is_summary_item(item) {
+                    return Some(item);
+                }
+            }
+            _ => {}
         }
-        if codex_item_is_tool_call(item) {
-            tool_calls += 1;
-        }
     }
-    TurnSummaryCounts {
-        tool_calls,
-        reasonings,
-    }
-}
-
-fn render_running_summary_header_row(
-    workspace_id: WorkspaceId,
-    counts: TurnSummaryCounts,
-    is_running: bool,
-    has_items: bool,
-    expanded: bool,
-    theme: &gpui_component::Theme,
-    view_handle: &gpui::WeakEntity<LubanRootView>,
-) -> AnyElement {
-    let view_handle_for_click = view_handle.clone();
-    let row = div()
-        .debug_selector(|| "running-agent-summary-header".to_owned())
-        .h(px(28.0))
-        .w_full()
-        .px_2()
-        .flex()
-        .items_center()
-        .gap_2()
-        .group("")
-        .when(has_items, move |s| {
-            let view_handle = view_handle_for_click.clone();
-            s.cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, app| {
-                    let _ = view_handle.update(app, |view, cx| {
-                        view.toggle_running_summary_expanded(workspace_id);
-                        cx.notify();
-                    });
-                })
-        });
-
-    let disclosure_icon = if expanded {
-        IconName::ChevronDown
-    } else {
-        IconName::ChevronRight
-    };
-
-    row.child(
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(min_width_zero(
-                div()
-                    .flex_1()
-                    .truncate()
-                    .text_left()
-                    .text_color(theme.muted_foreground)
-                    .child(format_running_summary_header(is_running, counts, has_items)),
-            ))
-            .child(div().w(px(16.0)).when(has_items, |s| {
-                s.invisible()
-                    .when(expanded, |s| s.visible())
-                    .group_hover("", |s| s.visible())
-                    .child(
-                        Icon::new(disclosure_icon)
-                            .with_size(Size::Small)
-                            .text_color(theme.muted_foreground),
-                    )
-            })),
-    )
-    .into_any_element()
-}
-
-fn render_running_summary_preview_row(
-    workspace_id: WorkspaceId,
-    row_index: usize,
-    item: Option<&CodexThreadItem>,
-    is_thinking_placeholder: bool,
-    theme: &gpui_component::Theme,
-) -> AnyElement {
-    let base = div()
-        .h(px(28.0))
-        .w_full()
-        .px_2()
-        .flex()
-        .items_center()
-        .gap_2();
-
-    if is_thinking_placeholder {
-        return base
-            .debug_selector(|| "running-agent-summary-thinking-row".to_owned())
-            .child(
-                Spinner::new()
-                    .with_size(Size::Small)
-                    .color(theme.muted_foreground),
-            )
-            .child(div().text_color(theme.muted_foreground).child("Thinking:"))
-            .child(
-                div()
-                    .flex_1()
-                    .truncate()
-                    .text_color(theme.muted_foreground)
-                    .child("…"),
-            )
-            .into_any_element();
-    }
-
-    let Some(item) = item else {
-        return base.into_any_element();
-    };
-
-    let item_id = codex_item_id(item);
-    let (label, text) = codex_item_compact_summary(item);
-    let icon = Icon::empty()
-        .path(codex_item_icon_path(item))
-        .with_size(Size::Small)
-        .text_color(theme.muted_foreground);
-
-    let workspace_key = format!("{workspace_id:?}").replace(['(', ')', ' '], "-");
-    base.id(format!(
-        "running-agent-summary-row-{}-{}-{}",
-        workspace_key, row_index, item_id
-    ))
-    .child(icon)
-    .child(
-        div()
-            .text_color(theme.muted_foreground)
-            .child(format!("{label}:")),
-    )
-    .child(min_width_zero(
-        div()
-            .flex_1()
-            .truncate()
-            .text_color(theme.muted_foreground)
-            .child(text),
-    ))
-    .with_animation(
-        "fade-in",
-        Animation::new(Duration::from_secs_f64(0.18)).with_easing(ease_out_quint()),
-        |this, delta| this.opacity(delta),
-    )
-    .into_any_element()
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_running_summary_panel(
-    workspace_id: WorkspaceId,
-    is_running: bool,
-    ordered_in_progress_items: &[&CodexThreadItem],
-    expanded: bool,
-    theme: &gpui_component::Theme,
-    expanded_items: &HashSet<String>,
-    chat_column_width: Option<Pixels>,
-    view_handle: &gpui::WeakEntity<LubanRootView>,
-) -> AnyElement {
-    let counts = count_summary_items(ordered_in_progress_items.iter().copied());
-    let has_items = !ordered_in_progress_items.is_empty();
-    let header = render_running_summary_header_row(
-        workspace_id,
-        counts,
-        is_running,
-        has_items,
-        expanded,
-        theme,
-        view_handle,
-    );
-
-    let running_id = running_turn_id(workspace_id);
-    let details =
-        div()
-            .pl_4()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .children(ordered_in_progress_items.iter().map(|item| {
-                render_tool_summary_item(
-                    &running_id,
-                    item,
-                    theme,
-                    expanded_items,
-                    chat_column_width,
-                    view_handle,
-                )
-            }));
-
-    let preview_items = ordered_in_progress_items
-        .iter()
-        .rev()
-        .take(5)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>();
-
-    let mut preview_rows = Vec::with_capacity(5);
-    for idx in 0..5usize {
-        let is_thinking = idx == 0 && preview_items.is_empty() && is_running;
-        let item = preview_items.get(idx).copied();
-        preview_rows.push(render_running_summary_preview_row(
-            workspace_id,
-            idx,
-            item,
-            is_thinking,
-            theme,
-        ));
-    }
-
-    let preview = div()
-        .debug_selector(|| "running-agent-summary-preview".to_owned())
-        .h(px(28.0 * 5.0))
-        .w_full()
-        .flex()
-        .flex_col()
-        .children(preview_rows);
-
-    div()
-        .debug_selector(|| "running-agent-summary-panel".to_owned())
-        .w_full()
-        .child(
-            Collapsible::new()
-                .open(expanded)
-                .w_full()
-                .child(header)
-                .content(details),
-        )
-        .when(!expanded, |s| s.child(preview))
-        .into_any_element()
-}
-
 fn build_workspace_history_children(
     entries: &[luban_domain::ConversationEntry],
     theme: &gpui_component::Theme,
@@ -2128,6 +1999,8 @@ fn build_workspace_history_children(
     expanded_turns: &HashSet<String>,
     chat_column_width: Option<Pixels>,
     view_handle: &gpui::WeakEntity<LubanRootView>,
+    running_turn_summary_items: &[&CodexThreadItem],
+    force_expand_current_turn: bool,
 ) -> Vec<AnyElement> {
     struct TurnAccumulator<'a> {
         id: String,
@@ -2141,75 +2014,79 @@ fn build_workspace_history_children(
     let mut turn_index = 0usize;
     let mut current_turn: Option<TurnAccumulator<'_>> = None;
 
-    let flush_turn = |turn: TurnAccumulator<'_>, children: &mut Vec<AnyElement>| {
-        if turn.summary_items.is_empty() && turn.agent_messages.is_empty() {
-            return;
-        }
+    let flush_turn =
+        |turn: TurnAccumulator<'_>, children: &mut Vec<AnyElement>, in_progress: bool| {
+            if !in_progress && turn.summary_items.is_empty() && turn.agent_messages.is_empty() {
+                return;
+            }
 
-        let turn_container_id = turn.id.clone();
-        let turn_id = turn.id.clone();
-        let expanded = expanded_turns.contains(&turn.id);
-        let header = render_agent_turn_summary_row(
-            &turn.id,
-            TurnSummaryCounts {
-                tool_calls: turn.tool_calls,
-                reasonings: turn.reasonings,
-            },
-            !turn.summary_items.is_empty(),
-            expanded,
-            theme,
-            view_handle,
-        );
-        let mut summary_children = Vec::with_capacity(turn.summary_items.len());
-        for item in turn.summary_items {
-            summary_children.push(render_tool_summary_item(
-                &turn_id,
-                item,
+            let turn_container_id = turn.id.clone();
+            let turn_id = turn.id.clone();
+            let allow_toggle = !in_progress;
+            let expanded = in_progress || expanded_turns.contains(&turn.id);
+            let header = render_agent_turn_summary_row(
+                &turn.id,
+                TurnSummaryCounts {
+                    tool_calls: turn.tool_calls,
+                    reasonings: turn.reasonings,
+                },
+                !turn.summary_items.is_empty() || in_progress,
+                expanded,
+                in_progress,
+                allow_toggle,
                 theme,
-                expanded_items,
-                chat_column_width,
                 view_handle,
-            ));
-        }
-        let content = div()
-            .pl_4()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .children(summary_children);
+            );
+            let mut summary_children = Vec::with_capacity(turn.summary_items.len());
+            for item in turn.summary_items {
+                summary_children.push(render_tool_summary_item(
+                    &turn_id,
+                    item,
+                    theme,
+                    expanded_items,
+                    chat_column_width,
+                    view_handle,
+                ));
+            }
+            let content = div()
+                .pl_4()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(summary_children);
 
-        children.push(
-            div()
-                .id(format!("conversation-turn-{turn_container_id}"))
-                .w_full()
-                .child(
-                    Collapsible::new()
-                        .open(expanded)
-                        .w_full()
-                        .child(header)
-                        .content(content),
-                )
-                .into_any_element(),
-        );
+            children.push(
+                div()
+                    .id(format!("conversation-turn-{turn_container_id}"))
+                    .w_full()
+                    .child(
+                        Collapsible::new()
+                            .open(expanded)
+                            .w_full()
+                            .child(header)
+                            .content(content),
+                    )
+                    .into_any_element(),
+            );
 
-        for item in turn.agent_messages {
-            children.push(render_codex_item(
-                &format!("{}-{}", turn_id, codex_item_id(item)),
-                item,
-                theme,
-                false,
-                expanded_items,
-                chat_column_width,
-                view_handle,
-            ));
-        }
-    };
+            for item in turn.agent_messages {
+                children.push(render_codex_item(
+                    &format!("{}-{}", turn_id, codex_item_id(item)),
+                    item,
+                    theme,
+                    false,
+                    expanded_items,
+                    chat_column_width,
+                    view_handle,
+                ));
+            }
+        };
 
     for (entry_index, entry) in entries.iter().enumerate() {
         match entry {
             luban_domain::ConversationEntry::UserMessage { text: _ } => {
                 if let Some(turn) = current_turn.take() {
-                    flush_turn(turn, &mut children);
+                    flush_turn(turn, &mut children, false);
                 }
 
                 children.push(render_conversation_entry(
@@ -2267,14 +2144,14 @@ fn build_workspace_history_children(
             }
             luban_domain::ConversationEntry::TurnUsage { .. } => {
                 if let Some(turn) = current_turn.take() {
-                    flush_turn(turn, &mut children);
+                    flush_turn(turn, &mut children, false);
                 }
             }
             luban_domain::ConversationEntry::TurnDuration { .. }
             | luban_domain::ConversationEntry::TurnCanceled
             | luban_domain::ConversationEntry::TurnError { .. } => {
                 if let Some(turn) = current_turn.take() {
-                    flush_turn(turn, &mut children);
+                    flush_turn(turn, &mut children, false);
                 }
                 children.push(render_conversation_entry(
                     entry_index,
@@ -2288,18 +2165,40 @@ fn build_workspace_history_children(
         }
     }
 
-    if let Some(turn) = current_turn.take() {
-        flush_turn(turn, &mut children);
+    if let Some(mut turn) = current_turn.take() {
+        if force_expand_current_turn {
+            turn.tool_calls = 0;
+            turn.reasonings = 0;
+            turn.summary_items.clear();
+
+            for item in running_turn_summary_items {
+                if !codex_item_is_summary_item(item) {
+                    continue;
+                }
+                if matches!(item, CodexThreadItem::Reasoning { .. }) {
+                    turn.reasonings += 1;
+                }
+                if codex_item_is_tool_call(item) {
+                    turn.tool_calls += 1;
+                }
+                turn.summary_items.push(item);
+            }
+        }
+
+        flush_turn(turn, &mut children, force_expand_current_turn);
     }
 
     children
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_agent_turn_summary_row(
     id: &str,
     counts: TurnSummaryCounts,
     has_ops: bool,
     expanded: bool,
+    in_progress: bool,
+    allow_toggle: bool,
     theme: &gpui_component::Theme,
     view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
@@ -2316,7 +2215,7 @@ fn render_agent_turn_summary_row(
         .items_center()
         .gap_2()
         .group("")
-        .when(has_ops, move |s| {
+        .when(has_ops && allow_toggle, move |s| {
             let view_handle = view_handle_for_click.clone();
             let id = id_for_click.clone();
             s.cursor_pointer()
@@ -2345,9 +2244,9 @@ fn render_agent_turn_summary_row(
                     .truncate()
                     .text_left()
                     .text_color(theme.muted_foreground)
-                    .child(format_agent_turn_summary(counts)),
+                    .child(format_agent_turn_summary_header(counts, in_progress)),
             ))
-            .child(div().w(px(16.0)).when(has_ops, |s| {
+            .child(div().w(px(16.0)).when(has_ops && allow_toggle, |s| {
                 let debug_id = format!("agent-turn-toggle-{id}");
                 s.debug_selector(move || debug_id.clone())
                     .invisible()
@@ -3589,44 +3488,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn running_summary_shows_thinking_placeholder(cx: &mut gpui::TestAppContext) {
-        cx.update(gpui_component::init);
-
-        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
-
-        let mut state = AppState::new();
-        state.apply(Action::AddProject {
-            path: PathBuf::from("/tmp/repo"),
-        });
-        let project_id = state.projects[0].id;
-        state.apply(Action::WorkspaceCreated {
-            project_id,
-            workspace_name: "abandon-about".to_owned(),
-            branch_name: "luban/abandon-about".to_owned(),
-            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
-        });
-        let workspace_id = state.projects[0].workspaces[0].id;
-        state.main_pane = MainPane::Workspace(workspace_id);
-
-        state.apply(Action::SendAgentMessage {
-            workspace_id,
-            text: "Test".to_owned(),
-        });
-
-        let (_, window_cx) =
-            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
-        window_cx.refresh().unwrap();
-
-        window_cx
-            .debug_bounds("running-agent-summary-panel")
-            .expect("missing running agent summary panel");
-        window_cx
-            .debug_bounds("running-agent-summary-thinking-row")
-            .expect("missing thinking placeholder row");
-    }
-
-    #[gpui::test]
-    async fn clicking_running_summary_header_toggles_expanded(cx: &mut gpui::TestAppContext) {
+    async fn running_turn_summary_is_expanded_and_not_toggleable(cx: &mut gpui::TestAppContext) {
         cx.update(gpui_component::init);
 
         let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
@@ -3663,21 +3525,163 @@ mod tests {
             cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
         window_cx.refresh().unwrap();
 
+        window_cx
+            .debug_bounds("agent-turn-summary-agent-turn-0")
+            .expect("missing running turn summary row");
+        window_cx
+            .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+            .expect("missing running summary item row");
+
         let expanded = view.read_with(window_cx, |v, _| {
-            v.expanded_running_summaries.contains(&workspace_id)
+            v.expanded_agent_turns.contains("agent-turn-0")
         });
         assert!(!expanded);
 
-        let bounds = window_cx
-            .debug_bounds("running-agent-summary-header")
-            .expect("missing running agent summary header");
-        window_cx.simulate_click(bounds.center(), Modifiers::none());
+        let header_bounds = window_cx
+            .debug_bounds("agent-turn-summary-agent-turn-0")
+            .expect("missing running turn summary row");
+        window_cx.simulate_click(header_bounds.center(), Modifiers::none());
         window_cx.refresh().unwrap();
 
         let expanded = view.read_with(window_cx, |v, _| {
-            v.expanded_running_summaries.contains(&workspace_id)
+            v.expanded_agent_turns.contains("agent-turn-0")
         });
-        assert!(expanded);
+        assert!(!expanded);
+
+        window_cx
+            .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+            .expect("missing running summary item row after click");
+    }
+
+    #[gpui::test]
+    async fn running_turn_summary_keeps_completed_items_visible_while_running(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Test".to_owned(),
+        });
+        state.apply(Action::AgentEventReceived {
+            workspace_id,
+            event: CodexThreadEvent::ItemStarted {
+                item: CodexThreadItem::Reasoning {
+                    id: "item-1".to_owned(),
+                    text: "x".to_owned(),
+                },
+            },
+        });
+
+        let (view, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        window_cx
+            .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+            .expect("missing running summary item row");
+
+        view.update(window_cx, |view, cx| {
+            view.dispatch(
+                Action::AgentEventReceived {
+                    workspace_id,
+                    event: CodexThreadEvent::ItemCompleted {
+                        item: CodexThreadItem::Reasoning {
+                            id: "item-1".to_owned(),
+                            text: "final".to_owned(),
+                        },
+                    },
+                },
+                cx,
+            );
+        });
+        window_cx.refresh().unwrap();
+
+        window_cx
+            .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+            .expect("missing completed summary item row while running");
+    }
+
+    #[gpui::test]
+    async fn running_turn_summary_auto_collapses_on_turn_end(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.main_pane = MainPane::Workspace(workspace_id);
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            text: "Test".to_owned(),
+        });
+
+        let (view, window_cx) =
+            cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+        window_cx.refresh().unwrap();
+
+        view.update(window_cx, |view, cx| {
+            view.expanded_agent_turns.insert("agent-turn-0".to_owned());
+            view.expanded_agent_items
+                .insert("agent-turn-0::item-1".to_owned());
+            view.dispatch(
+                Action::AgentEventReceived {
+                    workspace_id,
+                    event: CodexThreadEvent::TurnCompleted {
+                        usage: luban_domain::CodexUsage {
+                            input_tokens: 0,
+                            cached_input_tokens: 0,
+                            output_tokens: 0,
+                        },
+                    },
+                },
+                cx,
+            );
+        });
+        window_cx.refresh().unwrap();
+
+        let expanded = view.read_with(window_cx, |v, _| {
+            v.expanded_agent_turns.contains("agent-turn-0")
+        });
+        assert!(!expanded);
+
+        let item_expanded = view.read_with(window_cx, |v, _| {
+            v.expanded_agent_items.contains("agent-turn-0::item-1")
+        });
+        assert!(!item_expanded);
+
+        assert!(
+            window_cx
+                .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+                .is_none()
+        );
     }
 
     #[gpui::test]
