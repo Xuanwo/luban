@@ -86,6 +86,7 @@ pub struct LubanRootView {
     chat_column_width: Option<Pixels>,
     running_turn_started_at: HashMap<WorkspaceId, Instant>,
     running_turn_tickers: HashSet<WorkspaceId>,
+    pending_turn_durations: HashMap<WorkspaceId, Duration>,
     running_turn_user_message_count: HashMap<WorkspaceId, usize>,
     running_turn_summary_order: HashMap<WorkspaceId, Vec<String>>,
     turn_generation: HashMap<WorkspaceId, u64>,
@@ -110,6 +111,7 @@ impl LubanRootView {
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            pending_turn_durations: HashMap::new(),
             running_turn_user_message_count: HashMap::new(),
             running_turn_summary_order: HashMap::new(),
             turn_generation: HashMap::new(),
@@ -142,6 +144,7 @@ impl LubanRootView {
             chat_column_width: None,
             running_turn_started_at: HashMap::new(),
             running_turn_tickers: HashSet::new(),
+            pending_turn_durations: HashMap::new(),
             running_turn_user_message_count: HashMap::new(),
             running_turn_summary_order: HashMap::new(),
             turn_generation: HashMap::new(),
@@ -178,6 +181,13 @@ impl LubanRootView {
             Action::CancelAgentTurn { workspace_id } => Some(*workspace_id),
             _ => None,
         };
+        let clear_pending_duration_workspace = match &action {
+            Action::AgentEventReceived {
+                workspace_id,
+                event: CodexThreadEvent::TurnDuration { .. },
+            } => Some(*workspace_id),
+            _ => None,
+        };
 
         let stop_timer_turn_id = stop_timer_workspace.and_then(|workspace_id| {
             self.state
@@ -189,6 +199,7 @@ impl LubanRootView {
         cx.notify();
 
         if let Some(workspace_id) = start_timer_workspace {
+            self.pending_turn_durations.remove(&workspace_id);
             let is_running = self
                 .state
                 .workspace_conversation(workspace_id)
@@ -200,6 +211,10 @@ impl LubanRootView {
         }
 
         if let Some(workspace_id) = stop_timer_workspace {
+            if let Some(started_at) = self.running_turn_started_at.get(&workspace_id) {
+                self.pending_turn_durations
+                    .insert(workspace_id, started_at.elapsed());
+            }
             self.running_turn_started_at.remove(&workspace_id);
             self.running_turn_tickers.remove(&workspace_id);
             self.running_turn_user_message_count.remove(&workspace_id);
@@ -207,6 +222,11 @@ impl LubanRootView {
             if let Some(turn_id) = stop_timer_turn_id {
                 self.collapse_agent_turn_summary(&turn_id);
             }
+            cx.notify();
+        }
+
+        if let Some(workspace_id) = clear_pending_duration_workspace {
+            self.pending_turn_durations.remove(&workspace_id);
             cx.notify();
         }
 
@@ -621,15 +641,6 @@ impl LubanRootView {
                                     .copied()
                                     .unwrap_or(0);
                                 if current_generation != generation {
-                                    return;
-                                }
-
-                                let still_running = view
-                                    .state
-                                    .workspace_conversation(workspace_id)
-                                    .map(|c| c.run_status == OperationStatus::Running)
-                                    .unwrap_or(false);
-                                if !still_running {
                                     return;
                                 }
 
@@ -1241,6 +1252,14 @@ impl LubanRootView {
                 } else {
                     None
                 };
+                let tail_duration = running_elapsed
+                    .map(|elapsed| (elapsed, true))
+                    .or_else(|| {
+                        self.pending_turn_durations
+                            .get(&workspace_id)
+                            .copied()
+                            .map(|elapsed| (elapsed, false))
+                    });
 
                 let expanded = self.expanded_agent_items.clone();
                 let expanded_turns = self.expanded_agent_turns.clone();
@@ -1414,8 +1433,8 @@ impl LubanRootView {
                             .whitespace_normal()
                             .pb(px(160.0))
                             .children(history_children)
-                            .when_some(running_elapsed, |s, elapsed| {
-                                s.child(render_turn_duration_row(theme, elapsed, true))
+                            .when_some(tail_duration, |s, (elapsed, running)| {
+                                s.child(render_turn_duration_row(theme, elapsed, running))
                             }),
                     ));
 
@@ -1939,15 +1958,8 @@ fn format_agent_turn_summary(counts: TurnSummaryCounts) -> String {
 }
 
 fn format_agent_turn_summary_header(counts: TurnSummaryCounts, in_progress: bool) -> String {
-    if !in_progress {
-        return format_agent_turn_summary(counts);
-    }
-
-    if counts.tool_calls == 0 && counts.reasonings == 0 {
-        return "In progress".to_owned();
-    }
-
-    format!("{} • In progress", format_agent_turn_summary(counts))
+    let _ = in_progress;
+    format_agent_turn_summary(counts)
 }
 
 fn agent_turn_count(entries: &[luban_domain::ConversationEntry]) -> usize {

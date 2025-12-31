@@ -72,6 +72,100 @@ fn codex_item_id(item: &CodexThreadItem) -> &str {
     }
 }
 
+fn qualify_codex_item(turn_scope_id: &str, item: CodexThreadItem) -> CodexThreadItem {
+    let raw_id = codex_item_id(&item);
+    if raw_id.starts_with(turn_scope_id) {
+        return item;
+    }
+
+    let qualified_id = format!("{turn_scope_id}/{raw_id}");
+    match item {
+        CodexThreadItem::AgentMessage { id: _, text } => CodexThreadItem::AgentMessage {
+            id: qualified_id,
+            text,
+        },
+        CodexThreadItem::Reasoning { id: _, text } => CodexThreadItem::Reasoning {
+            id: qualified_id,
+            text,
+        },
+        CodexThreadItem::CommandExecution {
+            id: _,
+            command,
+            aggregated_output,
+            exit_code,
+            status,
+        } => CodexThreadItem::CommandExecution {
+            id: qualified_id,
+            command,
+            aggregated_output,
+            exit_code,
+            status,
+        },
+        CodexThreadItem::FileChange {
+            id: _,
+            changes,
+            status,
+        } => CodexThreadItem::FileChange {
+            id: qualified_id,
+            changes,
+            status,
+        },
+        CodexThreadItem::McpToolCall {
+            id: _,
+            server,
+            tool,
+            arguments,
+            result,
+            error,
+            status,
+        } => CodexThreadItem::McpToolCall {
+            id: qualified_id,
+            server,
+            tool,
+            arguments,
+            result,
+            error,
+            status,
+        },
+        CodexThreadItem::WebSearch { id: _, query } => CodexThreadItem::WebSearch {
+            id: qualified_id,
+            query,
+        },
+        CodexThreadItem::TodoList { id: _, items } => CodexThreadItem::TodoList {
+            id: qualified_id,
+            items,
+        },
+        CodexThreadItem::Error { id: _, message } => CodexThreadItem::Error {
+            id: qualified_id,
+            message,
+        },
+    }
+}
+
+fn qualify_event(turn_scope_id: &str, event: CodexThreadEvent) -> CodexThreadEvent {
+    match event {
+        CodexThreadEvent::ItemStarted { item } => CodexThreadEvent::ItemStarted {
+            item: qualify_codex_item(turn_scope_id, item),
+        },
+        CodexThreadEvent::ItemUpdated { item } => CodexThreadEvent::ItemUpdated {
+            item: qualify_codex_item(turn_scope_id, item),
+        },
+        CodexThreadEvent::ItemCompleted { item } => CodexThreadEvent::ItemCompleted {
+            item: qualify_codex_item(turn_scope_id, item),
+        },
+        other => other,
+    }
+}
+
+fn generate_turn_scope_id() -> String {
+    let micros = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    let rand: u64 = OsRng.r#gen();
+    format!("turn-{micros:x}-{rand:x}")
+}
+
 enum SidecarStdoutLine {
     Event(Box<CodexThreadEvent>),
     Ignored { message: String },
@@ -636,6 +730,20 @@ mod tests {
     }
 
     #[test]
+    fn codex_item_ids_are_scoped_per_turn() {
+        let item = CodexThreadItem::AgentMessage {
+            id: "item_0".to_owned(),
+            text: "Hi".to_owned(),
+        };
+        let a = qualify_codex_item("turn-a", item.clone());
+        let b = qualify_codex_item("turn-b", item);
+        assert_eq!(codex_item_id(&a), "turn-a/item_0");
+        assert_eq!(codex_item_id(&b), "turn-b/item_0");
+        let a2 = qualify_codex_item("turn-a", a);
+        assert_eq!(codex_item_id(&a2), "turn-a/item_0");
+    }
+
+    #[test]
     fn worktree_remove_force_allows_dirty_worktree() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -850,6 +958,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         } = request;
 
         let turn_started_at = Instant::now();
+        let turn_scope_id = generate_turn_scope_id();
         let duration_appended = Arc::new(AtomicBool::new(false));
         let mut appended_item_ids = HashSet::<String>::new();
 
@@ -909,6 +1018,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     }
 
                     for event in events_to_process {
+                        let event = qualify_event(&turn_scope_id, event);
                         on_event(event.clone());
 
                         match &event {
