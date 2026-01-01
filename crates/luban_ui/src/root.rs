@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, ElementId, IntoElement, MouseButton, Pixels, PromptButton, PromptLevel,
-    SharedString, Window, div, px, rems,
+    AnyElement, Context, CursorStyle, ElementId, IntoElement, MouseButton, Pixels, PromptButton,
+    PromptLevel, SharedString, Window, div, px, rems,
 };
 use gpui_component::input::RopeExt as _;
 use gpui_component::{
@@ -15,7 +15,7 @@ use gpui_component::{
 };
 use luban_domain::{
     Action, AppState, CodexThreadEvent, CodexThreadItem, ConversationSnapshot, Effect, MainPane,
-    OperationStatus, PersistedAppState, ProjectId, WorkspaceId, WorkspaceStatus,
+    OperationStatus, PersistedAppState, ProjectId, RightPane, WorkspaceId, WorkspaceStatus,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -24,6 +24,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+
+use crate::terminal_panel::{WorkspaceTerminal, spawn_workspace_terminal, terminal_cell_metrics};
 
 pub struct CreatedWorkspace {
     pub workspace_name: String,
@@ -82,6 +84,10 @@ pub trait ProjectWorkspaceService: Send + Sync {
 pub struct LubanRootView {
     state: AppState,
     services: Arc<dyn ProjectWorkspaceService>,
+    terminal_enabled: bool,
+    terminal_resize_hooked: bool,
+    workspace_terminals: HashMap<WorkspaceId, WorkspaceTerminal>,
+    workspace_terminal_errors: HashMap<WorkspaceId, String>,
     chat_input: Option<gpui::Entity<InputState>>,
     expanded_agent_items: HashSet<String>,
     expanded_agent_turns: HashSet<String>,
@@ -104,6 +110,10 @@ impl LubanRootView {
         let mut this = Self {
             state: AppState::new(),
             services,
+            terminal_enabled: true,
+            terminal_resize_hooked: false,
+            workspace_terminals: HashMap::new(),
+            workspace_terminal_errors: HashMap::new(),
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
@@ -134,6 +144,10 @@ impl LubanRootView {
         Self {
             state,
             services,
+            terminal_enabled: false,
+            terminal_resize_hooked: false,
+            workspace_terminals: HashMap::new(),
+            workspace_terminal_errors: HashMap::new(),
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
@@ -158,6 +172,13 @@ impl LubanRootView {
     }
 
     fn dispatch(&mut self, action: Action, cx: &mut Context<Self>) {
+        if let Action::WorkspaceArchived { workspace_id } = &action {
+            self.workspace_terminal_errors.remove(workspace_id);
+            if let Some(mut terminal) = self.workspace_terminals.remove(workspace_id) {
+                terminal.kill();
+            }
+        }
+
         let start_timer_workspace = match &action {
             Action::SendAgentMessage { workspace_id, .. } => Some(*workspace_id),
             _ => None,
@@ -714,8 +735,12 @@ impl LubanRootView {
 
 impl gpui::Render for LubanRootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_terminal_resize_observer(window, cx);
+
         let theme = cx.theme();
         let sidebar_width = px(300.0);
+        let should_render_right_pane =
+            self.terminal_enabled && self.state.right_pane == RightPane::Terminal;
 
         div()
             .size_full()
@@ -724,6 +749,158 @@ impl gpui::Render for LubanRootView {
             .text_color(theme.foreground)
             .child(render_sidebar(cx, &self.state, sidebar_width))
             .child(self.render_main(window, cx))
+            .when(should_render_right_pane, |s| {
+                s.child(self.render_right_pane(window, cx))
+            })
+    }
+}
+
+impl LubanRootView {
+    fn ensure_terminal_resize_observer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_resize_hooked {
+            return;
+        }
+        self.terminal_resize_hooked = true;
+
+        let subscription = cx.observe_window_bounds(window, move |this, window, cx| {
+            if !this.terminal_enabled {
+                return;
+            }
+            this.resize_workspace_terminals(window, cx);
+        });
+        self._subscriptions.push(subscription);
+    }
+
+    fn right_pane_width(&self) -> gpui::Pixels {
+        px(420.0)
+    }
+
+    fn right_pane_header_height(&self) -> gpui::Pixels {
+        px(40.0)
+    }
+
+    fn right_pane_grid_size(&self, window: &mut Window) -> Option<(u16, u16)> {
+        let width = f32::from(self.right_pane_width()).max(1.0);
+        let height = (f32::from(window.viewport_size().height)
+            - f32::from(self.right_pane_header_height()))
+        .max(1.0);
+
+        let (cell_width, cell_height) = terminal_cell_metrics(window)?;
+        let cols = (width / cell_width).floor().max(1.0) as u16;
+        let rows = (height / cell_height).floor().max(1.0) as u16;
+        Some((cols, rows))
+    }
+
+    fn resize_workspace_terminals(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((cols, rows)) = self.right_pane_grid_size(window) else {
+            return;
+        };
+        for terminal in self.workspace_terminals.values() {
+            if terminal.is_closed() {
+                continue;
+            }
+            terminal.resize(cols, rows, cx);
+        }
+    }
+
+    fn ensure_workspace_terminal(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<gpui_ghostty_terminal::view::TerminalView>> {
+        if !self.terminal_enabled {
+            return None;
+        }
+        if self.workspace_terminal_errors.contains_key(&workspace_id) {
+            return None;
+        }
+        if let Some(terminal) = self.workspace_terminals.get(&workspace_id) {
+            return Some(terminal.view());
+        }
+
+        let (_, worktree_path) = workspace_context(&self.state, workspace_id)?;
+        match spawn_workspace_terminal(cx, window, worktree_path) {
+            Ok(terminal) => {
+                self.workspace_terminals.insert(workspace_id, terminal);
+                self.resize_workspace_terminals(window, cx);
+                self.workspace_terminals
+                    .get(&workspace_id)
+                    .map(|t| t.view())
+            }
+            Err(message) => {
+                self.workspace_terminal_errors.insert(workspace_id, message);
+                None
+            }
+        }
+    }
+
+    fn render_right_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let right_pane_width = self.right_pane_width();
+        let header_height = self.right_pane_header_height();
+
+        let MainPane::Workspace(workspace_id) = self.state.main_pane else {
+            return div().into_any_element();
+        };
+
+        let title = self
+            .state
+            .workspace(workspace_id)
+            .map(|w| w.workspace_name.clone())
+            .unwrap_or_else(|| "Terminal".to_owned());
+
+        let error = self.workspace_terminal_errors.get(&workspace_id).cloned();
+        let terminal_view = if error.is_none() {
+            self.ensure_workspace_terminal(workspace_id, window, cx)
+        } else {
+            None
+        };
+
+        let theme = cx.theme();
+
+        div()
+            .w(right_pane_width)
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(theme.secondary)
+            .border_l_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .h(header_height)
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .text_xs()
+                            .child("TERMINAL"),
+                    )
+                    .child(div().truncate().text_sm().child(title)),
+            )
+            .child(
+                div().flex_1().h_full().cursor(CursorStyle::IBeam).child(
+                    error
+                        .map(|message| {
+                            div()
+                                .p_3()
+                                .text_color(theme.danger_foreground)
+                                .child(message)
+                                .into_any_element()
+                        })
+                        .or_else(|| {
+                            terminal_view.map(|v| div().size_full().child(v).into_any_element())
+                        })
+                        .unwrap_or_else(|| div().into_any_element()),
+                ),
+            )
+            .into_any_element()
     }
 }
 

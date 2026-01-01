@@ -18,6 +18,12 @@ pub enum MainPane {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RightPane {
+    None,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceStatus {
     Active,
     Archived,
@@ -291,6 +297,7 @@ pub struct AppState {
 
     pub projects: Vec<Project>,
     pub main_pane: MainPane,
+    pub right_pane: RightPane,
     pub conversations: HashMap<WorkspaceId, WorkspaceConversation>,
     pub last_error: Option<String>,
 }
@@ -454,6 +461,7 @@ impl AppState {
             next_workspace_id: 1,
             projects: Vec::new(),
             main_pane: MainPane::None,
+            right_pane: RightPane::None,
             conversations: HashMap::new(),
             last_error: None,
         }
@@ -501,6 +509,7 @@ impl AppState {
             }
             Action::OpenProjectSettings { project_id } => {
                 self.main_pane = MainPane::ProjectSettings(project_id);
+                self.right_pane = RightPane::None;
                 Vec::new()
             }
 
@@ -555,6 +564,7 @@ impl AppState {
 
             Action::OpenWorkspace { workspace_id } => {
                 self.main_pane = MainPane::Workspace(workspace_id);
+                self.right_pane = RightPane::Terminal;
                 vec![Effect::LoadConversation { workspace_id }]
             }
             Action::OpenWorkspaceInIde { workspace_id } => {
@@ -593,6 +603,7 @@ impl AppState {
                 }
                 if matches!(self.main_pane, MainPane::Workspace(id) if id == workspace_id) {
                     self.main_pane = MainPane::None;
+                    self.right_pane = RightPane::None;
                 }
                 vec![Effect::SaveAppState]
             }
@@ -1137,6 +1148,28 @@ fn start_next_queued_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn right_pane_tracks_selected_main_pane() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        let workspace_id = state.projects[0].workspaces[0].id;
+
+        state.apply(Action::OpenWorkspace { workspace_id });
+        assert_eq!(state.right_pane, RightPane::Terminal);
+
+        state.apply(Action::OpenProjectSettings { project_id });
+        assert_eq!(state.right_pane, RightPane::None);
+    }
 
     #[test]
     fn in_progress_order_tracks_started_items_and_removes_on_complete() {

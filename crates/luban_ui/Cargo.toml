@@ -5,9 +5,12 @@ edition.workspace = true
 
 [dependencies]
 async-channel.workspace = true
+ghostty_vt.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
+gpui_ghostty_terminal.workspace = true
 luban_domain = { path = "../luban_domain" }
+portable-pty.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -1,5 +1,8 @@
-use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
+use gpui::{
+    App, Application, Bounds, KeyBinding, WindowBounds, WindowOptions, prelude::*, px, size,
+};
 use gpui_component::{Root, Theme, ThemeMode};
+use gpui_ghostty_terminal::view::{Copy, Paste, SelectAll};
 use luban_ui::{LubanRootView, apply_linear_theme};
 
 mod app_assets;
@@ -18,6 +21,11 @@ fn main() {
         .with_assets(app_assets::AppAssets::default())
         .run(|cx: &mut App| {
             init_components(cx);
+            cx.bind_keys([
+                KeyBinding::new("cmd-a", SelectAll, None),
+                KeyBinding::new("cmd-c", Copy, None),
+                KeyBinding::new("cmd-v", Paste, None),
+            ]);
 
             let services = GitWorkspaceService::new().expect("failed to init services");
             let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);

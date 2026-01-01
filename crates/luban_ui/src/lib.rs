@@ -1,4 +1,5 @@
 mod root;
+mod terminal_panel;
 mod theme;
 
 pub use root::RunAgentTurnRequest;
