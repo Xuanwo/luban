@@ -15,18 +15,18 @@ fmt:
   cargo fmt --all
 
 lint:
-  ZIG=$(pwd)/.context/zig/zig cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+  cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
 
 test:
-  ZIG=$(pwd)/.context/zig/zig cargo test --workspace --all-targets --all-features
+  cargo test --workspace --all-targets --all-features
 
 test-fast:
-  ZIG=$(pwd)/.context/zig/zig cargo test -p luban_domain
+  cargo test -p luban_domain
 
 run:
-  ZIG=$(pwd)/.context/zig/zig cargo run -p luban_app
+  cargo run -p luban_app
 
 build:
-  ZIG=$(pwd)/.context/zig/zig cargo build -p luban_app
+  cargo build -p luban_app
 
 ci: fmt lint test

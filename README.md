@@ -10,13 +10,9 @@ Luban is a standalone AI code editor app built with GPUI, with a Zed-like layout
 
 This project uses `just` to manage all common dev commands.
 
-The embedded terminal requires Zig (0.14.1) for building `ghostty_vt_sys` (install via `brew install zig` or set `ZIG=/path/to/zig`).
+The embedded terminal requires Zig (0.14.1) for building `ghostty_vt_sys`.
 
-To install a local Zig binary into `.context/zig/zig`:
-
-```bash
-just zig-bootstrap
-```
+Install Zig using a toolchain manager (recommended: `zvm`) or your system package manager, and ensure `zig` is available in `PATH` (or set `ZIG=/path/to/zig`).
 
 ```bash
 just -l
