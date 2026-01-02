@@ -8,22 +8,25 @@ sidecar-build:
 
 sidecar-install: sidecar-build
 
+zig-bootstrap:
+  bash tools/bootstrap-zig.sh
+
 fmt:
   cargo fmt --all
 
 lint:
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  ZIG=$(pwd)/.context/zig/zig cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
 
 test:
-  cargo test --workspace --all-targets --all-features
+  ZIG=$(pwd)/.context/zig/zig cargo test --workspace --all-targets --all-features
 
 test-fast:
-  cargo test -p luban_domain
+  ZIG=$(pwd)/.context/zig/zig cargo test -p luban_domain
 
 run:
-  cargo run -p luban_app
+  ZIG=$(pwd)/.context/zig/zig cargo run -p luban_app
 
 build:
-  cargo build -p luban_app
+  ZIG=$(pwd)/.context/zig/zig cargo build -p luban_app
 
 ci: fmt lint test

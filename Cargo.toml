@@ -11,9 +11,12 @@ anyhow = "1"
 async-channel = "2"
 bip39 = "2"
 gpui = { git = "https://github.com/zed-industries/zed", default-features = false, features = ["font-kit"] }
-# `0.6.0-preview0` is not published on crates.io; pin to the upstream git tag.
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.6.0-preview0" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.6.0-preview0" }
+# Pin gpui-component to a revision that matches the current gpui API.
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "36390d153f1692ce76be4f777130536d42f18e95" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component.git", rev = "36390d153f1692ce76be4f777130536d42f18e95" }
+ghostty_vt = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "ghostty_vt", rev = "1c242cb67dd3afe4dd4ccc1a1a13b921c8c03df9" }
+gpui_ghostty_terminal = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "gpui_ghostty_terminal", rev = "1c242cb67dd3afe4dd4ccc1a1a13b921c8c03df9" }
+portable-pty = "0.9"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
