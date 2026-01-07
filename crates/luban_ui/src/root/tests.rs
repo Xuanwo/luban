@@ -2742,6 +2742,294 @@ async fn chat_scroll_position_is_saved_and_restored(cx: &mut gpui::TestAppContex
 }
 
 #[gpui::test]
+async fn chat_auto_scroll_follows_tail_on_new_entries(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let long_text = std::iter::repeat_n(
+        "This is a long message that should wrap and increase history height.\n",
+        80,
+    )
+    .collect::<String>();
+
+    let mut entries = Vec::new();
+    for i in 0..18 {
+        entries.push(ConversationEntry::UserMessage {
+            text: format!("message {i}\n{long_text}"),
+        });
+        entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
+    }
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: entries.clone(),
+        },
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(900.0), px(320.0)));
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let max_y10_before = view.read_with(window_cx, |v, _| v.debug_chat_scroll_max_offset_y10());
+    let offset_y10_before = view.read_with(window_cx, |v, _| v.debug_chat_scroll_offset_y10());
+    assert!(max_y10_before > 0, "expected a scrollable chat history");
+    assert!(
+        (offset_y10_before + max_y10_before).abs() <= 250,
+        "expected the chat to start near the bottom (offset_y10={offset_y10_before}, max_y10={max_y10_before})"
+    );
+
+    entries.push(ConversationEntry::UserMessage {
+        text: "new message".to_owned(),
+    });
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(
+                Action::ConversationLoaded {
+                    workspace_id,
+                    thread_id: default_thread_id(),
+                    snapshot: ConversationSnapshot {
+                        thread_id: Some("thread-1".to_owned()),
+                        entries: entries.clone(),
+                    },
+                },
+                cx,
+            );
+        });
+    });
+
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let max_y10_after = view.read_with(window_cx, |v, _| v.debug_chat_scroll_max_offset_y10());
+    let offset_y10_after = view.read_with(window_cx, |v, _| v.debug_chat_scroll_offset_y10());
+    assert!(max_y10_after >= max_y10_before, "expected content to grow");
+    assert!(
+        (offset_y10_after + max_y10_after).abs() <= 250,
+        "expected the chat to stay near the bottom as new entries arrive (offset_y10={offset_y10_after}, max_y10={max_y10_after})"
+    );
+}
+
+#[gpui::test]
+async fn chat_auto_scroll_stops_when_user_scrolled_up(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let long_text = std::iter::repeat_n(
+        "This is a long message that should wrap and increase history height.\n",
+        80,
+    )
+    .collect::<String>();
+
+    let mut entries = Vec::new();
+    for i in 0..18 {
+        entries.push(ConversationEntry::UserMessage {
+            text: format!("message {i}\n{long_text}"),
+        });
+        entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
+    }
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: entries.clone(),
+        },
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(900.0), px(320.0)));
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let max_y10 = view.read_with(window_cx, |v, _| v.debug_chat_scroll_max_offset_y10());
+    assert!(max_y10 > 0, "expected a scrollable chat history");
+
+    let user_offset_y10 = -((max_y10 / 2).max(10));
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.chat_scroll_handle
+                .set_offset(point(px(0.0), px(user_offset_y10 as f32 / 10.0)));
+            cx.notify();
+        });
+    });
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let offset_y10_before = view.read_with(window_cx, |v, _| v.debug_chat_scroll_offset_y10());
+    assert_eq!(offset_y10_before, user_offset_y10);
+
+    entries.push(ConversationEntry::UserMessage {
+        text: "new message".to_owned(),
+    });
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(
+                Action::ConversationLoaded {
+                    workspace_id,
+                    thread_id: default_thread_id(),
+                    snapshot: ConversationSnapshot {
+                        thread_id: Some("thread-1".to_owned()),
+                        entries: entries.clone(),
+                    },
+                },
+                cx,
+            );
+        });
+    });
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let offset_y10_after = view.read_with(window_cx, |v, _| v.debug_chat_scroll_offset_y10());
+    assert_eq!(
+        offset_y10_after, user_offset_y10,
+        "expected new entries to not force-scroll when the user scrolled up"
+    );
+}
+
+#[gpui::test]
+async fn chat_auto_scroll_follows_tail_after_returning_to_chat(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let long_text = std::iter::repeat_n(
+        "This is a long message that should wrap and increase history height.\n",
+        80,
+    )
+    .collect::<String>();
+
+    let mut entries = Vec::new();
+    for i in 0..18 {
+        entries.push(ConversationEntry::UserMessage {
+            text: format!("message {i}\n{long_text}"),
+        });
+        entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
+    }
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: entries.clone(),
+        },
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(900.0), px(320.0)));
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::OpenDashboard, cx);
+        });
+    });
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    entries.push(ConversationEntry::UserMessage {
+        text: "new message while away".to_owned(),
+    });
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(
+                Action::ConversationLoaded {
+                    workspace_id,
+                    thread_id: default_thread_id(),
+                    snapshot: ConversationSnapshot {
+                        thread_id: Some("thread-1".to_owned()),
+                        entries: entries.clone(),
+                    },
+                },
+                cx,
+            );
+        });
+    });
+
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::OpenWorkspace { workspace_id }, cx);
+        });
+    });
+    for _ in 0..3 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let max_y10_after = view.read_with(window_cx, |v, _| v.debug_chat_scroll_max_offset_y10());
+    let offset_y10_after = view.read_with(window_cx, |v, _| v.debug_chat_scroll_offset_y10());
+    assert!(
+        (offset_y10_after + max_y10_after).abs() <= 250,
+        "expected returning to chat to follow the newest entries (offset_y10={offset_y10_after}, max_y10={max_y10_after})"
+    );
+}
+
+#[gpui::test]
 async fn chat_composer_stays_in_viewport_with_terminal_and_long_history(
     cx: &mut gpui::TestAppContext,
 ) {

@@ -57,6 +57,8 @@ use sidebar::render_sidebar;
 use titlebar::render_titlebar;
 const CHAT_ATTACHMENT_THUMBNAIL_SIZE: f32 = 72.0;
 const CHAT_ATTACHMENT_FILE_WIDTH: f32 = CHAT_ATTACHMENT_THUMBNAIL_SIZE * 2.0;
+const CHAT_SCROLL_BOTTOM_TOLERANCE_Y10: i32 = 200;
+const CHAT_SCROLL_USER_SCROLL_UP_THRESHOLD_Y10: i32 = 10;
 
 use chat::composer::ContextImportSpec;
 
@@ -115,6 +117,8 @@ pub struct LubanRootView {
     turn_generation: HashMap<WorkspaceThreadKey, u64>,
     turn_cancel_flags: HashMap<WorkspaceThreadKey, Arc<AtomicBool>>,
     chat_scroll_handle: gpui::ScrollHandle,
+    chat_follow_tail: HashMap<WorkspaceThreadKey, bool>,
+    chat_last_observed_scroll_offset_y10: HashMap<WorkspaceThreadKey, i32>,
     projects_scroll_handle: gpui::ScrollHandle,
     last_chat_workspace_id: Option<WorkspaceThreadKey>,
     last_chat_item_count: usize,
@@ -169,6 +173,8 @@ impl LubanRootView {
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
+            chat_follow_tail: HashMap::new(),
+            chat_last_observed_scroll_offset_y10: HashMap::new(),
             projects_scroll_handle: gpui::ScrollHandle::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
@@ -234,6 +240,8 @@ impl LubanRootView {
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
+            chat_follow_tail: HashMap::new(),
+            chat_last_observed_scroll_offset_y10: HashMap::new(),
             projects_scroll_handle: gpui::ScrollHandle::new(),
             last_chat_workspace_id: None,
             last_chat_item_count: 0,
@@ -324,6 +332,21 @@ impl LubanRootView {
     #[cfg(test)]
     pub fn debug_projects_scroll_max_offset_y10(&self) -> i32 {
         quantize_pixels_y10(self.projects_scroll_handle.max_offset().height)
+    }
+
+    fn should_chat_follow_tail(&self, chat_key: WorkspaceThreadKey) -> bool {
+        self.chat_follow_tail
+            .get(&chat_key)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    fn is_chat_near_bottom(offset_y10: i32, max_y10: i32) -> bool {
+        if max_y10 <= 0 {
+            return true;
+        }
+        let bottom_y10 = -max_y10;
+        (offset_y10 - bottom_y10).abs() <= CHAT_SCROLL_BOTTOM_TOLERANCE_Y10
     }
 
     fn dispatch(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -1627,6 +1650,18 @@ impl LubanRootView {
                     }
                 }
 
+                if chat_target_changed {
+                    let offset_y10 = quantize_pixels_y10(self.chat_scroll_handle.offset().y);
+                    self.chat_last_observed_scroll_offset_y10
+                        .insert(chat_key, offset_y10);
+                }
+                update_chat_follow_state(
+                    chat_key,
+                    &self.chat_scroll_handle,
+                    &mut self.chat_follow_tail,
+                    &mut self.chat_last_observed_scroll_offset_y10,
+                );
+
                 let theme = cx.theme();
 
                 let draft_text = conversation.map(|c| c.draft.clone()).unwrap_or_default();
@@ -1739,6 +1774,10 @@ impl LubanRootView {
                     &running_turn_summary_items,
                     force_expand_current_turn,
                 );
+
+                if self.should_chat_follow_tail(chat_key) {
+                    self.chat_scroll_handle.scroll_to_bottom();
+                }
                 self.last_chat_workspace_id = Some(chat_key);
                 self.last_chat_item_count = entries_len;
 
@@ -2399,6 +2438,35 @@ fn min_height_zero<E: gpui::Styled>(mut element: E) -> E {
 
 fn quantize_pixels_y10(pixels: Pixels) -> i32 {
     (f32::from(pixels) * 10.0).round() as i32
+}
+
+fn update_chat_follow_state(
+    chat_key: WorkspaceThreadKey,
+    scroll_handle: &gpui::ScrollHandle,
+    chat_follow_tail: &mut HashMap<WorkspaceThreadKey, bool>,
+    chat_last_observed_scroll_offset_y10: &mut HashMap<WorkspaceThreadKey, i32>,
+) {
+    let offset_y10 = quantize_pixels_y10(scroll_handle.offset().y);
+    let max_y10 = quantize_pixels_y10(scroll_handle.max_offset().height);
+    let near_bottom = LubanRootView::is_chat_near_bottom(offset_y10, max_y10);
+
+    let previous_offset_y10 = chat_last_observed_scroll_offset_y10.get(&chat_key).copied();
+    let follow = chat_follow_tail.get(&chat_key).copied().unwrap_or(true);
+
+    if follow {
+        let user_scrolled_up = previous_offset_y10
+            .map(|prev| offset_y10 > prev + CHAT_SCROLL_USER_SCROLL_UP_THRESHOLD_Y10)
+            .unwrap_or(false);
+        if user_scrolled_up && !near_bottom {
+            chat_follow_tail.insert(chat_key, false);
+        } else {
+            chat_follow_tail.insert(chat_key, true);
+        }
+    } else if near_bottom {
+        chat_follow_tail.insert(chat_key, true);
+    }
+
+    chat_last_observed_scroll_offset_y10.insert(chat_key, offset_y10);
 }
 
 mod debug_layout {
