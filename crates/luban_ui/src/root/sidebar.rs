@@ -23,16 +23,17 @@ pub(super) fn render_sidebar(
         .text_color(theme.sidebar_foreground)
         .border_r_1()
         .border_color(theme.sidebar_border)
-        .child(
+        .child(min_height_zero(
             div()
                 .flex_1()
                 .relative()
                 .flex()
                 .flex_col()
-                .child(
+                .child(min_height_zero(
                     div()
                         .flex_1()
                         .id("projects-scroll")
+                        .debug_selector(|| "projects-scroll".to_owned())
                         .overflow_y_scroll()
                         .track_scroll(&projects_scroll_handle)
                         .py_2()
@@ -56,14 +57,14 @@ pub(super) fn render_sidebar(
                                 workspace_pull_request_numbers,
                             )
                         })),
-                )
+                ))
                 .child(
                     div()
                         .absolute()
                         .top_0()
-                        .left_0()
                         .right_0()
                         .bottom_0()
+                        .w(px(12.0))
                         .debug_selector(|| "projects-scrollbar".to_owned())
                         .child(
                             Scrollbar::vertical(&projects_scroll_handle)
@@ -71,7 +72,7 @@ pub(super) fn render_sidebar(
                                 .scrollbar_show(ScrollbarShow::Always),
                         ),
                 ),
-        )
+        ))
 }
 
 fn render_project(

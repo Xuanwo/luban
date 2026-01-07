@@ -444,6 +444,18 @@ impl LubanRootView {
             }
         }
 
+        if chat_target_changed {
+            let offset_y10 = quantize_pixels_y10(self.chat_scroll_handle.offset().y);
+            self.chat_last_observed_scroll_offset_y10
+                .insert(chat_key, offset_y10);
+        }
+        update_chat_follow_state(
+            chat_key,
+            &self.chat_scroll_handle,
+            &mut self.chat_follow_tail,
+            &mut self.chat_last_observed_scroll_offset_y10,
+        );
+
         let theme = cx.theme();
 
         let draft_text = conversation.map(|c| c.draft.clone()).unwrap_or_default();
@@ -554,6 +566,10 @@ impl LubanRootView {
             &running_turn_summary_items,
             force_expand_current_turn,
         );
+
+        if self.should_chat_follow_tail(chat_key) {
+            self.chat_scroll_handle.scroll_to_bottom();
+        }
         self.last_chat_workspace_id = Some(chat_key);
         self.last_chat_item_count = entries_len;
 
