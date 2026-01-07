@@ -6,6 +6,7 @@ use crate::{
 };
 use crate::{default_agent_model_id, default_thinking_effort, normalize_thinking_effort};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
 
 pub(crate) fn apply_persisted_app_state(
@@ -31,33 +32,8 @@ pub(crate) fn apply_persisted_app_state(
     state.agent_default_model_id = agent_default_model_id;
     state.agent_default_thinking_effort = agent_default_thinking_effort;
 
-    state.projects = persisted
-        .projects
-        .into_iter()
-        .map(|p| Project {
-            id: ProjectId(p.id),
-            name: p.name,
-            path: p.path,
-            slug: p.slug,
-            expanded: p.expanded,
-            create_workspace_status: OperationStatus::Idle,
-            workspaces: p
-                .workspaces
-                .into_iter()
-                .map(|w| Workspace {
-                    id: WorkspaceId(w.id),
-                    workspace_name: w.workspace_name,
-                    branch_name: w.branch_name,
-                    worktree_path: w.worktree_path,
-                    status: w.status,
-                    last_activity_at: w
-                        .last_activity_at_unix_seconds
-                        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs)),
-                    archive_status: OperationStatus::Idle,
-                })
-                .collect(),
-        })
-        .collect();
+    let (projects, projects_upgraded) = load_projects(persisted.projects);
+    state.projects = projects;
     state.sidebar_width = persisted.sidebar_width;
     state.terminal_pane_width = persisted.terminal_pane_width;
     state.last_open_workspace_id = persisted.last_open_workspace_id.map(WorkspaceId);
@@ -153,7 +129,7 @@ pub(crate) fn apply_persisted_app_state(
     state.right_pane = RightPane::None;
     state.dashboard_preview_workspace_id = None;
 
-    let upgraded = state.ensure_main_workspaces();
+    let upgraded = projects_upgraded || state.ensure_main_workspaces();
     let mut effects = if upgraded {
         vec![Effect::SaveAppState]
     } else {
@@ -262,4 +238,119 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
             .map(|workspace_id| (workspace_id.0, true))
             .collect(),
     }
+}
+
+fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
+    use std::collections::hash_map::Entry;
+
+    let mut upgraded = false;
+    let mut grouped: HashMap<PathBuf, Vec<Project>> = HashMap::new();
+
+    for persisted in projects {
+        let normalized_path = normalize_project_path(&persisted.path);
+        if normalized_path != persisted.path {
+            upgraded = true;
+        }
+
+        let project = Project {
+            id: ProjectId(persisted.id),
+            name: persisted.name,
+            path: normalized_path.clone(),
+            slug: persisted.slug,
+            expanded: persisted.expanded,
+            create_workspace_status: OperationStatus::Idle,
+            workspaces: persisted
+                .workspaces
+                .into_iter()
+                .map(|w| Workspace {
+                    id: WorkspaceId(w.id),
+                    workspace_name: w.workspace_name,
+                    branch_name: w.branch_name,
+                    worktree_path: w.worktree_path,
+                    status: w.status,
+                    last_activity_at: w
+                        .last_activity_at_unix_seconds
+                        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs)),
+                    archive_status: OperationStatus::Idle,
+                })
+                .collect(),
+        };
+
+        match grouped.entry(normalized_path) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().push(project);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(vec![project]);
+            }
+        }
+    }
+
+    let mut merged = Vec::new();
+    for (_path, mut group) in grouped {
+        group.sort_by_key(|p| p.id.0);
+        if group.len() > 1 {
+            upgraded = true;
+        }
+
+        let mut canonical = group.remove(0);
+
+        for other in group {
+            canonical.expanded |= other.expanded;
+            canonical.workspaces.extend(other.workspaces);
+        }
+
+        if dedupe_workspace_names(&mut canonical.workspaces) {
+            upgraded = true;
+        }
+
+        merged.push(canonical);
+    }
+
+    merged.sort_by_key(|p| p.id.0);
+    (merged, upgraded)
+}
+
+fn dedupe_workspace_names(workspaces: &mut [Workspace]) -> bool {
+    use std::collections::HashSet;
+
+    let mut upgraded = false;
+    let mut used: HashSet<String> = HashSet::new();
+
+    for workspace in workspaces.iter_mut() {
+        let base = workspace.workspace_name.clone();
+        if used.insert(base.clone()) {
+            continue;
+        }
+
+        for i in 2.. {
+            let candidate = format!("{base}-{i}");
+            if used.insert(candidate.clone()) {
+                workspace.workspace_name = candidate;
+                upgraded = true;
+                break;
+            }
+        }
+    }
+
+    upgraded
+}
+
+fn normalize_project_path(path: &std::path::Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }

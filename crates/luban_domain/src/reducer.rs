@@ -138,8 +138,12 @@ impl AppState {
             }
 
             Action::AddProject { path } => {
-                let project_id = self.add_project(path);
-                self.insert_main_workspace(project_id);
+                let (project_id, created) = self.upsert_project(path);
+                if created {
+                    self.insert_main_workspace(project_id);
+                } else {
+                    self.ensure_main_workspace(project_id);
+                }
                 vec![Effect::SaveAppState]
             }
             Action::ToggleProjectExpanded { project_id } => {
@@ -148,6 +152,7 @@ impl AppState {
                 }
                 vec![Effect::SaveAppState]
             }
+            Action::DeleteProject { project_id } => self.delete_project(project_id),
             Action::OpenProjectSettings { project_id } => {
                 self.main_pane = MainPane::ProjectSettings(project_id);
                 self.right_pane = RightPane::None;
@@ -954,10 +959,20 @@ impl AppState {
     }
 
     fn add_project(&mut self, path: PathBuf) -> ProjectId {
+        let normalized_path = normalize_project_path(&path);
+
+        if let Some(project) = self
+            .projects
+            .iter_mut()
+            .find(|p| normalize_project_path(&p.path) == normalized_path)
+        {
+            return project.id;
+        }
+
         let id = ProjectId(self.next_project_id);
         self.next_project_id += 1;
 
-        let name = path
+        let name = normalized_path
             .file_name()
             .and_then(|s| s.to_str())
             .filter(|s| !s.is_empty())
@@ -969,7 +984,7 @@ impl AppState {
         self.projects.push(Project {
             id,
             name,
-            path,
+            path: normalized_path,
             slug,
             expanded: false,
             create_workspace_status: OperationStatus::Idle,
@@ -977,6 +992,60 @@ impl AppState {
         });
 
         id
+    }
+
+    fn upsert_project(&mut self, path: PathBuf) -> (ProjectId, bool) {
+        let before = self.projects.len();
+        let id = self.add_project(path);
+        (id, self.projects.len() != before)
+    }
+
+    fn delete_project(&mut self, project_id: ProjectId) -> Vec<Effect> {
+        let Some(project_idx) = self.projects.iter().position(|p| p.id == project_id) else {
+            return Vec::new();
+        };
+
+        let workspace_ids: Vec<WorkspaceId> = self.projects[project_idx]
+            .workspaces
+            .iter()
+            .map(|w| w.id)
+            .collect();
+
+        self.projects.remove(project_idx);
+
+        for workspace_id in &workspace_ids {
+            self.workspace_tabs.remove(workspace_id);
+            self.workspace_unread_completions.remove(workspace_id);
+            self.workspace_chat_scroll_y10
+                .retain(|(wid, _), _| wid != workspace_id);
+            self.conversations.retain(|(wid, _), _| wid != workspace_id);
+        }
+
+        if let Some(workspace_id) = self.last_open_workspace_id
+            && workspace_ids.contains(&workspace_id)
+        {
+            self.last_open_workspace_id = None;
+        }
+
+        if let MainPane::Workspace(workspace_id) = self.main_pane
+            && workspace_ids.contains(&workspace_id)
+        {
+            self.main_pane = MainPane::Dashboard;
+            self.right_pane = RightPane::None;
+        }
+
+        if let Some(workspace_id) = self.dashboard_preview_workspace_id
+            && workspace_ids.contains(&workspace_id)
+        {
+            self.dashboard_preview_workspace_id = None;
+        }
+
+        if matches!(self.main_pane, MainPane::ProjectSettings(id) if id == project_id) {
+            self.main_pane = MainPane::Dashboard;
+            self.right_pane = RightPane::None;
+        }
+
+        vec![Effect::SaveAppState]
     }
 
     fn insert_main_workspace(&mut self, project_id: ProjectId) -> WorkspaceId {
@@ -1000,34 +1069,42 @@ impl AppState {
         workspace_id
     }
 
+    fn ensure_main_workspace(&mut self, project_id: ProjectId) -> Option<WorkspaceId> {
+        let has_main = self
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .map(|project| {
+                project.workspaces.iter().any(|w| {
+                    w.status == WorkspaceStatus::Active
+                        && w.workspace_name == Self::MAIN_WORKSPACE_NAME
+                })
+            })
+            .unwrap_or(false);
+
+        if has_main {
+            return None;
+        }
+
+        Some(self.insert_main_workspace(project_id))
+    }
+
     pub(crate) fn ensure_main_workspaces(&mut self) -> bool {
         let mut upgraded = false;
 
         let project_ids: Vec<ProjectId> = self.projects.iter().map(|p| p.id).collect();
         for project_id in project_ids {
-            let has_main = self
-                .projects
-                .iter()
-                .find(|p| p.id == project_id)
-                .map(|project| {
-                    project.workspaces.iter().any(|w| {
-                        w.status == WorkspaceStatus::Active && w.worktree_path == project.path
-                    })
-                })
-                .unwrap_or(false);
-            if has_main {
-                continue;
+            if self.ensure_main_workspace(project_id).is_some() {
+                upgraded = true;
             }
-
-            self.insert_main_workspace(project_id);
-            upgraded = true;
         }
 
         upgraded
     }
 
     fn workspace_is_main(project: &Project, workspace: &Workspace) -> bool {
-        workspace.worktree_path == project.path
+        workspace.workspace_name == Self::MAIN_WORKSPACE_NAME
+            && workspace.worktree_path == project.path
     }
 
     fn insert_workspace(
@@ -1128,6 +1205,25 @@ fn sanitize_slug(input: &str) -> String {
     }
 }
 
+fn normalize_project_path(path: &std::path::Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 pub fn derive_thread_title(text: &str) -> String {
     let first_line = text.lines().next().unwrap_or("").trim();
     if first_line.is_empty() {
@@ -1183,7 +1279,11 @@ mod tests {
         project
             .workspaces
             .iter()
-            .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path == project.path)
+            .find(|w| {
+                w.status == WorkspaceStatus::Active
+                    && w.workspace_name == "main"
+                    && w.worktree_path == project.path
+            })
             .expect("missing main workspace")
             .id
     }
@@ -1202,7 +1302,10 @@ mod tests {
         project
             .workspaces
             .iter()
-            .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path != project.path)
+            .find(|w| {
+                w.status == WorkspaceStatus::Active
+                    && !(w.workspace_name == "main" && w.worktree_path == project.path)
+            })
             .expect("missing non-main workspace")
             .id
     }
@@ -1838,12 +1941,52 @@ mod tests {
             path: PathBuf::from("/tmp/My Project"),
         });
         state.apply(Action::AddProject {
-            path: PathBuf::from("/tmp/My Project"),
+            path: PathBuf::from("/home/My Project"),
         });
 
         assert_eq!(state.projects.len(), 2);
         assert_eq!(state.projects[0].slug, "my-project");
         assert_eq!(state.projects[1].slug, "my-project-2");
+    }
+
+    #[test]
+    fn projects_are_deduped_by_normalized_path() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo/"),
+        });
+
+        assert_eq!(state.projects.len(), 1);
+        assert_eq!(state.projects[0].path, PathBuf::from("/tmp/repo"));
+    }
+
+    #[test]
+    fn delete_project_removes_state_and_emits_save_effect() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        let main_id = main_workspace_id(&state);
+
+        state.apply(Action::OpenWorkspace {
+            workspace_id: main_id,
+        });
+        assert!(matches!(state.main_pane, MainPane::Workspace(_)));
+
+        let effects = state.apply(Action::DeleteProject { project_id });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SaveAppState));
+
+        assert!(state.projects.is_empty());
+        assert!(!state.workspace_tabs.contains_key(&main_id));
+        assert!(state.conversations.keys().all(|(wid, _)| *wid != main_id));
+        assert!(state.last_open_workspace_id.is_none());
+        assert_eq!(state.main_pane, MainPane::Dashboard);
+        assert_eq!(state.right_pane, RightPane::None);
     }
 
     #[test]

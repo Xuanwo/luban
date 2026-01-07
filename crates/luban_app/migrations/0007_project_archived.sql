@@ -1,0 +1,3 @@
+PRAGMA foreign_keys = ON;
+
+ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;

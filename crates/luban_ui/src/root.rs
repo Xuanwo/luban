@@ -359,6 +359,11 @@ impl LubanRootView {
 
         let success_toast = match &action {
             Action::AddProject { .. } => Some("Project added".to_owned()),
+            Action::DeleteProject { project_id } => self
+                .state
+                .project(*project_id)
+                .map(|p| format!("Project \"{}\" deleted", p.name))
+                .or_else(|| Some("Project deleted".to_owned())),
             Action::WorkspaceCreated { workspace_name, .. } => {
                 Some(format!("Workspace \"{workspace_name}\" created"))
             }

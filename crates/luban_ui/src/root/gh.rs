@@ -5,7 +5,8 @@ impl LubanRootView {
         let has_active_workspaces = self.state.projects.iter().any(|project| {
             project.workspaces.iter().any(|workspace| {
                 workspace.status == WorkspaceStatus::Active
-                    && workspace.worktree_path != project.path
+                    && !(workspace.workspace_name == "main"
+                        && workspace.worktree_path == project.path)
             })
         });
         if !has_active_workspaces {
@@ -23,7 +24,7 @@ impl LubanRootView {
                 if workspace.status != WorkspaceStatus::Active {
                     continue;
                 }
-                if workspace.worktree_path == project.path {
+                if workspace.workspace_name == "main" && workspace.worktree_path == project.path {
                     continue;
                 }
 
@@ -60,7 +61,8 @@ impl LubanRootView {
                                         project.workspaces.iter().any(|workspace| {
                                             workspace.id == workspace_id
                                                 && workspace.status == WorkspaceStatus::Active
-                                                && workspace.worktree_path != project.path
+                                                && !(workspace.workspace_name == "main"
+                                                    && workspace.worktree_path == project.path)
                                         })
                                     });
                                     if still_active {

@@ -14,7 +14,11 @@ fn main_workspace_id(state: &AppState) -> WorkspaceId {
     project
         .workspaces
         .iter()
-        .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path == project.path)
+        .find(|w| {
+            w.status == WorkspaceStatus::Active
+                && w.workspace_name == "main"
+                && w.worktree_path == project.path
+        })
         .expect("missing main workspace")
         .id
 }
@@ -392,7 +396,11 @@ fn sidebar_workspace_metadata_uses_workspace_name() {
     let workspace = project
         .workspaces
         .iter()
-        .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path == project.path)
+        .find(|w| {
+            w.status == WorkspaceStatus::Active
+                && w.workspace_name == "main"
+                && w.worktree_path == project.path
+        })
         .expect("missing main workspace");
 
     assert_eq!(
