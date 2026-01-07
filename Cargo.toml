@@ -19,8 +19,8 @@ gpui = { git = "https://github.com/zed-industries/zed", default-features = false
 # Pin gpui-component to a revision that matches the current gpui API.
 gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "36390d153f1692ce76be4f777130536d42f18e95" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component.git", rev = "36390d153f1692ce76be4f777130536d42f18e95" }
-ghostty_vt = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "ghostty_vt", rev = "06ef222854b235a39dd808305e1e88c84c6dc609" }
-gpui_ghostty_terminal = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "gpui_ghostty_terminal", rev = "06ef222854b235a39dd808305e1e88c84c6dc609" }
+ghostty_vt = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "ghostty_vt", rev = "46224da905199828560f1fb31f7a3f561bcd018e" }
+gpui_ghostty_terminal = { git = "https://github.com/Xuanwo/gpui-ghostty", package = "gpui_ghostty_terminal", rev = "46224da905199828560f1fb31f7a3f561bcd018e" }
 portable-pty = "0.9"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
