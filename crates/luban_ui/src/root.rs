@@ -3464,41 +3464,59 @@ fn render_codex_item_details(
                 )
             })
             .into_any_element(),
-        CodexThreadItem::FileChange { changes, .. } => div()
-            .mt_2()
-            .w_full()
-            .overflow_x_hidden()
-            .whitespace_normal()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .children(changes.iter().map(|c| {
-                div()
-                    .w_full()
-                    .overflow_x_hidden()
-                    .whitespace_normal()
-                    .text_color(theme.muted_foreground)
-                    .child(format!("{:?}: {}", c.kind, c.path))
-            }))
-            .into_any_element(),
-        CodexThreadItem::TodoList { items, .. } => div()
-            .mt_2()
-            .w_full()
-            .overflow_x_hidden()
-            .whitespace_normal()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .children(items.iter().map(|i| {
-                let prefix = if i.completed { "[x]" } else { "[ ]" };
-                div()
-                    .w_full()
-                    .overflow_x_hidden()
-                    .whitespace_normal()
-                    .text_color(theme.muted_foreground)
-                    .child(format!("{prefix} {}", i.text))
-            }))
-            .into_any_element(),
+        CodexThreadItem::FileChange { changes, .. } => {
+            let wrap_width = chat_column_width.map(|w| (w - px(80.0)).max(px(0.0)));
+            div()
+                .mt_2()
+                .w_full()
+                .overflow_x_hidden()
+                .whitespace_normal()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(changes.iter().enumerate().map(|(idx, change)| {
+                    min_width_zero(
+                        div()
+                            .w_full()
+                            .overflow_x_hidden()
+                            .whitespace_normal()
+                            .child(chat_message_view(
+                                &format!("file-change-{render_id}-{idx}"),
+                                &format!("{:?}: {}", change.kind, change.path),
+                                wrap_width,
+                                theme.muted_foreground,
+                            )),
+                    )
+                }))
+                .into_any_element()
+        }
+        CodexThreadItem::TodoList { items, .. } => {
+            let wrap_width = chat_column_width.map(|w| (w - px(80.0)).max(px(0.0)));
+            div()
+                .mt_2()
+                .w_full()
+                .overflow_x_hidden()
+                .whitespace_normal()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(items.iter().enumerate().map(|(idx, item)| {
+                    let prefix = if item.completed { "[x]" } else { "[ ]" };
+                    min_width_zero(
+                        div()
+                            .w_full()
+                            .overflow_x_hidden()
+                            .whitespace_normal()
+                            .child(chat_message_view(
+                                &format!("todo-{render_id}-{idx}"),
+                                &format!("{prefix} {}", item.text),
+                                wrap_width,
+                                theme.muted_foreground,
+                            )),
+                    )
+                }))
+                .into_any_element()
+        }
         CodexThreadItem::WebSearch { query, .. } => div()
             .mt_2()
             .w_full()

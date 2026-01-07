@@ -4641,6 +4641,181 @@ async fn long_command_execution_does_not_expand_chat_column(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
+async fn long_todo_list_does_not_expand_chat_column(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let mut long_text: String = include_str!("../../../../Cargo.lock")
+        .split_whitespace()
+        .collect();
+    long_text.truncate(16_384);
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: vec![
+                ConversationEntry::UserMessage {
+                    text: "Test".to_owned(),
+                },
+                ConversationEntry::CodexItem {
+                    item: Box::new(CodexThreadItem::TodoList {
+                        id: "item-1".to_owned(),
+                        items: vec![luban_domain::CodexTodoItem {
+                            text: long_text,
+                            completed: false,
+                        }],
+                    }),
+                },
+                ConversationEntry::CodexItem {
+                    item: Box::new(CodexThreadItem::AgentMessage {
+                        id: "item-2".to_owned(),
+                        text: "Reply".to_owned(),
+                    }),
+                },
+            ],
+        },
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(720.0), px(800.0)));
+    window_cx.refresh().unwrap();
+
+    let turn_bounds = window_cx
+        .debug_bounds("agent-turn-summary-agent-turn-0")
+        .expect("missing debug bounds for agent-turn-summary-agent-turn-0");
+    window_cx.simulate_click(turn_bounds.center(), Modifiers::none());
+    window_cx.refresh().unwrap();
+
+    let row_bounds = window_cx
+        .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+        .expect("missing debug bounds for agent-turn-item-summary-agent-turn-0-item-1");
+    window_cx.simulate_click(row_bounds.center(), Modifiers::none());
+    window_cx.refresh().unwrap();
+
+    let expanded = view.read_with(window_cx, |v, _| {
+        v.expanded_agent_items.contains("agent-turn-0::item-1")
+    });
+    assert!(expanded);
+
+    let column = window_cx
+        .debug_bounds("workspace-chat-column")
+        .expect("missing debug bounds for workspace-chat-column");
+    assert!(column.size.width <= px(720.0));
+
+    let bubble = window_cx
+        .debug_bounds("conversation-user-bubble-0")
+        .expect("missing debug bounds for conversation-user-bubble-0");
+    assert!(bubble.right() <= column.right() + px(2.0));
+    assert!(bubble.right() >= column.right() - px(8.0));
+}
+
+#[gpui::test]
+async fn long_file_change_does_not_expand_chat_column(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let mut long_path: String = include_str!("../../../../Cargo.lock")
+        .split_whitespace()
+        .collect();
+    long_path.truncate(16_384);
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: vec![
+                ConversationEntry::UserMessage {
+                    text: "Test".to_owned(),
+                },
+                ConversationEntry::CodexItem {
+                    item: Box::new(CodexThreadItem::FileChange {
+                        id: "item-1".to_owned(),
+                        changes: vec![luban_domain::CodexFileUpdateChange {
+                            path: long_path,
+                            kind: luban_domain::CodexPatchChangeKind::Add,
+                        }],
+                        status: luban_domain::CodexPatchApplyStatus::Completed,
+                    }),
+                },
+                ConversationEntry::CodexItem {
+                    item: Box::new(CodexThreadItem::AgentMessage {
+                        id: "item-2".to_owned(),
+                        text: "Reply".to_owned(),
+                    }),
+                },
+            ],
+        },
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(720.0), px(800.0)));
+    window_cx.refresh().unwrap();
+
+    let turn_bounds = window_cx
+        .debug_bounds("agent-turn-summary-agent-turn-0")
+        .expect("missing debug bounds for agent-turn-summary-agent-turn-0");
+    window_cx.simulate_click(turn_bounds.center(), Modifiers::none());
+    window_cx.refresh().unwrap();
+
+    let row_bounds = window_cx
+        .debug_bounds("agent-turn-item-summary-agent-turn-0-item-1")
+        .expect("missing debug bounds for agent-turn-item-summary-agent-turn-0-item-1");
+    window_cx.simulate_click(row_bounds.center(), Modifiers::none());
+    window_cx.refresh().unwrap();
+
+    let expanded = view.read_with(window_cx, |v, _| {
+        v.expanded_agent_items.contains("agent-turn-0::item-1")
+    });
+    assert!(expanded);
+
+    let column = window_cx
+        .debug_bounds("workspace-chat-column")
+        .expect("missing debug bounds for workspace-chat-column");
+    assert!(column.size.width <= px(720.0));
+
+    let bubble = window_cx
+        .debug_bounds("conversation-user-bubble-0")
+        .expect("missing debug bounds for conversation-user-bubble-0");
+    assert!(bubble.right() <= column.right() + px(2.0));
+    assert!(bubble.right() >= column.right() - px(8.0));
+}
+
+#[gpui::test]
 async fn turn_duration_renders_below_messages(cx: &mut gpui::TestAppContext) {
     cx.update(gpui_component::init);
 
