@@ -34,8 +34,10 @@ jobs:
             build-essential \
             clang \
             libclang-dev \
+            curl \
             pkg-config \
             libssl-dev \
+            xz-utils \
             libx11-dev \
             libxrandr-dev \
             libxinerama-dev \
@@ -58,6 +60,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+
+      - name: Install Zig (required by ghostty_vt_sys)
+        run: |
+          just zig-bootstrap
+          echo "${PWD}/.context/zig" >> "${GITHUB_PATH}"
 
       - name: Format (must be clean)
         run: |
