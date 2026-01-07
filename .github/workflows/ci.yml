@@ -44,7 +44,9 @@ jobs:
             libxcursor-dev \
             libxi-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-dev \
             libwayland-dev \
+            libxcb1-dev \
             libfreetype6-dev \
             libfontconfig1-dev
 
