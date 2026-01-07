@@ -4036,6 +4036,59 @@ async fn sidebar_projects_list_renders_scrollbar_when_overflowing(cx: &mut gpui:
 }
 
 #[gpui::test]
+async fn sidebar_projects_list_can_scroll_with_wheel(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    for i in 0..64 {
+        state.apply(Action::AddProject {
+            path: PathBuf::from(format!("/tmp/repo-{i}")),
+        });
+    }
+
+    let (view, window_cx) =
+        cx.add_window_view(|_window, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.simulate_resize(size(px(900.0), px(240.0)));
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    let _ = view.read_with(window_cx, |v, _| v.debug_projects_scroll_offset_y10());
+
+    let scroll_bounds = window_cx
+        .debug_bounds("projects-scroll")
+        .expect("missing debug bounds for projects scroll");
+    let position = point(
+        scroll_bounds.origin.x + px(10.0),
+        scroll_bounds.origin.y + px(10.0),
+    );
+
+    let header_before = window_cx
+        .debug_bounds("project-header-0")
+        .expect("missing debug bounds for first project header");
+
+    window_cx.simulate_mouse_move(position, None, Modifiers::none());
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    window_cx.simulate_event(ScrollWheelEvent {
+        position,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-160.0))),
+        ..Default::default()
+    });
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    let header_after = window_cx.debug_bounds("project-header-0");
+    assert!(
+        header_after.is_none()
+            || header_after.expect("checked is_some").origin.y != header_before.origin.y,
+        "expected projects list to scroll"
+    );
+}
+
+#[gpui::test]
 async fn terminal_grid_updates_after_sidebar_resize(cx: &mut gpui::TestAppContext) {
     cx.update(gpui_component::init);
 

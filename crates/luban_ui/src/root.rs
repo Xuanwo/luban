@@ -316,6 +316,16 @@ impl LubanRootView {
         quantize_pixels_y10(self.chat_scroll_handle.max_offset().height)
     }
 
+    #[cfg(test)]
+    pub fn debug_projects_scroll_offset_y10(&self) -> i32 {
+        quantize_pixels_y10(self.projects_scroll_handle.offset().y)
+    }
+
+    #[cfg(test)]
+    pub fn debug_projects_scroll_max_offset_y10(&self) -> i32 {
+        quantize_pixels_y10(self.projects_scroll_handle.max_offset().height)
+    }
+
     fn dispatch(&mut self, action: Action, cx: &mut Context<Self>) {
         let previous_chat_key_for_scroll = match self.state.main_pane {
             MainPane::Workspace(workspace_id) => {
