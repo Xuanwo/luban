@@ -1,8 +1,10 @@
+use crate::agent_settings::parse_thinking_effort;
 use crate::{
     AppState, Effect, MainPane, OperationStatus, PersistedAppState, PersistedProject,
     PersistedWorkspace, Project, ProjectId, RightPane, Workspace, WorkspaceId, WorkspaceStatus,
     WorkspaceTabs, WorkspaceThreadId,
 };
+use crate::{default_agent_model_id, default_thinking_effort, normalize_thinking_effort};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -13,6 +15,21 @@ pub(crate) fn apply_persisted_app_state(
     if !state.projects.is_empty() {
         return Vec::new();
     }
+
+    let agent_default_model_id = persisted
+        .agent_default_model_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| default_agent_model_id().to_owned());
+    let agent_default_thinking_effort = persisted
+        .agent_default_thinking_effort
+        .as_deref()
+        .and_then(parse_thinking_effort)
+        .unwrap_or_else(default_thinking_effort);
+    let agent_default_thinking_effort =
+        normalize_thinking_effort(&agent_default_model_id, agent_default_thinking_effort);
+
+    state.agent_default_model_id = agent_default_model_id;
+    state.agent_default_thinking_effort = agent_default_thinking_effort;
 
     state.projects = persisted
         .projects
@@ -100,7 +117,7 @@ pub(crate) fn apply_persisted_app_state(
         for thread_id in open_tabs {
             state.conversations.insert(
                 (workspace_id, thread_id),
-                AppState::default_conversation(thread_id),
+                state.default_conversation(thread_id),
             );
         }
     }
@@ -192,6 +209,10 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
             .collect(),
         sidebar_width: state.sidebar_width,
         terminal_pane_width: state.terminal_pane_width,
+        agent_default_model_id: Some(state.agent_default_model_id.clone()),
+        agent_default_thinking_effort: Some(
+            state.agent_default_thinking_effort.as_str().to_owned(),
+        ),
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         workspace_active_thread_id: state
             .workspace_tabs

@@ -33,6 +33,23 @@ impl ThinkingEffort {
     }
 }
 
+pub fn parse_thinking_effort(value: &str) -> Option<ThinkingEffort> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("low") {
+        return Some(ThinkingEffort::Low);
+    }
+    if value.eq_ignore_ascii_case("medium") {
+        return Some(ThinkingEffort::Medium);
+    }
+    if value.eq_ignore_ascii_case("high") {
+        return Some(ThinkingEffort::High);
+    }
+    if value.eq_ignore_ascii_case("xhigh") {
+        return Some(ThinkingEffort::XHigh);
+    }
+    None
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct AgentModelSpec {
     pub id: &'static str,

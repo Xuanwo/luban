@@ -1,4 +1,3 @@
-
 use super::*;
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, ScrollDelta, ScrollWheelEvent, point, px, size,
@@ -125,6 +124,8 @@ impl ProjectWorkspaceService for FakeService {
             projects: Vec::new(),
             sidebar_width: None,
             terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
             last_open_workspace_id: None,
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
@@ -4393,6 +4394,8 @@ impl ProjectWorkspaceService for FakeGhService {
             projects: Vec::new(),
             sidebar_width: None,
             terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
             last_open_workspace_id: None,
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),

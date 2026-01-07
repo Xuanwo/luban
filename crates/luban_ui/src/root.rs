@@ -1515,12 +1515,26 @@ impl LubanRootView {
                     .unwrap_or_default();
                 let queue_paused = conversation.map(|c| c.queue_paused).unwrap_or(false);
                 let _thread_id = conversation.and_then(|c| c.thread_id.as_deref());
-                let model_id = conversation
-                    .map(|c| c.agent_model_id.clone())
-                    .unwrap_or_else(|| default_agent_model_id().to_owned());
-                let thinking_effort = conversation
-                    .map(|c| c.thinking_effort)
-                    .unwrap_or(default_thinking_effort());
+                let (model_id, thinking_effort) = match (conversation, run_status) {
+                    (Some(conversation), OperationStatus::Running) => conversation
+                        .current_run_config
+                        .as_ref()
+                        .map(|cfg| (cfg.model_id.clone(), cfg.thinking_effort))
+                        .unwrap_or_else(|| {
+                            (
+                                conversation.agent_model_id.clone(),
+                                conversation.thinking_effort,
+                            )
+                        }),
+                    (Some(conversation), _) => (
+                        conversation.agent_model_id.clone(),
+                        conversation.thinking_effort,
+                    ),
+                    (None, _) => (
+                        default_agent_model_id().to_owned(),
+                        default_thinking_effort(),
+                    ),
+                };
 
                 let is_running = run_status == OperationStatus::Running;
                 let chat_target_changed = self.last_chat_workspace_id != Some(chat_key);

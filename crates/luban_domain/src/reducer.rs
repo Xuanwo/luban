@@ -6,7 +6,7 @@ use crate::state::{
 use crate::{
     Action, AgentRunConfig, AppState, CodexThreadEvent, ConversationEntry, DraftAttachment, Effect,
     MainPane, OperationStatus, PersistedAppState, Project, ProjectId, QueuedPrompt, RightPane,
-    Workspace, WorkspaceConversation, WorkspaceId, WorkspaceStatus, WorkspaceTabs,
+    ThinkingEffort, Workspace, WorkspaceConversation, WorkspaceId, WorkspaceStatus, WorkspaceTabs,
     WorkspaceThreadId, default_agent_model_id, default_thinking_effort, normalize_thinking_effort,
     thinking_effort_supported,
 };
@@ -29,6 +29,8 @@ impl AppState {
             right_pane: RightPane::None,
             sidebar_width: None,
             terminal_pane_width: None,
+            agent_default_model_id: default_agent_model_id().to_owned(),
+            agent_default_thinking_effort: default_thinking_effort(),
             conversations: HashMap::new(),
             workspace_tabs: HashMap::new(),
             dashboard_preview_workspace_id: None,
@@ -164,7 +166,7 @@ impl AppState {
                 );
                 self.conversations.insert(
                     (workspace_id, initial_thread_id),
-                    Self::default_conversation(initial_thread_id),
+                    self.default_conversation(initial_thread_id),
                 );
                 vec![
                     Effect::SaveAppState,
@@ -342,6 +344,7 @@ impl AppState {
                         .entries
                         .push(ConversationEntry::UserMessage { text: text.clone() });
                     conversation.run_status = OperationStatus::Running;
+                    conversation.current_run_config = Some(run_config.clone());
                     conversation.in_progress_items.clear();
                     conversation.in_progress_order.clear();
                     return vec![Effect::RunAgentTurn {
@@ -358,6 +361,7 @@ impl AppState {
                         .entries
                         .push(ConversationEntry::UserMessage { text: text.clone() });
                     conversation.run_status = OperationStatus::Running;
+                    conversation.current_run_config = Some(run_config.clone());
                     conversation.in_progress_items.clear();
                     conversation.in_progress_order.clear();
                     return vec![Effect::RunAgentTurn {
@@ -380,22 +384,31 @@ impl AppState {
                 thread_id,
                 model_id,
             } => {
-                let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
-                conversation.agent_model_id = model_id.clone();
-                conversation.thinking_effort =
-                    normalize_thinking_effort(&model_id, conversation.thinking_effort);
-                Vec::new()
+                let thinking_effort = {
+                    let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                    conversation.agent_model_id = model_id.clone();
+                    conversation.thinking_effort =
+                        normalize_thinking_effort(&model_id, conversation.thinking_effort);
+                    conversation.thinking_effort
+                };
+                self.agent_default_model_id = model_id;
+                self.agent_default_thinking_effort = thinking_effort;
+                vec![Effect::SaveAppState]
             }
             Action::ThinkingEffortChanged {
                 workspace_id,
                 thread_id,
                 thinking_effort,
             } => {
-                let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
-                if thinking_effort_supported(&conversation.agent_model_id, thinking_effort) {
+                {
+                    let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                    if !thinking_effort_supported(&conversation.agent_model_id, thinking_effort) {
+                        return Vec::new();
+                    }
                     conversation.thinking_effort = thinking_effort;
                 }
-                Vec::new()
+                self.agent_default_thinking_effort = thinking_effort;
+                vec![Effect::SaveAppState]
             }
             Action::ChatDraftChanged {
                 workspace_id,
@@ -507,6 +520,7 @@ impl AppState {
                     CodexThreadEvent::TurnCompleted { usage } => {
                         let _ = usage;
                         conversation.run_status = OperationStatus::Idle;
+                        conversation.current_run_config = None;
                         flush_in_progress_items(conversation);
                         conversation.in_progress_items.clear();
                         conversation.in_progress_order.clear();
@@ -526,6 +540,7 @@ impl AppState {
                             message: error.message.clone(),
                         });
                         conversation.run_status = OperationStatus::Idle;
+                        conversation.current_run_config = None;
                         conversation.in_progress_items.clear();
                         conversation.in_progress_order.clear();
                         conversation.queue_paused = true;
@@ -563,6 +578,7 @@ impl AppState {
                             message: message.clone(),
                         });
                         conversation.run_status = OperationStatus::Idle;
+                        conversation.current_run_config = None;
                         conversation.in_progress_items.clear();
                         conversation.in_progress_order.clear();
                         conversation.queue_paused = true;
@@ -579,6 +595,7 @@ impl AppState {
                     && conversation.run_status == OperationStatus::Running
                 {
                     conversation.run_status = OperationStatus::Idle;
+                    conversation.current_run_config = None;
                     flush_in_progress_items(conversation);
                     conversation.in_progress_items.clear();
                     conversation.in_progress_order.clear();
@@ -597,6 +614,7 @@ impl AppState {
                     return Vec::new();
                 }
                 conversation.run_status = OperationStatus::Idle;
+                conversation.current_run_config = None;
                 flush_in_progress_items(conversation);
                 conversation.in_progress_items.clear();
                 conversation.in_progress_order.clear();
@@ -614,7 +632,7 @@ impl AppState {
                 };
                 self.conversations.insert(
                     (workspace_id, thread_id),
-                    Self::default_conversation(thread_id),
+                    self.default_conversation(thread_id),
                 );
                 self.ensure_workspace_tabs_mut(workspace_id)
                     .activate(thread_id);
@@ -690,13 +708,21 @@ impl AppState {
                 threads,
             } => {
                 self.ensure_workspace_tabs_mut(workspace_id);
+                let default_model_id = self.agent_default_model_id.clone();
+                let default_thinking_effort = self.agent_default_thinking_effort;
                 let mut max_thread_id = 0u64;
                 for meta in threads {
                     max_thread_id = max_thread_id.max(meta.thread_id.0);
                     let conversation = self
                         .conversations
                         .entry((workspace_id, meta.thread_id))
-                        .or_insert_with(|| Self::default_conversation(meta.thread_id));
+                        .or_insert_with(|| {
+                            Self::default_conversation_with_defaults(
+                                meta.thread_id,
+                                default_model_id.clone(),
+                                default_thinking_effort,
+                            )
+                        });
                     conversation.title = meta.title;
                     conversation.thread_id = meta.remote_thread_id;
                 }
@@ -816,12 +842,19 @@ impl AppState {
     fn ensure_workspace_tabs_mut(&mut self, workspace_id: WorkspaceId) -> &mut WorkspaceTabs {
         use std::collections::hash_map::Entry;
 
+        let default_model_id = self.agent_default_model_id.clone();
+        let default_thinking_effort = self.agent_default_thinking_effort;
         match self.workspace_tabs.entry(workspace_id) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let initial = WorkspaceThreadId(1);
+                let conversation = Self::default_conversation_with_defaults(
+                    initial,
+                    default_model_id,
+                    default_thinking_effort,
+                );
                 self.conversations
-                    .insert((workspace_id, initial), Self::default_conversation(initial));
+                    .insert((workspace_id, initial), conversation);
                 entry.insert(WorkspaceTabs::new_with_initial(initial))
             }
         }
@@ -833,27 +866,51 @@ impl AppState {
         thread_id: WorkspaceThreadId,
     ) -> &mut WorkspaceConversation {
         self.ensure_workspace_tabs_mut(workspace_id);
+        let default_model_id = self.agent_default_model_id.clone();
+        let default_thinking_effort = self.agent_default_thinking_effort;
         self.conversations
             .entry((workspace_id, thread_id))
-            .or_insert_with(|| Self::default_conversation(thread_id))
+            .or_insert_with(|| {
+                Self::default_conversation_with_defaults(
+                    thread_id,
+                    default_model_id.clone(),
+                    default_thinking_effort,
+                )
+            })
     }
 
-    pub(crate) fn default_conversation(thread_id: WorkspaceThreadId) -> WorkspaceConversation {
+    fn default_conversation_with_defaults(
+        thread_id: WorkspaceThreadId,
+        model_id: String,
+        thinking_effort: ThinkingEffort,
+    ) -> WorkspaceConversation {
         WorkspaceConversation {
             local_thread_id: thread_id,
             title: format!("Thread {}", thread_id.0),
             thread_id: None,
             draft: String::new(),
             draft_attachments: Vec::new(),
-            agent_model_id: default_agent_model_id().to_owned(),
-            thinking_effort: default_thinking_effort(),
+            agent_model_id: model_id,
+            thinking_effort,
             entries: Vec::new(),
             run_status: OperationStatus::Idle,
+            current_run_config: None,
             in_progress_items: BTreeMap::new(),
             in_progress_order: VecDeque::new(),
             pending_prompts: VecDeque::new(),
             queue_paused: false,
         }
+    }
+
+    pub(crate) fn default_conversation(
+        &self,
+        thread_id: WorkspaceThreadId,
+    ) -> WorkspaceConversation {
+        Self::default_conversation_with_defaults(
+            thread_id,
+            self.agent_default_model_id.clone(),
+            self.agent_default_thinking_effort,
+        )
     }
 
     fn add_project(&mut self, path: PathBuf) -> ProjectId {
@@ -1058,6 +1115,7 @@ fn start_next_queued_prompt(
         text: queued.text.clone(),
     });
     conversation.run_status = OperationStatus::Running;
+    conversation.current_run_config = Some(queued.run_config.clone());
     conversation.in_progress_items.clear();
     conversation.in_progress_order.clear();
     Some(Effect::RunAgentTurn {
@@ -1107,6 +1165,198 @@ mod tests {
             .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path != project.path)
             .expect("missing non-main workspace")
             .id
+    }
+
+    #[test]
+    fn new_threads_use_last_selected_agent_settings() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        let thread_id = WorkspaceThreadId(1);
+
+        let effects = state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5.2-codex".to_owned(),
+        });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SaveAppState));
+
+        let effects = state.apply(Action::ThinkingEffortChanged {
+            workspace_id,
+            thread_id,
+            thinking_effort: ThinkingEffort::High,
+        });
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SaveAppState));
+
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        let created_thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        assert_eq!(created_thread_id, WorkspaceThreadId(2));
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, created_thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
+        assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
+    }
+
+    #[test]
+    fn running_turn_keeps_its_run_config_when_user_changes_defaults() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        let thread_id = WorkspaceThreadId(1);
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5.2-codex".to_owned(),
+        });
+        state.apply(Action::ThinkingEffortChanged {
+            workspace_id,
+            thread_id,
+            thinking_effort: ThinkingEffort::High,
+        });
+
+        let effects = state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "hi".to_owned(),
+        });
+        assert_eq!(effects.len(), 1);
+        let (sent_model_id, sent_effort) = match &effects[0] {
+            Effect::RunAgentTurn { run_config, .. } => {
+                (run_config.model_id.as_str(), run_config.thinking_effort)
+            }
+            other => panic!("unexpected effect: {other:?}"),
+        };
+        assert_eq!(sent_model_id, "gpt-5.2-codex");
+        assert_eq!(sent_effort, ThinkingEffort::High);
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5.2".to_owned(),
+        });
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2");
+        let running = conversation
+            .current_run_config
+            .as_ref()
+            .expect("missing current run config");
+        assert_eq!(running.model_id, "gpt-5.2-codex");
+        assert_eq!(running.thinking_effort, ThinkingEffort::High);
+    }
+
+    #[test]
+    fn queued_turn_updates_current_run_config_when_started() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        let thread_id = WorkspaceThreadId(1);
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5.2-codex".to_owned(),
+        });
+        state.apply(Action::ThinkingEffortChanged {
+            workspace_id,
+            thread_id,
+            thinking_effort: ThinkingEffort::High,
+        });
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "first".to_owned(),
+        });
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5.2".to_owned(),
+        });
+        state.apply(Action::ThinkingEffortChanged {
+            workspace_id,
+            thread_id,
+            thinking_effort: ThinkingEffort::Low,
+        });
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "second".to_owned(),
+        });
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.run_status, OperationStatus::Running);
+        assert_eq!(conversation.pending_prompts.len(), 1);
+
+        let effects = state.apply(Action::AgentEventReceived {
+            workspace_id,
+            thread_id,
+            event: CodexThreadEvent::TurnCompleted {
+                usage: CodexUsage {
+                    input_tokens: 0,
+                    cached_input_tokens: 0,
+                    output_tokens: 0,
+                },
+            },
+        });
+        assert_eq!(effects.len(), 1);
+        match &effects[0] {
+            Effect::RunAgentTurn { run_config, .. } => {
+                assert_eq!(run_config.model_id, "gpt-5.2");
+                assert_eq!(run_config.thinking_effort, ThinkingEffort::Low);
+            }
+            other => panic!("unexpected effect: {other:?}"),
+        }
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        let running = conversation
+            .current_run_config
+            .as_ref()
+            .expect("missing current run config");
+        assert_eq!(running.model_id, "gpt-5.2");
+        assert_eq!(running.thinking_effort, ThinkingEffort::Low);
     }
 
     #[test]
@@ -1224,6 +1474,8 @@ mod tests {
                 projects: Vec::new(),
                 sidebar_width: None,
                 terminal_pane_width: Some(480),
+                agent_default_model_id: None,
+                agent_default_thinking_effort: None,
                 last_open_workspace_id: None,
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
@@ -1252,6 +1504,8 @@ mod tests {
                 projects: Vec::new(),
                 sidebar_width: Some(360),
                 terminal_pane_width: None,
+                agent_default_model_id: None,
+                agent_default_thinking_effort: None,
                 last_open_workspace_id: None,
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),

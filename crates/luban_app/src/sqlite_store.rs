@@ -8,13 +8,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 5;
+const LATEST_SCHEMA_VERSION: u32 = 6;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
 const WORKSPACE_OPEN_TAB_PREFIX: &str = "workspace_open_tab_";
 const WORKSPACE_ARCHIVED_TAB_PREFIX: &str = "workspace_archived_tab_";
 const WORKSPACE_NEXT_THREAD_ID_PREFIX: &str = "workspace_next_thread_id_";
 const LAST_OPEN_WORKSPACE_ID_KEY: &str = "last_open_workspace_id";
+const AGENT_DEFAULT_MODEL_ID_KEY: &str = "agent_default_model_id";
+const AGENT_DEFAULT_THINKING_EFFORT_KEY: &str = "agent_default_thinking_effort";
 
 const MIGRATIONS: &[(u32, &str)] = &[
     (
@@ -50,6 +52,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations/0005_threaded_conversations.sql"
+        )),
+    ),
+    (
+        6,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0006_app_settings_text.sql"
         )),
     ),
 ];
@@ -514,6 +523,26 @@ impl SqliteDatabase {
             .context("failed to load last open workspace id")?
             .and_then(|value| u64::try_from(value).ok());
 
+        let agent_default_model_id = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_MODEL_ID_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load agent default model id")?;
+
+        let agent_default_thinking_effort = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_THINKING_EFFORT_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load agent default thinking effort")?;
+
         let mut workspace_active_thread_id = HashMap::new();
         let mut stmt = self.conn.prepare(
             "SELECT key, value FROM app_settings WHERE key LIKE 'workspace_active_thread_id_%'",
@@ -685,6 +714,8 @@ impl SqliteDatabase {
             projects,
             sidebar_width,
             terminal_pane_width,
+            agent_default_model_id,
+            agent_default_thinking_effort,
             last_open_workspace_id,
             workspace_active_thread_id,
             workspace_open_tabs,
@@ -800,6 +831,38 @@ impl SqliteDatabase {
             tx.execute(
                 "DELETE FROM app_settings WHERE key = 'terminal_pane_width'",
                 [],
+            )?;
+        }
+
+        if let Some(value) = snapshot.agent_default_model_id.as_deref() {
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![AGENT_DEFAULT_MODEL_ID_KEY, value, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_MODEL_ID_KEY],
+            )?;
+        }
+
+        if let Some(value) = snapshot.agent_default_thinking_effort.as_deref() {
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![AGENT_DEFAULT_THINKING_EFFORT_KEY, value, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_THINKING_EFFORT_KEY],
             )?;
         }
 
@@ -1254,12 +1317,12 @@ mod tests {
         let count: i64 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('projects','workspaces','conversations','conversation_entries','app_settings')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('projects','workspaces','conversations','conversation_entries','app_settings','app_settings_text')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 
     #[test]
@@ -1285,6 +1348,8 @@ mod tests {
             }],
             sidebar_width: Some(280),
             terminal_pane_width: Some(360),
+            agent_default_model_id: Some("gpt-5.2-codex".to_owned()),
+            agent_default_thinking_effort: Some("high".to_owned()),
             last_open_workspace_id: Some(10),
             workspace_active_thread_id: HashMap::from([(10, 1)]),
             workspace_open_tabs: HashMap::from([(10, vec![1, 2, 3])]),
@@ -1321,6 +1386,8 @@ mod tests {
             }],
             sidebar_width: None,
             terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
             last_open_workspace_id: None,
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
@@ -1377,6 +1444,8 @@ mod tests {
             }],
             sidebar_width: None,
             terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
             last_open_workspace_id: None,
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
