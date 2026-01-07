@@ -728,6 +728,8 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             state: String,
             #[serde(default, rename = "mergeStateStatus")]
             merge_state_status: String,
+            #[serde(default, rename = "reviewDecision")]
+            review_decision: String,
         }
 
         fn checks_ci_state(checks: &[GhPullRequestCheck]) -> Option<PullRequestCiState> {
@@ -759,12 +761,16 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             pr_state: PullRequestState,
             is_draft: bool,
             merge_state_status: &str,
+            review_decision: &str,
             ci_state: Option<PullRequestCiState>,
         ) -> bool {
             if pr_state != PullRequestState::Open {
                 return false;
             }
             if is_draft {
+                return false;
+            }
+            if review_decision != "APPROVED" {
                 return false;
             }
             if ci_state != Some(PullRequestCiState::Success) {
@@ -778,7 +784,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 "pr",
                 "view",
                 "--json",
-                "number,isDraft,state,mergeStateStatus",
+                "number,isDraft,state,mergeStateStatus,reviewDecision",
             ])
             .current_dir(&worktree_path)
             .output();
@@ -806,13 +812,29 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .current_dir(&worktree_path)
             .output();
 
-        let checks = checks_output
-            .ok()
-            .and_then(|o| serde_json::from_slice::<Vec<GhPullRequestCheck>>(&o.stdout).ok())
-            .unwrap_or_default();
-        let ci_state = checks_ci_state(&checks);
-        let merge_ready =
-            is_merge_ready(state, value.is_draft, &value.merge_state_status, ci_state);
+        let (checks_known, checks) = match checks_output {
+            Ok(output) if output.status.success() => (
+                true,
+                serde_json::from_slice::<Vec<GhPullRequestCheck>>(&output.stdout)
+                    .unwrap_or_default(),
+            ),
+            _ => (false, Vec::new()),
+        };
+
+        let ci_state = if !checks_known {
+            None
+        } else if checks.is_empty() {
+            Some(PullRequestCiState::Success)
+        } else {
+            checks_ci_state(&checks)
+        };
+        let merge_ready = is_merge_ready(
+            state,
+            value.is_draft,
+            &value.merge_state_status,
+            &value.review_decision,
+            ci_state,
+        );
 
         Ok(Some(PullRequestInfo {
             number: value.number,

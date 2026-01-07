@@ -290,6 +290,7 @@ fn render_workspace_row(
     let workspace_id = workspace.id;
     let is_running = state.workspace_has_running_turn(workspace_id);
     let has_unread = state.workspace_has_unread_completion(workspace_id);
+    let pr_open = pr_info.is_some_and(|info| info.state == luban_domain::PullRequestState::Open);
     let archive_disabled = workspace.archive_status == OperationStatus::Running;
     let archive_icon = if archive_disabled {
         IconName::LoaderCircle
@@ -300,13 +301,27 @@ fn render_workspace_row(
     let title = sidebar_workspace_title(workspace);
     let metadata = sidebar_workspace_metadata(workspace);
     let pr_label = pr_info.map(|info| format!("#{}", info.number));
-    let git_icon = if pr_info.is_some() {
-        "icons/git-pull-request-arrow.svg"
-    } else {
-        "icons/git-branch.svg"
-    };
     let ci_state = pr_info.and_then(|info| info.ci_state);
     let merge_ready = pr_info.map(|info| info.merge_ready).unwrap_or(false);
+    let status = if is_running {
+        WorkspaceRowStatus::AgentRunning
+    } else if has_unread {
+        WorkspaceRowStatus::ReplyNeeded
+    } else if pr_open {
+        match ci_state.unwrap_or(luban_domain::PullRequestCiState::Success) {
+            luban_domain::PullRequestCiState::Pending => WorkspaceRowStatus::PullRequestRunning,
+            luban_domain::PullRequestCiState::Failure => WorkspaceRowStatus::PullRequestFailed,
+            luban_domain::PullRequestCiState::Success => {
+                if merge_ready {
+                    WorkspaceRowStatus::PullRequestMergeReady
+                } else {
+                    WorkspaceRowStatus::PullRequestReviewing
+                }
+            }
+        }
+    } else {
+        WorkspaceRowStatus::Idle
+    };
 
     let row = div()
         .mx_3()
@@ -337,57 +352,123 @@ fn render_workspace_row(
                 .debug_selector(move || {
                     format!("workspace-status-container-{project_index}-{workspace_index}")
                 })
-                .when(is_running, |s| {
-                    s.child(
-                        div()
-                            .id(format!(
-                                "workspace-status-running-{project_index}-{workspace_index}"
+                .child(match status {
+                    WorkspaceRowStatus::Idle => div()
+                        .id(format!(
+                            "workspace-status-idle-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!("workspace-status-idle-{project_index}-{workspace_index}")
+                        })
+                        .child(
+                            Icon::empty()
+                                .path("icons/circle-dot.svg")
+                                .with_size(Size::Small)
+                                .text_color(theme.muted_foreground),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::AgentRunning => div()
+                        .id(format!(
+                            "workspace-status-running-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!("workspace-status-running-{project_index}-{workspace_index}")
+                        })
+                        .child(
+                            Spinner::new()
+                                .with_size(Size::Small)
+                                .color(theme.muted_foreground),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::ReplyNeeded => div()
+                        .id(format!(
+                            "workspace-status-unread-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!("workspace-status-unread-{project_index}-{workspace_index}")
+                        })
+                        .child(
+                            Icon::empty()
+                                .path("icons/message-square-dot.svg")
+                                .with_size(Size::Small)
+                                .text_color(theme.sidebar_accent_foreground),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::PullRequestRunning => div()
+                        .id(format!(
+                            "workspace-status-pr-running-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!("workspace-status-pr-running-{project_index}-{workspace_index}")
+                        })
+                        .child(
+                            Icon::new(IconName::LoaderCircle)
+                                .with_size(Size::Small)
+                                .text_color(theme.muted_foreground),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::PullRequestReviewing => div()
+                        .id(format!(
+                            "workspace-status-pr-reviewing-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!(
+                                "workspace-status-pr-reviewing-{project_index}-{workspace_index}"
+                            )
+                        })
+                        .child(
+                            Icon::empty()
+                                .path("icons/book-check.svg")
+                                .with_size(Size::Small)
+                                .text_color(theme.muted_foreground),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::PullRequestMergeReady => div()
+                        .id(format!(
+                            "workspace-status-pr-merge-ready-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!(
+                                "workspace-status-pr-merge-ready-{project_index}-{workspace_index}"
+                            )
+                        })
+                        .child(
+                            Icon::new(IconName::Check)
+                                .with_size(Size::Small)
+                                .text_color(theme.success),
+                        )
+                        .into_any_element(),
+                    WorkspaceRowStatus::PullRequestFailed => div()
+                        .id(format!(
+                            "workspace-status-pr-failure-{project_index}-{workspace_index}"
+                        ))
+                        .debug_selector(move || {
+                            format!("workspace-status-pr-failure-{project_index}-{workspace_index}")
+                        })
+                        .child(
+                            Button::new(format!(
+                                "workspace-status-pr-failure-{project_index}-{workspace_index}"
                             ))
-                            .debug_selector(move || {
-                                format!(
-                                    "workspace-status-running-{project_index}-{workspace_index}"
-                                )
-                            })
-                            .child(
-                                Spinner::new()
-                                    .with_size(Size::Small)
-                                    .color(theme.muted_foreground),
-                            ),
-                    )
-                })
-                .when(!is_running && has_unread, |s| {
-                    s.child(
-                        div()
-                            .id(format!(
-                                "workspace-status-unread-{project_index}-{workspace_index}"
-                            ))
-                            .debug_selector(move || {
-                                format!("workspace-status-unread-{project_index}-{workspace_index}")
-                            })
-                            .child(
-                                Icon::empty()
-                                    .path("icons/message-square-dot.svg")
-                                    .with_size(Size::Small)
-                                    .text_color(theme.sidebar_accent_foreground),
-                            ),
-                    )
+                            .ghost()
+                            .compact()
+                            .icon(Icon::new(IconName::CircleX).text_color(theme.danger))
+                            .tooltip("Open failed action")
+                            .on_click({
+                                let view_handle = view_handle.clone();
+                                move |_, _window, app| {
+                                    let _ = view_handle.update(app, |view, cx| {
+                                        view.dispatch(
+                                            Action::OpenWorkspacePullRequestFailedAction {
+                                                workspace_id,
+                                            },
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }),
+                        )
+                        .into_any_element(),
                 }),
-        )
-        .child(
-            div()
-                .debug_selector(move || {
-                    if pr_info.is_some() {
-                        format!("workspace-git-icon-pr-{project_index}-{workspace_index}")
-                    } else {
-                        format!("workspace-git-icon-branch-{project_index}-{workspace_index}")
-                    }
-                })
-                .child(
-                    Icon::empty()
-                        .path(git_icon)
-                        .with_size(Size::Small)
-                        .text_color(theme.muted_foreground),
-                ),
         )
         .child(min_width_zero(
             div()
@@ -437,6 +518,12 @@ fn render_workspace_row(
                                 ))
                                 .ghost()
                                 .compact()
+                                .icon(
+                                    Icon::empty()
+                                        .path("icons/git-pull-request-arrow.svg")
+                                        .with_size(Size::Small)
+                                        .text_color(theme.muted_foreground),
+                                )
                                 .label(label)
                                 .tooltip("Open PR")
                                 .on_click({
@@ -451,75 +538,6 @@ fn render_workspace_row(
                                     }
                                 }),
                             ),
-                    )
-                })
-                .when_some(ci_state, |s, state| {
-                    let (icon, tooltip, color, clickable, selector_suffix) = match state {
-                        luban_domain::PullRequestCiState::Pending => (
-                            Icon::new(IconName::LoaderCircle),
-                            "CI running",
-                            theme.muted_foreground,
-                            false,
-                            "pending",
-                        ),
-                        luban_domain::PullRequestCiState::Success => {
-                            if merge_ready {
-                                (
-                                    Icon::new(IconName::Check),
-                                    "Merge ready",
-                                    theme.success,
-                                    false,
-                                    "merge-ready",
-                                )
-                            } else {
-                                (
-                                    Icon::new(IconName::Check),
-                                    "CI passed",
-                                    theme.muted_foreground,
-                                    false,
-                                    "success",
-                                )
-                            }
-                        }
-                        luban_domain::PullRequestCiState::Failure => (
-                            Icon::new(IconName::CircleX),
-                            "Open failed action",
-                            theme.danger,
-                            true,
-                            "failure",
-                        ),
-                    };
-
-                    let button = Button::new(format!(
-                        "workspace-ci-button-{selector_suffix}-{project_index}-{workspace_index}"
-                    ))
-                    .ghost()
-                    .compact()
-                    .icon(icon.text_color(color))
-                    .tooltip(tooltip)
-                    .when(clickable, |btn| {
-                        btn.on_click({
-                            let view_handle = view_handle.clone();
-                            move |_, _window, app| {
-                                let _ = view_handle.update(app, |view, cx| {
-                                    view.dispatch(
-                                        Action::OpenWorkspacePullRequestFailedAction {
-                                            workspace_id,
-                                        },
-                                        cx,
-                                    );
-                                });
-                            }
-                        })
-                    });
-
-                    s.child(
-                        div().debug_selector(move || {
-                            format!(
-                                "workspace-ci-{selector_suffix}-{project_index}-{workspace_index}"
-                            )
-                        })
-                        .child(button),
                     )
                 })
                 .child(
@@ -580,6 +598,17 @@ fn render_workspace_row(
         );
 
     row.into_any_element()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceRowStatus {
+    Idle,
+    AgentRunning,
+    ReplyNeeded,
+    PullRequestRunning,
+    PullRequestReviewing,
+    PullRequestMergeReady,
+    PullRequestFailed,
 }
 
 fn render_main_workspace_row(

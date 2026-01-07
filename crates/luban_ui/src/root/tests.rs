@@ -2932,8 +2932,8 @@ async fn workspace_icons_are_vertically_centered_in_rows(cx: &mut gpui::TestAppC
         .debug_bounds("workspace-row-0-0")
         .expect("missing workspace row");
     let icon = window_cx
-        .debug_bounds("workspace-git-icon-branch-0-0")
-        .expect("missing workspace icon");
+        .debug_bounds("workspace-status-container-0-0")
+        .expect("missing workspace status indicator");
     let dy = (icon.center().y - row.center().y).abs();
     assert!(
         dy <= px(2.0),
@@ -5006,15 +5006,15 @@ async fn workspace_row_shows_pull_request_number_when_available(cx: &mut gpui::T
     );
     assert!(
         window_cx
-            .debug_bounds("workspace-git-icon-pr-0-0")
+            .debug_bounds("workspace-status-pr-merge-ready-0-0")
             .is_some(),
-        "expected PR icon for workspace with PR number"
+        "expected merge-ready indicator for workspace with merge-ready PR"
     );
     assert!(
         window_cx
-            .debug_bounds("workspace-git-icon-branch-0-1")
+            .debug_bounds("workspace-status-idle-0-1")
             .is_some(),
-        "expected branch icon for workspace without PR number"
+        "expected idle indicator for workspace without PR"
     );
 }
 
@@ -5244,8 +5244,8 @@ async fn workspace_ci_failure_icon_opens_failed_action(cx: &mut gpui::TestAppCon
     }
 
     let bounds = window_cx
-        .debug_bounds("workspace-ci-failure-0-0")
-        .expect("missing CI failure icon bounds");
+        .debug_bounds("workspace-status-pr-failure-0-0")
+        .expect("missing PR failure indicator bounds");
     let click = bounds.center();
 
     window_cx.simulate_mouse_move(click, None, Modifiers::none());
