@@ -381,6 +381,23 @@ fn render_workspace_row(
                             .debug_selector(move || {
                                 format!("workspace-pr-{project_index}-{workspace_index}")
                             })
+                            .cursor_pointer()
+                            .hover({
+                                let hover = theme.link;
+                                move |s| s.text_color(hover)
+                            })
+                            .on_mouse_down(MouseButton::Left, {
+                                let view_handle = view_handle.clone();
+                                move |_, _window, app| {
+                                    app.stop_propagation();
+                                    let _ = view_handle.update(app, |view, cx| {
+                                        view.dispatch(
+                                            Action::OpenWorkspacePullRequest { workspace_id },
+                                            cx,
+                                        );
+                                    });
+                                }
+                            })
                             .child(label),
                     )
                 })

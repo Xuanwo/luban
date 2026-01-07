@@ -120,4 +120,6 @@ pub trait ProjectWorkspaceService: Send + Sync {
         &self,
         worktree_path: PathBuf,
     ) -> Result<Option<PullRequestInfo>, String>;
+
+    fn gh_open_pull_request(&self, worktree_path: PathBuf) -> Result<(), String>;
 }

@@ -1437,6 +1437,23 @@ fn render_dashboard_card(
                             .bg(theme.muted)
                             .text_xs()
                             .text_color(theme.muted_foreground)
+                            .cursor_pointer()
+                            .hover({
+                                let hover = theme.scrollbar_thumb_hover;
+                                move |s| s.bg(hover)
+                            })
+                            .on_mouse_down(MouseButton::Left, {
+                                let view_handle = view_handle.clone();
+                                move |_, _window, app| {
+                                    app.stop_propagation();
+                                    let _ = view_handle.update(app, |view, cx| {
+                                        view.dispatch(
+                                            Action::OpenWorkspacePullRequest { workspace_id },
+                                            cx,
+                                        );
+                                    });
+                                }
+                            })
                             .child(label),
                     )
                 }),

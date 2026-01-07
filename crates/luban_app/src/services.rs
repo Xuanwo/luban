@@ -750,6 +750,27 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             state,
         }))
     }
+
+    fn gh_open_pull_request(&self, worktree_path: PathBuf) -> Result<(), String> {
+        let output = Command::new("gh")
+            .args(["pr", "view", "--web"])
+            .current_dir(worktree_path)
+            .output();
+
+        let Ok(output) = output else {
+            return Err("Failed to run gh".to_owned());
+        };
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            Err("Failed to open pull request".to_owned())
+        } else {
+            Err(stderr)
+        }
+    }
 }
 
 #[cfg(test)]

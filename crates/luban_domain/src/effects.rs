@@ -11,6 +11,9 @@ pub enum Effect {
     OpenWorkspaceInIde {
         workspace_id: WorkspaceId,
     },
+    OpenWorkspacePullRequest {
+        workspace_id: WorkspaceId,
+    },
     ArchiveWorkspace {
         workspace_id: WorkspaceId,
     },

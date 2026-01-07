@@ -1,4 +1,3 @@
-
 use super::*;
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, ScrollDelta, ScrollWheelEvent, point, px, size,
@@ -271,6 +270,10 @@ impl ProjectWorkspaceService for FakeService {
         _worktree_path: PathBuf,
     ) -> Result<Option<PullRequestInfo>, String> {
         Ok(None)
+    }
+
+    fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -4385,6 +4388,7 @@ async fn chat_input_cursor_moves_to_end_on_workspace_switch(cx: &mut gpui::TestA
 
 struct FakeGhService {
     pr_numbers: HashMap<PathBuf, Option<PullRequestInfo>>,
+    open_calls: Arc<AtomicUsize>,
 }
 
 impl ProjectWorkspaceService for FakeGhService {
@@ -4506,6 +4510,11 @@ impl ProjectWorkspaceService for FakeGhService {
     ) -> Result<Option<PullRequestInfo>, String> {
         Ok(self.pr_numbers.get(&worktree_path).copied().flatten())
     }
+
+    fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        self.open_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 #[gpui::test]
@@ -4541,7 +4550,10 @@ async fn workspace_row_shows_pull_request_number_when_available(cx: &mut gpui::T
         }),
     );
     pr_numbers.insert(PathBuf::from("/tmp/luban/worktrees/repo/w2"), None);
-    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService { pr_numbers });
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService {
+        pr_numbers,
+        open_calls: Arc::new(AtomicUsize::new(0)),
+    });
 
     let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -4590,6 +4602,83 @@ async fn workspace_row_shows_pull_request_number_when_available(cx: &mut gpui::T
             .is_some(),
         "expected branch icon for workspace without PR number"
     );
+}
+
+#[gpui::test]
+async fn workspace_pr_label_opens_pull_request(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "w1".to_owned(),
+        branch_name: "repo/w1".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+    });
+    state.projects[0].expanded = true;
+
+    let mut pr_numbers = HashMap::new();
+    pr_numbers.insert(
+        PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        Some(PullRequestInfo {
+            number: 123,
+            is_draft: false,
+            state: PullRequestState::Open,
+        }),
+    );
+
+    let open_calls = Arc::new(AtomicUsize::new(0));
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService {
+        pr_numbers,
+        open_calls: open_calls.clone(),
+    });
+
+    let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let view_slot_for_window = view_slot.clone();
+
+    let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+        *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
+        gpui_component::Root::new(view, window, cx)
+    });
+    let view = view_slot
+        .lock()
+        .expect("poisoned mutex")
+        .clone()
+        .expect("missing view handle");
+
+    window_cx.refresh().unwrap();
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::ClearError, cx);
+        });
+    });
+
+    for _ in 0..8 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let bounds = window_cx
+        .debug_bounds("workspace-pr-0-0")
+        .expect("missing PR label bounds");
+    let click = bounds.center();
+
+    window_cx.simulate_mouse_move(click, None, Modifiers::none());
+    window_cx.simulate_mouse_down(click, MouseButton::Left, Modifiers::none());
+    window_cx.simulate_mouse_up(click, MouseButton::Left, Modifiers::none());
+
+    for _ in 0..4 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    assert_eq!(open_calls.load(Ordering::SeqCst), 1);
 }
 
 #[gpui::test]
