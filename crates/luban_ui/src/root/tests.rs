@@ -278,6 +278,10 @@ impl ProjectWorkspaceService for FakeService {
     fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
         Ok(())
     }
+
+    fn gh_open_pull_request_failed_action(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -4665,6 +4669,7 @@ async fn chat_input_cursor_moves_to_end_on_workspace_switch(cx: &mut gpui::TestA
 struct FakeGhService {
     pr_numbers: HashMap<PathBuf, Option<PullRequestInfo>>,
     open_calls: Arc<AtomicUsize>,
+    failed_action_calls: Arc<AtomicUsize>,
 }
 
 impl ProjectWorkspaceService for FakeGhService {
@@ -4794,6 +4799,133 @@ impl ProjectWorkspaceService for FakeGhService {
         self.open_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+
+    fn gh_open_pull_request_failed_action(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        self.failed_action_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct SequenceGhService {
+    responses: std::sync::Mutex<std::collections::VecDeque<Option<PullRequestInfo>>>,
+}
+
+impl ProjectWorkspaceService for SequenceGhService {
+    fn load_app_state(&self) -> Result<PersistedAppState, String> {
+        FakeService.load_app_state()
+    }
+
+    fn save_app_state(&self, snapshot: PersistedAppState) -> Result<(), String> {
+        FakeService.save_app_state(snapshot)
+    }
+
+    fn create_workspace(
+        &self,
+        project_path: PathBuf,
+        project_slug: String,
+    ) -> Result<CreatedWorkspace, String> {
+        FakeService.create_workspace(project_path, project_slug)
+    }
+
+    fn open_workspace_in_ide(&self, worktree_path: PathBuf) -> Result<(), String> {
+        FakeService.open_workspace_in_ide(worktree_path)
+    }
+
+    fn archive_workspace(
+        &self,
+        project_path: PathBuf,
+        worktree_path: PathBuf,
+    ) -> Result<(), String> {
+        FakeService.archive_workspace(project_path, worktree_path)
+    }
+
+    fn ensure_conversation(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<(), String> {
+        FakeService.ensure_conversation(project_slug, workspace_name, thread_id)
+    }
+
+    fn list_conversation_threads(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+    ) -> Result<Vec<luban_domain::ConversationThreadMeta>, String> {
+        FakeService.list_conversation_threads(project_slug, workspace_name)
+    }
+
+    fn load_conversation(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<ConversationSnapshot, String> {
+        FakeService.load_conversation(project_slug, workspace_name, thread_id)
+    }
+
+    fn store_context_image(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        image: luban_domain::ContextImage,
+    ) -> Result<PathBuf, String> {
+        FakeService.store_context_image(project_slug, workspace_name, image)
+    }
+
+    fn store_context_text(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        text: String,
+        extension: String,
+    ) -> Result<PathBuf, String> {
+        FakeService.store_context_text(project_slug, workspace_name, text, extension)
+    }
+
+    fn store_context_file(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        source_path: PathBuf,
+    ) -> Result<PathBuf, String> {
+        FakeService.store_context_file(project_slug, workspace_name, source_path)
+    }
+
+    fn run_agent_turn_streamed(
+        &self,
+        request: RunAgentTurnRequest,
+        cancel: Arc<AtomicBool>,
+        on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
+    ) -> Result<(), String> {
+        FakeService.run_agent_turn_streamed(request, cancel, on_event)
+    }
+
+    fn gh_is_authorized(&self) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    fn gh_pull_request_info(
+        &self,
+        _worktree_path: PathBuf,
+    ) -> Result<Option<PullRequestInfo>, String> {
+        let mut guard = self.responses.lock().expect("poisoned mutex");
+        let value = if guard.len() > 1 {
+            guard.pop_front().expect("checked")
+        } else {
+            guard.front().copied().unwrap_or(None)
+        };
+        Ok(value)
+    }
+
+    fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn gh_open_pull_request_failed_action(&self, _worktree_path: PathBuf) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[gpui::test]
@@ -4826,12 +4958,15 @@ async fn workspace_row_shows_pull_request_number_when_available(cx: &mut gpui::T
             number: 123,
             is_draft: false,
             state: PullRequestState::Open,
+            ci_state: Some(luban_domain::PullRequestCiState::Success),
+            merge_ready: true,
         }),
     );
     pr_numbers.insert(PathBuf::from("/tmp/luban/worktrees/repo/w2"), None);
     let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService {
         pr_numbers,
         open_calls: Arc::new(AtomicUsize::new(0)),
+        failed_action_calls: Arc::new(AtomicUsize::new(0)),
     });
 
     let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
@@ -4884,6 +5019,87 @@ async fn workspace_row_shows_pull_request_number_when_available(cx: &mut gpui::T
 }
 
 #[gpui::test]
+async fn workspace_pr_info_refreshes_after_it_becomes_available(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "w1".to_owned(),
+        branch_name: "repo/w1".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+    });
+    state.projects[0].expanded = true;
+
+    let mut responses = std::collections::VecDeque::new();
+    responses.push_back(None);
+    responses.push_back(Some(PullRequestInfo {
+        number: 123,
+        is_draft: false,
+        state: PullRequestState::Open,
+        ci_state: Some(luban_domain::PullRequestCiState::Pending),
+        merge_ready: false,
+    }));
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(SequenceGhService {
+        responses: std::sync::Mutex::new(responses),
+    });
+
+    let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let view_slot_for_window = view_slot.clone();
+
+    let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+        *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
+        gpui_component::Root::new(view, window, cx)
+    });
+    let view = view_slot
+        .lock()
+        .expect("poisoned mutex")
+        .clone()
+        .expect("missing view handle");
+
+    window_cx.refresh().unwrap();
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::ClearError, cx);
+        });
+    });
+
+    for _ in 0..8 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    assert!(
+        window_cx.debug_bounds("workspace-pr-0-0").is_none(),
+        "expected PR label to be hidden before PR is detected"
+    );
+
+    std::thread::sleep(Duration::from_millis(120));
+
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::ClearError, cx);
+        });
+    });
+
+    for _ in 0..8 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    assert!(
+        window_cx.debug_bounds("workspace-pr-0-0").is_some(),
+        "expected PR label to appear after refresh detects PR"
+    );
+}
+
+#[gpui::test]
 async fn workspace_pr_label_opens_pull_request(cx: &mut gpui::TestAppContext) {
     cx.update(gpui_component::init);
 
@@ -4907,6 +5123,8 @@ async fn workspace_pr_label_opens_pull_request(cx: &mut gpui::TestAppContext) {
             number: 123,
             is_draft: false,
             state: PullRequestState::Open,
+            ci_state: Some(luban_domain::PullRequestCiState::Success),
+            merge_ready: true,
         }),
     );
 
@@ -4914,6 +5132,7 @@ async fn workspace_pr_label_opens_pull_request(cx: &mut gpui::TestAppContext) {
     let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService {
         pr_numbers,
         open_calls: open_calls.clone(),
+        failed_action_calls: Arc::new(AtomicUsize::new(0)),
     });
 
     let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
@@ -4958,6 +5177,87 @@ async fn workspace_pr_label_opens_pull_request(cx: &mut gpui::TestAppContext) {
     }
 
     assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
+async fn workspace_ci_failure_icon_opens_failed_action(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "w1".to_owned(),
+        branch_name: "repo/w1".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+    });
+    state.projects[0].expanded = true;
+
+    let mut pr_numbers = HashMap::new();
+    pr_numbers.insert(
+        PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        Some(PullRequestInfo {
+            number: 123,
+            is_draft: false,
+            state: PullRequestState::Open,
+            ci_state: Some(luban_domain::PullRequestCiState::Failure),
+            merge_ready: false,
+        }),
+    );
+
+    let open_calls = Arc::new(AtomicUsize::new(0));
+    let failed_action_calls = Arc::new(AtomicUsize::new(0));
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeGhService {
+        pr_numbers,
+        open_calls,
+        failed_action_calls: failed_action_calls.clone(),
+    });
+
+    let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let view_slot_for_window = view_slot.clone();
+
+    let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+        *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
+        gpui_component::Root::new(view, window, cx)
+    });
+    let view = view_slot
+        .lock()
+        .expect("poisoned mutex")
+        .clone()
+        .expect("missing view handle");
+
+    window_cx.refresh().unwrap();
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(Action::ClearError, cx);
+        });
+    });
+
+    for _ in 0..8 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    let bounds = window_cx
+        .debug_bounds("workspace-ci-failure-0-0")
+        .expect("missing CI failure icon bounds");
+    let click = bounds.center();
+
+    window_cx.simulate_mouse_move(click, None, Modifiers::none());
+    window_cx.simulate_mouse_down(click, MouseButton::Left, Modifiers::none());
+    window_cx.simulate_mouse_up(click, MouseButton::Left, Modifiers::none());
+
+    for _ in 0..4 {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+    }
+
+    assert_eq!(failed_action_calls.load(Ordering::SeqCst), 1);
 }
 
 #[gpui::test]

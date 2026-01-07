@@ -7,8 +7,8 @@ pub use codex::{
 
 mod adapters;
 pub use adapters::{
-    ContextImage, CreatedWorkspace, ProjectWorkspaceService, PullRequestInfo, PullRequestState,
-    RunAgentTurnRequest,
+    ContextImage, CreatedWorkspace, ProjectWorkspaceService, PullRequestCiState, PullRequestInfo,
+    PullRequestState, RunAgentTurnRequest,
 };
 mod context_tokens;
 pub use context_tokens::{

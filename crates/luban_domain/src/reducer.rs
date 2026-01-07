@@ -242,6 +242,17 @@ impl AppState {
                 self.last_error = Some(message);
                 Vec::new()
             }
+            Action::OpenWorkspacePullRequestFailedAction { workspace_id } => {
+                if self.workspace(workspace_id).is_none() {
+                    self.last_error = Some("Workspace not found".to_owned());
+                    return Vec::new();
+                }
+                vec![Effect::OpenWorkspacePullRequestFailedAction { workspace_id }]
+            }
+            Action::OpenWorkspacePullRequestFailedActionFailed { message } => {
+                self.last_error = Some(message);
+                Vec::new()
+            }
             Action::ArchiveWorkspace { workspace_id } => {
                 if let Some((project_idx, workspace_idx)) =
                     self.find_workspace_indices(workspace_id)
@@ -2521,6 +2532,43 @@ mod tests {
     fn open_workspace_pull_request_sets_error_when_workspace_missing() {
         let mut state = AppState::new();
         let effects = state.apply(Action::OpenWorkspacePullRequest {
+            workspace_id: WorkspaceId(1),
+        });
+        assert!(effects.is_empty());
+        assert_eq!(state.last_error.as_deref(), Some("Workspace not found"));
+    }
+
+    #[test]
+    fn open_workspace_pull_request_failed_action_emits_effect_for_existing_workspace() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "abandon-about".to_owned(),
+            branch_name: "luban/abandon-about".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+        });
+        let workspace_id = workspace_id_by_name(&state, "abandon-about");
+
+        let effects = state.apply(Action::OpenWorkspacePullRequestFailedAction { workspace_id });
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::OpenWorkspacePullRequestFailedAction {
+                    workspace_id: effect_workspace_id
+                }] if *effect_workspace_id == workspace_id
+            ),
+            "unexpected effects: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn open_workspace_pull_request_failed_action_sets_error_when_workspace_missing() {
+        let mut state = AppState::new();
+        let effects = state.apply(Action::OpenWorkspacePullRequestFailedAction {
             workspace_id: WorkspaceId(1),
         });
         assert!(effects.is_empty());

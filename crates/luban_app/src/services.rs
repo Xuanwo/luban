@@ -3,8 +3,8 @@ use bip39::Language;
 use luban_domain::paths;
 use luban_domain::{
     CodexThreadEvent, CodexThreadItem, ContextImage, ConversationEntry, ConversationSnapshot,
-    CreatedWorkspace, PersistedAppState, ProjectWorkspaceService, PullRequestInfo,
-    PullRequestState, RunAgentTurnRequest,
+    CreatedWorkspace, PersistedAppState, ProjectWorkspaceService, PullRequestCiState,
+    PullRequestInfo, PullRequestState, RunAgentTurnRequest,
 };
 use rand::{Rng as _, rngs::OsRng};
 use std::{
@@ -714,17 +714,73 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         worktree_path: PathBuf,
     ) -> Result<Option<PullRequestInfo>, String> {
         #[derive(serde::Deserialize)]
+        struct GhPullRequestCheck {
+            #[serde(default)]
+            bucket: String,
+        }
+
+        #[derive(serde::Deserialize)]
         struct GhPullRequestView {
             number: u64,
             #[serde(default, rename = "isDraft")]
             is_draft: bool,
             #[serde(default)]
             state: String,
+            #[serde(default, rename = "mergeStateStatus")]
+            merge_state_status: String,
+        }
+
+        fn checks_ci_state(checks: &[GhPullRequestCheck]) -> Option<PullRequestCiState> {
+            let mut any_pending = false;
+            let mut any_fail = false;
+            let mut any_pass = false;
+            for check in checks {
+                match check.bucket.as_str() {
+                    "fail" => any_fail = true,
+                    "pending" => any_pending = true,
+                    "pass" => any_pass = true,
+                    _ => {}
+                }
+            }
+
+            if any_fail {
+                return Some(PullRequestCiState::Failure);
+            }
+            if any_pending {
+                return Some(PullRequestCiState::Pending);
+            }
+            if any_pass {
+                return Some(PullRequestCiState::Success);
+            }
+            None
+        }
+
+        fn is_merge_ready(
+            pr_state: PullRequestState,
+            is_draft: bool,
+            merge_state_status: &str,
+            ci_state: Option<PullRequestCiState>,
+        ) -> bool {
+            if pr_state != PullRequestState::Open {
+                return false;
+            }
+            if is_draft {
+                return false;
+            }
+            if ci_state != Some(PullRequestCiState::Success) {
+                return false;
+            }
+            matches!(merge_state_status, "CLEAN" | "HAS_HOOKS")
         }
 
         let output = Command::new("gh")
-            .args(["pr", "view", "--json", "number,isDraft,state"])
-            .current_dir(worktree_path)
+            .args([
+                "pr",
+                "view",
+                "--json",
+                "number,isDraft,state,mergeStateStatus",
+            ])
+            .current_dir(&worktree_path)
             .output();
 
         let Ok(output) = output else {
@@ -744,10 +800,26 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             "MERGED" => PullRequestState::Merged,
             _ => PullRequestState::Open,
         };
+
+        let checks_output = Command::new("gh")
+            .args(["pr", "checks", "--required", "--json", "bucket"])
+            .current_dir(&worktree_path)
+            .output();
+
+        let checks = checks_output
+            .ok()
+            .and_then(|o| serde_json::from_slice::<Vec<GhPullRequestCheck>>(&o.stdout).ok())
+            .unwrap_or_default();
+        let ci_state = checks_ci_state(&checks);
+        let merge_ready =
+            is_merge_ready(state, value.is_draft, &value.merge_state_status, ci_state);
+
         Ok(Some(PullRequestInfo {
             number: value.number,
             is_draft: value.is_draft,
             state,
+            ci_state,
+            merge_ready,
         }))
     }
 
@@ -769,6 +841,92 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Err("Failed to open pull request".to_owned())
         } else {
             Err(stderr)
+        }
+    }
+
+    fn gh_open_pull_request_failed_action(&self, worktree_path: PathBuf) -> Result<(), String> {
+        #[derive(serde::Deserialize)]
+        struct GhPullRequestCheck {
+            #[serde(default)]
+            bucket: String,
+            #[serde(default)]
+            link: String,
+        }
+
+        let result: anyhow::Result<()> = (|| {
+            let output = Command::new("gh")
+                .args(["pr", "checks", "--required", "--json", "bucket,link"])
+                .current_dir(&worktree_path)
+                .output()
+                .context("failed to run 'gh pr checks'")?;
+
+            let checks = serde_json::from_slice::<Vec<GhPullRequestCheck>>(&output.stdout)
+                .unwrap_or_default();
+            if let Some(url) = checks
+                .iter()
+                .find(|check| check.bucket == "fail" && !check.link.is_empty())
+                .map(|check| check.link.as_str())
+            {
+                return self.open_url(url);
+            }
+
+            let output = Command::new("gh")
+                .args(["pr", "checks", "--web"])
+                .current_dir(&worktree_path)
+                .output()
+                .context("failed to run 'gh pr checks --web'")?;
+            if output.status.success() {
+                return Ok(());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                Err(anyhow!("failed to open pull request checks"))
+            } else {
+                Err(anyhow!("{stderr}"))
+            }
+        })();
+
+        result.map_err(|e| format!("{e:#}"))
+    }
+}
+
+impl GitWorkspaceService {
+    fn open_url(&self, url: &str) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            let status = Command::new("open")
+                .arg(url)
+                .status()
+                .context("failed to spawn 'open'")?;
+            if !status.success() {
+                return Err(anyhow!("'open' exited with status: {status}"));
+            }
+            Ok(())
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let status = Command::new("cmd")
+                .args(["/C", "start", "", url])
+                .status()
+                .context("failed to spawn 'cmd /C start'")?;
+            if !status.success() {
+                return Err(anyhow!("'cmd /C start' exited with status: {status}"));
+            }
+            Ok(())
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            let status = Command::new("xdg-open")
+                .arg(url)
+                .status()
+                .context("failed to spawn 'xdg-open'")?;
+            if !status.success() {
+                return Err(anyhow!("'xdg-open' exited with status: {status}"));
+            }
+            Ok(())
         }
     }
 }

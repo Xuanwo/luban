@@ -102,7 +102,9 @@ pub struct LubanRootView {
     gh_auth_check_inflight: bool,
     gh_last_auth_check_at: Option<Instant>,
     workspace_pull_request_numbers: HashMap<WorkspaceId, Option<PullRequestInfo>>,
+    workspace_pull_request_last_checked_at: HashMap<WorkspaceId, Instant>,
     workspace_pull_request_inflight: HashSet<WorkspaceId>,
+    pull_request_refresh_task_running: bool,
     chat_input: Option<gpui::Entity<InputState>>,
     expanded_agent_items: HashSet<String>,
     expanded_agent_turns: HashSet<String>,
@@ -157,6 +159,8 @@ impl LubanRootView {
             gh_last_auth_check_at: None,
             workspace_pull_request_numbers: HashMap::new(),
             workspace_pull_request_inflight: HashSet::new(),
+            workspace_pull_request_last_checked_at: HashMap::new(),
+            pull_request_refresh_task_running: false,
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
@@ -222,6 +226,8 @@ impl LubanRootView {
             gh_last_auth_check_at: None,
             workspace_pull_request_numbers: HashMap::new(),
             workspace_pull_request_inflight: HashSet::new(),
+            workspace_pull_request_last_checked_at: HashMap::new(),
+            pull_request_refresh_task_running: false,
             chat_input: None,
             expanded_agent_items: HashSet::new(),
             expanded_agent_turns: HashSet::new(),
@@ -367,6 +373,8 @@ impl LubanRootView {
             }
             self.workspace_pull_request_numbers.remove(workspace_id);
             self.workspace_pull_request_inflight.remove(workspace_id);
+            self.workspace_pull_request_last_checked_at
+                .remove(workspace_id);
             if self.last_workspace_before_dashboard == Some(*workspace_id) {
                 self.last_workspace_before_dashboard = None;
             }
@@ -552,6 +560,9 @@ impl LubanRootView {
             Effect::OpenWorkspacePullRequest { workspace_id } => {
                 self.run_open_workspace_pull_request(workspace_id, cx)
             }
+            Effect::OpenWorkspacePullRequestFailedAction { workspace_id } => {
+                self.run_open_workspace_pull_request_failed_action(workspace_id, cx)
+            }
             Effect::ArchiveWorkspace { workspace_id } => {
                 self.run_archive_workspace(workspace_id, cx)
             }
@@ -719,6 +730,53 @@ impl LubanRootView {
                         |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
                             view.dispatch(
                                 Action::OpenWorkspacePullRequestFailed { message },
+                                view_cx,
+                            )
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn run_open_workspace_pull_request_failed_action(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.state.workspace(workspace_id) else {
+            self.dispatch(
+                Action::OpenWorkspacePullRequestFailedActionFailed {
+                    message: "Workspace not found".to_owned(),
+                },
+                cx,
+            );
+            return;
+        };
+
+        let services = self.services.clone();
+        let worktree_path = workspace.worktree_path.clone();
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<LubanRootView>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = async_cx
+                        .background_spawn(async move {
+                            services.gh_open_pull_request_failed_action(worktree_path)
+                        })
+                        .await;
+
+                    let Err(message) = result else {
+                        return;
+                    };
+
+                    let _ = this.update(
+                        &mut async_cx,
+                        |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
+                            view.dispatch(
+                                Action::OpenWorkspacePullRequestFailedActionFailed { message },
                                 view_cx,
                             )
                         },

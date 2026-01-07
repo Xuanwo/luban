@@ -293,6 +293,8 @@ mod tests {
                 number: 42,
                 is_draft: false,
                 state: crate::PullRequestState::Merged,
+                ci_state: None,
+                merge_ready: false,
             }),
         );
 

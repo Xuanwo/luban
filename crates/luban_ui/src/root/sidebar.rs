@@ -305,6 +305,8 @@ fn render_workspace_row(
     } else {
         "icons/git-branch.svg"
     };
+    let ci_state = pr_info.and_then(|info| info.ci_state);
+    let merge_ready = pr_info.map(|info| info.merge_ready).unwrap_or(false);
 
     let row = div()
         .mx_3()
@@ -426,29 +428,98 @@ fn render_workspace_row(
                 .when_some(pr_label, |s, label| {
                     s.child(
                         div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
                             .debug_selector(move || {
                                 format!("workspace-pr-{project_index}-{workspace_index}")
                             })
-                            .cursor_pointer()
-                            .hover({
-                                let hover = theme.link;
-                                move |s| s.text_color(hover)
-                            })
-                            .on_mouse_down(MouseButton::Left, {
-                                let view_handle = view_handle.clone();
-                                move |_, _window, app| {
-                                    app.stop_propagation();
-                                    let _ = view_handle.update(app, |view, cx| {
-                                        view.dispatch(
-                                            Action::OpenWorkspacePullRequest { workspace_id },
-                                            cx,
-                                        );
-                                    });
-                                }
-                            })
-                            .child(label),
+                            .child(
+                                Button::new(format!(
+                                    "workspace-pr-button-{project_index}-{workspace_index}"
+                                ))
+                                .ghost()
+                                .compact()
+                                .label(label)
+                                .tooltip("Open PR")
+                                .on_click({
+                                    let view_handle = view_handle.clone();
+                                    move |_, _window, app| {
+                                        let _ = view_handle.update(app, |view, cx| {
+                                            view.dispatch(
+                                                Action::OpenWorkspacePullRequest { workspace_id },
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                            ),
+                    )
+                })
+                .when_some(ci_state, |s, state| {
+                    let (icon, tooltip, color, clickable, selector_suffix) = match state {
+                        luban_domain::PullRequestCiState::Pending => (
+                            Icon::new(IconName::LoaderCircle),
+                            "CI running",
+                            theme.muted_foreground,
+                            false,
+                            "pending",
+                        ),
+                        luban_domain::PullRequestCiState::Success => {
+                            if merge_ready {
+                                (
+                                    Icon::new(IconName::Check),
+                                    "Merge ready",
+                                    theme.success,
+                                    false,
+                                    "merge-ready",
+                                )
+                            } else {
+                                (
+                                    Icon::new(IconName::Check),
+                                    "CI passed",
+                                    theme.muted_foreground,
+                                    false,
+                                    "success",
+                                )
+                            }
+                        }
+                        luban_domain::PullRequestCiState::Failure => (
+                            Icon::new(IconName::CircleX),
+                            "Open failed action",
+                            theme.danger,
+                            true,
+                            "failure",
+                        ),
+                    };
+
+                    let button = Button::new(format!(
+                        "workspace-ci-button-{selector_suffix}-{project_index}-{workspace_index}"
+                    ))
+                    .ghost()
+                    .compact()
+                    .icon(icon.text_color(color))
+                    .tooltip(tooltip)
+                    .when(clickable, |btn| {
+                        btn.on_click({
+                            let view_handle = view_handle.clone();
+                            move |_, _window, app| {
+                                let _ = view_handle.update(app, |view, cx| {
+                                    view.dispatch(
+                                        Action::OpenWorkspacePullRequestFailedAction {
+                                            workspace_id,
+                                        },
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
+                    });
+
+                    s.child(
+                        div().debug_selector(move || {
+                            format!(
+                                "workspace-ci-{selector_suffix}-{project_index}-{workspace_index}"
+                            )
+                        })
+                        .child(button),
                     )
                 })
                 .child(

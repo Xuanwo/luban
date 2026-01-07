@@ -21,10 +21,19 @@ impl PullRequestState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PullRequestCiState {
+    Pending,
+    Success,
+    Failure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PullRequestInfo {
     pub number: u64,
     pub is_draft: bool,
     pub state: PullRequestState,
+    pub ci_state: Option<PullRequestCiState>,
+    pub merge_ready: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -122,4 +131,6 @@ pub trait ProjectWorkspaceService: Send + Sync {
     ) -> Result<Option<PullRequestInfo>, String>;
 
     fn gh_open_pull_request(&self, worktree_path: PathBuf) -> Result<(), String>;
+
+    fn gh_open_pull_request_failed_action(&self, worktree_path: PathBuf) -> Result<(), String>;
 }
