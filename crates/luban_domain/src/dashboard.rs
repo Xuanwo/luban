@@ -84,7 +84,7 @@ pub fn dashboard_cards(
             if workspace.status != WorkspaceStatus::Active {
                 continue;
             }
-            if workspace.worktree_path == project.path {
+            if workspace.workspace_name == "main" && workspace.worktree_path == project.path {
                 continue;
             }
 
@@ -127,7 +127,7 @@ pub fn dashboard_preview(
             .iter()
             .find(|w| w.status == WorkspaceStatus::Active && w.id == workspace_id)
         {
-            if found.worktree_path == project.path {
+            if found.workspace_name == "main" && found.worktree_path == project.path {
                 return None;
             }
 
@@ -187,7 +187,7 @@ fn stage_for_workspace(
     workspace: &Workspace,
     pr_info: Option<PullRequestInfo>,
 ) -> DashboardStage {
-    if workspace.worktree_path == project.path {
+    if workspace.workspace_name == "main" && workspace.worktree_path == project.path {
         return DashboardStage::Start;
     }
 

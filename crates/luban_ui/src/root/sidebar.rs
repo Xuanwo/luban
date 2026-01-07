@@ -94,6 +94,7 @@ fn render_project(
         IconName::ChevronRight
     };
     let create_loading = matches!(project.create_workspace_status, OperationStatus::Running);
+    let create_disabled = create_loading;
 
     let create_button = {
         let view_handle = view_handle.clone();
@@ -106,11 +107,11 @@ fn render_project(
         Button::new(format!("project-create-workspace-{project_index}"))
             .ghost()
             .compact()
-            .disabled(create_loading)
+            .disabled(create_disabled)
             .icon(Icon::new(create_icon).text_color(theme.muted_foreground))
             .tooltip("New workspace")
             .on_click(move |_, _, app| {
-                if create_loading {
+                if create_disabled {
                     return;
                 }
                 let _ = view_handle.update(app, |view, cx| {
@@ -119,17 +120,104 @@ fn render_project(
             })
     };
 
-    let settings_button = {
+    let settings_menu = {
         let view_handle = view_handle.clone();
-        Button::new(format!("project-settings-{project_index}"))
-            .ghost()
-            .compact()
-            .icon(Icon::new(IconName::Settings2).text_color(theme.muted_foreground))
-            .tooltip("Project settings")
-            .on_click(move |_, _, app| {
-                let _ = view_handle.update(app, |view, cx| {
-                    view.dispatch(Action::OpenProjectSettings { project_id }, cx);
-                });
+        Popover::new(format!("project-settings-menu-{project_index}"))
+            .appearance(true)
+            .anchor(gpui::Corner::TopLeft)
+            .trigger(
+                Button::new(format!("project-settings-{project_index}"))
+                    .ghost()
+                    .compact()
+                    .icon(Icon::new(IconName::Settings2).text_color(theme.muted_foreground))
+                    .tooltip("Project settings"),
+            )
+            .content(move |_popover_state, _window, cx| {
+                let theme = cx.theme();
+                let popover_handle = cx.entity();
+                let popover_handle_for_settings = popover_handle.clone();
+                let popover_handle_for_delete = popover_handle.clone();
+                let view_handle_for_settings = view_handle.clone();
+                let view_handle_for_delete = view_handle.clone();
+
+                let settings_row = div()
+                    .h(px(32.0))
+                    .w_full()
+                    .px_2()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(theme.list_hover))
+                    .on_mouse_down(MouseButton::Left, move |_, window, app| {
+                        let _ = view_handle_for_settings.update(app, |view, cx| {
+                            view.dispatch(Action::OpenProjectSettings { project_id }, cx);
+                        });
+                        popover_handle_for_settings.update(app, |state, cx| {
+                            state.dismiss(window, cx);
+                        });
+                    })
+                    .child(div().text_sm().child("Settings"));
+
+                let delete_row = div()
+                    .h(px(32.0))
+                    .w_full()
+                    .px_2()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(theme.list_hover))
+                    .on_mouse_down(MouseButton::Left, move |_, window, app| {
+                        popover_handle_for_delete.update(app, |state, cx| {
+                            state.dismiss(window, cx);
+                        });
+                        let receiver = window.prompt(
+                            PromptLevel::Warning,
+                            "Delete project?",
+                            Some("This will remove the project and all workspaces from Luban. Worktrees on disk are not deleted."),
+                            &[PromptButton::ok("Delete"), PromptButton::cancel("Cancel")],
+                            app,
+                        );
+
+                        let view_handle = view_handle_for_delete.clone();
+                        app.spawn(move |cx: &mut gpui::AsyncApp| {
+                            let mut async_cx = cx.clone();
+                            async move {
+                                let Ok(choice) = receiver.await else {
+                                    return;
+                                };
+                                if choice != 0 {
+                                    return;
+                                }
+                                let _ = view_handle.update(
+                                    &mut async_cx,
+                                    |view: &mut LubanRootView,
+                                     view_cx: &mut Context<LubanRootView>| {
+                                        view.dispatch(Action::DeleteProject { project_id }, view_cx);
+                                    },
+                                );
+                            }
+                        })
+                        .detach();
+                    })
+                    .child(div().text_sm().text_color(theme.danger_foreground).child("Delete"));
+
+                div()
+                    .w(px(220.0))
+                    .p_1()
+                    .bg(theme.popover)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_md()
+                    .shadow_sm()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(settings_row)
+                    .child(delete_row)
             })
     };
 
@@ -147,7 +235,7 @@ fn render_project(
         .child(
             div()
                 .debug_selector(move || format!("project-settings-{project_index}"))
-                .child(settings_button),
+                .child(settings_menu),
         );
 
     let header = div()
@@ -217,7 +305,11 @@ fn render_project(
     let main_workspace = project
         .workspaces
         .iter()
-        .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path == project.path)
+        .find(|w| {
+            w.status == WorkspaceStatus::Active
+                && w.workspace_name == "main"
+                && w.worktree_path == project.path
+        })
         .map(|workspace| render_main_workspace_row(cx, state, project_index, workspace, main_pane));
 
     let workspace_rows: Vec<AnyElement> = project

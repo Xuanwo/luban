@@ -20,6 +20,9 @@ pub enum Action {
     ToggleProjectExpanded {
         project_id: ProjectId,
     },
+    DeleteProject {
+        project_id: ProjectId,
+    },
     OpenProjectSettings {
         project_id: ProjectId,
     },

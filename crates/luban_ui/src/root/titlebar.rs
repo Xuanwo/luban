@@ -25,7 +25,7 @@ pub(super) fn render_titlebar(
                 if workspace.status != WorkspaceStatus::Active {
                     continue;
                 }
-                if workspace.worktree_path == project.path {
+                if workspace.workspace_name == "main" && workspace.worktree_path == project.path {
                     return Some(workspace.id);
                 }
             }

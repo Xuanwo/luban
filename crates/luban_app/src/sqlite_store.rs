@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 6;
+const LATEST_SCHEMA_VERSION: u32 = 7;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
 const WORKSPACE_OPEN_TAB_PREFIX: &str = "workspace_open_tab_";
@@ -60,6 +60,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations/0006_app_settings_text.sql"
+        )),
+    ),
+    (
+        7,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0007_project_archived.sql"
         )),
     ),
 ];
@@ -752,6 +759,26 @@ impl SqliteDatabase {
         let now = now_unix_seconds();
         let tx = self.conn.transaction()?;
 
+        let mut existing_workspace_keys: HashMap<u64, (String, String)> = HashMap::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT w.id, p.slug, w.workspace_name
+                 FROM workspaces w
+                 JOIN projects p ON p.id = w.project_id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (workspace_id, project_slug, workspace_name) = row?;
+                existing_workspace_keys.insert(workspace_id, (project_slug, workspace_name));
+            }
+        }
+
         for project in &snapshot.projects {
             let path = project.path.to_string_lossy().into_owned();
             tx.execute(
@@ -771,18 +798,6 @@ impl SqliteDatabase {
                     if project.expanded { 1i64 } else { 0i64 },
                     now,
                 ],
-            )?;
-        }
-
-        if snapshot.projects.is_empty() {
-            tx.execute("DELETE FROM projects", [])?;
-        } else {
-            let placeholders = std::iter::repeat_n("?", snapshot.projects.len())
-                .collect::<Vec<_>>()
-                .join(",");
-            tx.execute(
-                &format!("DELETE FROM projects WHERE id NOT IN ({placeholders})"),
-                params_from_iter(snapshot.projects.iter().map(|p| p.id as i64)),
             )?;
         }
 
@@ -813,6 +828,56 @@ impl SqliteDatabase {
                         now,
                     ],
                 )?;
+
+                if let Some((old_slug, old_workspace_name)) =
+                    existing_workspace_keys.get(&workspace.id)
+                    && (old_slug != &project.slug
+                        || old_workspace_name != &workspace.workspace_name)
+                {
+                    tx.execute(
+                        "UPDATE conversations
+                         SET project_slug = ?1, workspace_name = ?2
+                         WHERE project_slug = ?3 AND workspace_name = ?4",
+                        params![
+                            project.slug,
+                            workspace.workspace_name,
+                            old_slug,
+                            old_workspace_name
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE conversation_entries
+                         SET project_slug = ?1, workspace_name = ?2
+                         WHERE project_slug = ?3 AND workspace_name = ?4",
+                        params![
+                            project.slug,
+                            workspace.workspace_name,
+                            old_slug,
+                            old_workspace_name
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        {
+            use std::collections::HashSet;
+            let snapshot_workspace_ids: HashSet<u64> = workspace_ids.iter().copied().collect();
+            for (workspace_id, (project_slug, workspace_name)) in existing_workspace_keys {
+                if snapshot_workspace_ids.contains(&workspace_id) {
+                    continue;
+                }
+
+                tx.execute(
+                    "DELETE FROM conversation_entries
+                     WHERE project_slug = ?1 AND workspace_name = ?2",
+                    params![project_slug, workspace_name],
+                )?;
+                tx.execute(
+                    "DELETE FROM conversations
+                     WHERE project_slug = ?1 AND workspace_name = ?2",
+                    params![project_slug, workspace_name],
+                )?;
             }
         }
 
@@ -825,6 +890,18 @@ impl SqliteDatabase {
             tx.execute(
                 &format!("DELETE FROM workspaces WHERE id NOT IN ({placeholders})"),
                 params_from_iter(workspace_ids.iter().copied().map(|id| id as i64)),
+            )?;
+        }
+
+        if snapshot.projects.is_empty() {
+            tx.execute("DELETE FROM projects", [])?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", snapshot.projects.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            tx.execute(
+                &format!("DELETE FROM projects WHERE id NOT IN ({placeholders})"),
+                params_from_iter(snapshot.projects.iter().map(|p| p.id as i64)),
             )?;
         }
 
@@ -1538,5 +1615,206 @@ mod tests {
             messages,
             vec![("turn-a/item_0", "A"), ("turn-b/item_0", "B")]
         );
+    }
+
+    #[test]
+    fn save_app_state_can_move_workspaces_without_losing_conversations() {
+        let path = temp_db_path("save_app_state_can_move_workspaces_without_losing_conversations");
+        let mut db = SqliteDatabase::open(&path).unwrap();
+
+        let snapshot_before = PersistedAppState {
+            projects: vec![
+                PersistedProject {
+                    id: 1,
+                    slug: "p1".to_owned(),
+                    name: "P1".to_owned(),
+                    path: PathBuf::from("/tmp/p1"),
+                    expanded: false,
+                    workspaces: vec![PersistedWorkspace {
+                        id: 10,
+                        workspace_name: "w1".to_owned(),
+                        branch_name: "luban/w1".to_owned(),
+                        worktree_path: PathBuf::from("/tmp/p1/worktrees/w1"),
+                        status: WorkspaceStatus::Active,
+                        last_activity_at_unix_seconds: None,
+                    }],
+                },
+                PersistedProject {
+                    id: 2,
+                    slug: "p2".to_owned(),
+                    name: "P2".to_owned(),
+                    path: PathBuf::from("/tmp/p2"),
+                    expanded: false,
+                    workspaces: vec![PersistedWorkspace {
+                        id: 20,
+                        workspace_name: "w".to_owned(),
+                        branch_name: "luban/w".to_owned(),
+                        worktree_path: PathBuf::from("/tmp/p2/worktrees/w"),
+                        status: WorkspaceStatus::Active,
+                        last_activity_at_unix_seconds: None,
+                    }],
+                },
+            ],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            last_open_workspace_id: None,
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+        };
+
+        db.save_app_state(&snapshot_before).unwrap();
+
+        db.ensure_conversation("p2", "w", 1).unwrap();
+        let entry = ConversationEntry::UserMessage {
+            text: "hello".to_owned(),
+        };
+        db.append_conversation_entries("p2", "w", 1, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let snapshot_after = PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                slug: "p1".to_owned(),
+                name: "P1".to_owned(),
+                path: PathBuf::from("/tmp/p1"),
+                expanded: false,
+                workspaces: vec![
+                    PersistedWorkspace {
+                        id: 10,
+                        workspace_name: "w1".to_owned(),
+                        branch_name: "luban/w1".to_owned(),
+                        worktree_path: PathBuf::from("/tmp/p1/worktrees/w1"),
+                        status: WorkspaceStatus::Active,
+                        last_activity_at_unix_seconds: None,
+                    },
+                    PersistedWorkspace {
+                        id: 20,
+                        workspace_name: "w".to_owned(),
+                        branch_name: "luban/w".to_owned(),
+                        worktree_path: PathBuf::from("/tmp/p2/worktrees/w"),
+                        status: WorkspaceStatus::Active,
+                        last_activity_at_unix_seconds: None,
+                    },
+                ],
+            }],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            last_open_workspace_id: None,
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+        };
+
+        db.save_app_state(&snapshot_after).unwrap();
+
+        let loaded = db.load_app_state().unwrap();
+        assert_eq!(loaded, snapshot_after);
+
+        let conv = db.load_conversation("p1", "w", 1).unwrap();
+        assert!(
+            conv.entries
+                .iter()
+                .any(|e| matches!(e, ConversationEntry::UserMessage { text } if text == "hello")),
+            "expected conversation entries to be preserved across workspace move"
+        );
+    }
+
+    #[test]
+    fn save_app_state_deletes_conversations_for_removed_workspaces() {
+        let path = temp_db_path("save_app_state_deletes_conversations_for_removed_workspaces");
+        let mut db = SqliteDatabase::open(&path).unwrap();
+
+        let snapshot = PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                slug: "p".to_owned(),
+                name: "P".to_owned(),
+                path: PathBuf::from("/tmp/p"),
+                expanded: false,
+                workspaces: vec![PersistedWorkspace {
+                    id: 2,
+                    workspace_name: "w".to_owned(),
+                    branch_name: "luban/w".to_owned(),
+                    worktree_path: PathBuf::from("/tmp/p/worktrees/w"),
+                    status: WorkspaceStatus::Active,
+                    last_activity_at_unix_seconds: None,
+                }],
+            }],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            last_open_workspace_id: None,
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+        };
+
+        db.save_app_state(&snapshot).unwrap();
+        db.ensure_conversation("p", "w", 1).unwrap();
+        let entry = ConversationEntry::UserMessage {
+            text: "hello".to_owned(),
+        };
+        db.append_conversation_entries("p", "w", 1, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let entries_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_entries WHERE project_slug = ?1 AND workspace_name = ?2",
+                params!["p", "w"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(entries_count, 1);
+
+        let empty = PersistedAppState {
+            projects: Vec::new(),
+            sidebar_width: None,
+            terminal_pane_width: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            last_open_workspace_id: None,
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+        };
+        db.save_app_state(&empty).unwrap();
+
+        let conversations_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE project_slug = ?1 AND workspace_name = ?2",
+                params!["p", "w"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let entries_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_entries WHERE project_slug = ?1 AND workspace_name = ?2",
+                params!["p", "w"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(conversations_count, 0);
+        assert_eq!(entries_count, 0);
     }
 }
