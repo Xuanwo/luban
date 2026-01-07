@@ -1,4 +1,3 @@
-
 use super::*;
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, ScrollDelta, ScrollWheelEvent, point, px, size,
@@ -1673,6 +1672,78 @@ async fn user_message_reflows_on_window_resize(cx: &mut gpui::TestAppContext) {
     );
     assert!(narrow_bubble.right() <= narrow_column.right() + px(2.0));
     assert!(narrow_bubble.right() >= narrow_column.right() - px(8.0));
+}
+
+#[gpui::test]
+async fn chat_surface_does_not_shift_horizontally_on_wide_window_resize(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: vec![ConversationEntry::UserMessage {
+                text: "Test".to_owned(),
+            }],
+        },
+    });
+
+    let (_view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+
+    window_cx.simulate_resize(size(px(1200.0), px(800.0)));
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+    let wide_column = window_cx
+        .debug_bounds("workspace-chat-column")
+        .expect("missing debug bounds for workspace-chat-column");
+    let wide_surface = window_cx
+        .debug_bounds("chat-composer-surface")
+        .expect("missing debug bounds for chat-composer-surface");
+
+    window_cx.simulate_resize(size(px(1800.0), px(800.0)));
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+    let wider_column = window_cx
+        .debug_bounds("workspace-chat-column")
+        .expect("missing debug bounds for workspace-chat-column");
+    let wider_surface = window_cx
+        .debug_bounds("chat-composer-surface")
+        .expect("missing debug bounds for chat-composer-surface");
+
+    let column_shift = (wide_column.origin.x - wider_column.origin.x).abs();
+    let surface_shift = (wide_surface.origin.x - wider_surface.origin.x).abs();
+    assert!(
+        column_shift <= px(0.5),
+        "expected chat column to remain left-anchored on wide resize: wide={wide_column:?} wider={wider_column:?}"
+    );
+    assert!(
+        surface_shift <= px(0.5),
+        "expected chat composer surface to remain left-anchored on wide resize: wide={wide_surface:?} wider={wider_surface:?}"
+    );
 }
 
 #[gpui::test]

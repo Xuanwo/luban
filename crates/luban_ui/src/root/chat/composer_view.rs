@@ -48,8 +48,6 @@ pub(in crate::root) fn render_chat_composer(props: ChatComposerViewProps<'_>) ->
         .child(
             div()
                 .w_full()
-                .max_w(px(900.0))
-                .mx_auto()
                 .debug_selector(|| "chat-composer-surface".to_owned())
                 .capture_action({
                     let view_handle = view_handle.clone();
