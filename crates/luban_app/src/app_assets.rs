@@ -9,6 +9,7 @@ const GIT_BRANCH_SVG: &[u8] = include_bytes!("../assets/icons/git-branch.svg");
 const GIT_PULL_REQUEST_ARROW_SVG: &[u8] =
     include_bytes!("../assets/icons/git-pull-request-arrow.svg");
 const HOUSE_SVG: &[u8] = include_bytes!("../assets/icons/house.svg");
+const MESSAGE_SQUARE_DOT_SVG: &[u8] = include_bytes!("../assets/icons/message-square-dot.svg");
 const MESSAGE_SQUARE_MORE_SVG: &[u8] = include_bytes!("../assets/icons/message-square-more.svg");
 const NOTEBOOK_TEXT_SVG: &[u8] = include_bytes!("../assets/icons/notebook-text.svg");
 const PLAY_SVG: &[u8] = include_bytes!("../assets/icons/play.svg");
@@ -44,6 +45,7 @@ impl AssetSource for AppAssets {
                 Ok(Some(Cow::Borrowed(GIT_PULL_REQUEST_ARROW_SVG)))
             }
             "icons/house.svg" => Ok(Some(Cow::Borrowed(HOUSE_SVG))),
+            "icons/message-square-dot.svg" => Ok(Some(Cow::Borrowed(MESSAGE_SQUARE_DOT_SVG))),
             "icons/message-square-more.svg" => Ok(Some(Cow::Borrowed(MESSAGE_SQUARE_MORE_SVG))),
             "icons/notebook-text.svg" => Ok(Some(Cow::Borrowed(NOTEBOOK_TEXT_SVG))),
             "icons/play.svg" => Ok(Some(Cow::Borrowed(PLAY_SVG))),
@@ -75,6 +77,9 @@ impl AssetSource for AppAssets {
         }
         if "icons/house.svg".starts_with(path) {
             assets.push("icons/house.svg".into());
+        }
+        if "icons/message-square-dot.svg".starts_with(path) {
+            assets.push("icons/message-square-dot.svg".into());
         }
         if "icons/message-square-more.svg".starts_with(path) {
             assets.push("icons/message-square-more.svg".into());
@@ -118,6 +123,7 @@ mod tests {
             "icons/house.svg",
             "icons/git-branch.svg",
             "icons/git-pull-request-arrow.svg",
+            "icons/message-square-dot.svg",
             "icons/message-square-more.svg",
             "icons/notebook-text.svg",
             "icons/play.svg",

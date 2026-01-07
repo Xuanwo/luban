@@ -1,6 +1,6 @@
 use crate::{CodexThreadItem, CodexUsage, ContextTokenKind, ThinkingEffort};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
 
@@ -366,6 +366,7 @@ pub struct AppState {
     pub last_open_workspace_id: Option<WorkspaceId>,
     pub last_error: Option<String>,
     pub workspace_chat_scroll_y10: HashMap<(WorkspaceId, WorkspaceThreadId), i32>,
+    pub workspace_unread_completions: HashSet<WorkspaceId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -381,6 +382,7 @@ pub struct PersistedAppState {
     pub workspace_archived_tabs: HashMap<u64, Vec<u64>>,
     pub workspace_next_thread_id: HashMap<u64, u64>,
     pub workspace_chat_scroll_y10: HashMap<(u64, u64), i32>,
+    pub workspace_unread_completions: HashMap<u64, bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

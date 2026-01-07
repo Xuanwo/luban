@@ -14,6 +14,7 @@ const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
 const WORKSPACE_OPEN_TAB_PREFIX: &str = "workspace_open_tab_";
 const WORKSPACE_ARCHIVED_TAB_PREFIX: &str = "workspace_archived_tab_";
 const WORKSPACE_NEXT_THREAD_ID_PREFIX: &str = "workspace_next_thread_id_";
+const WORKSPACE_UNREAD_COMPLETION_PREFIX: &str = "workspace_unread_completion_";
 const LAST_OPEN_WORKSPACE_ID_KEY: &str = "last_open_workspace_id";
 const AGENT_DEFAULT_MODEL_ID_KEY: &str = "agent_default_model_id";
 const AGENT_DEFAULT_THINKING_EFFORT_KEY: &str = "agent_default_thinking_effort";
@@ -710,6 +711,27 @@ impl SqliteDatabase {
             workspace_chat_scroll_y10.insert((workspace_id, thread_id), offset_y10);
         }
 
+        let mut workspace_unread_completions = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT key, value FROM app_settings WHERE key LIKE 'workspace_unread_completion_%'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (key, value) = row?;
+            let Some(workspace_id) = key.strip_prefix(WORKSPACE_UNREAD_COMPLETION_PREFIX) else {
+                continue;
+            };
+            let Ok(workspace_id) = workspace_id.parse::<u64>() else {
+                continue;
+            };
+            let unread = value != 0;
+            if unread {
+                workspace_unread_completions.insert(workspace_id, true);
+            }
+        }
+
         Ok(PersistedAppState {
             projects,
             sidebar_width,
@@ -722,6 +744,7 @@ impl SqliteDatabase {
             workspace_archived_tabs,
             workspace_next_thread_id,
             workspace_chat_scroll_y10,
+            workspace_unread_completions,
         })
     }
 
@@ -963,6 +986,25 @@ impl SqliteDatabase {
                    value = excluded.value,
                    updated_at = excluded.updated_at",
                 params![key, *offset_y10 as i64, now],
+            )?;
+        }
+
+        tx.execute(
+            "DELETE FROM app_settings WHERE key LIKE 'workspace_unread_completion_%'",
+            [],
+        )?;
+        for (workspace_id, unread) in &snapshot.workspace_unread_completions {
+            if !*unread {
+                continue;
+            }
+            let key = format!("{WORKSPACE_UNREAD_COMPLETION_PREFIX}{workspace_id}");
+            tx.execute(
+                "INSERT INTO app_settings (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![key, 1i64, now],
             )?;
         }
 
@@ -1356,6 +1398,7 @@ mod tests {
             workspace_archived_tabs: HashMap::from([(10, vec![9, 8])]),
             workspace_next_thread_id: HashMap::from([(10, 4)]),
             workspace_chat_scroll_y10: HashMap::from([((10, 1), -1234)]),
+            workspace_unread_completions: HashMap::from([(10, true)]),
         };
 
         db.save_app_state(&snapshot).unwrap();
@@ -1394,6 +1437,7 @@ mod tests {
             workspace_archived_tabs: HashMap::new(),
             workspace_next_thread_id: HashMap::new(),
             workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
         };
         db.save_app_state(&snapshot).unwrap();
 
@@ -1452,6 +1496,7 @@ mod tests {
             workspace_archived_tabs: HashMap::new(),
             workspace_next_thread_id: HashMap::new(),
             workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
         };
         db.save_app_state(&snapshot).unwrap();
 

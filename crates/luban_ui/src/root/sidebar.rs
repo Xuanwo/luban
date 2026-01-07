@@ -49,6 +49,7 @@ pub(super) fn render_sidebar(
                         .children(state.projects.iter().enumerate().map(|(i, project)| {
                             render_project(
                                 cx,
+                                state,
                                 i,
                                 project,
                                 state.main_pane,
@@ -75,6 +76,7 @@ pub(super) fn render_sidebar(
 
 fn render_project(
     cx: &mut Context<LubanRootView>,
+    state: &AppState,
     project_index: usize,
     project: &luban_domain::Project,
     main_pane: MainPane,
@@ -215,7 +217,7 @@ fn render_project(
         .workspaces
         .iter()
         .find(|w| w.status == WorkspaceStatus::Active && w.worktree_path == project.path)
-        .map(|workspace| render_main_workspace_row(cx, project_index, workspace, main_pane));
+        .map(|workspace| render_main_workspace_row(cx, state, project_index, workspace, main_pane));
 
     let workspace_rows: Vec<AnyElement> = project
         .workspaces
@@ -230,6 +232,7 @@ fn render_project(
             render_workspace_row(
                 cx,
                 view_handle.clone(),
+                state,
                 project_index,
                 workspace_index,
                 workspace,
@@ -275,6 +278,7 @@ fn format_relative_age(when: Option<SystemTime>) -> Option<String> {
 fn render_workspace_row(
     cx: &mut Context<LubanRootView>,
     view_handle: gpui::WeakEntity<LubanRootView>,
+    state: &AppState,
     project_index: usize,
     workspace_index: usize,
     workspace: &luban_domain::Workspace,
@@ -284,6 +288,8 @@ fn render_workspace_row(
     let theme = cx.theme();
     let is_selected = matches!(main_pane, MainPane::Workspace(id) if id == workspace.id);
     let workspace_id = workspace.id;
+    let is_running = state.workspace_has_running_turn(workspace_id);
+    let has_unread = state.workspace_has_unread_completion(workspace_id);
     let archive_disabled = workspace.archive_status == OperationStatus::Running;
     let archive_icon = if archive_disabled {
         IconName::LoaderCircle
@@ -321,6 +327,50 @@ fn render_workspace_row(
             theme.sidebar_foreground
         })
         .debug_selector(move || format!("workspace-row-{project_index}-{workspace_index}"))
+        .child(
+            div()
+                .w(px(16.0))
+                .h(px(16.0))
+                .flex_shrink_0()
+                .debug_selector(move || {
+                    format!("workspace-status-container-{project_index}-{workspace_index}")
+                })
+                .when(is_running, |s| {
+                    s.child(
+                        div()
+                            .id(format!(
+                                "workspace-status-running-{project_index}-{workspace_index}"
+                            ))
+                            .debug_selector(move || {
+                                format!(
+                                    "workspace-status-running-{project_index}-{workspace_index}"
+                                )
+                            })
+                            .child(
+                                Spinner::new()
+                                    .with_size(Size::Small)
+                                    .color(theme.muted_foreground),
+                            ),
+                    )
+                })
+                .when(!is_running && has_unread, |s| {
+                    s.child(
+                        div()
+                            .id(format!(
+                                "workspace-status-unread-{project_index}-{workspace_index}"
+                            ))
+                            .debug_selector(move || {
+                                format!("workspace-status-unread-{project_index}-{workspace_index}")
+                            })
+                            .child(
+                                Icon::empty()
+                                    .path("icons/message-square-dot.svg")
+                                    .with_size(Size::Small)
+                                    .text_color(theme.sidebar_accent_foreground),
+                            ),
+                    )
+                }),
+        )
         .child(
             div()
                 .debug_selector(move || {
@@ -463,6 +513,7 @@ fn render_workspace_row(
 
 fn render_main_workspace_row(
     cx: &mut Context<LubanRootView>,
+    state: &AppState,
     project_index: usize,
     workspace: &luban_domain::Workspace,
     main_pane: MainPane,
@@ -470,6 +521,8 @@ fn render_main_workspace_row(
     let theme = cx.theme();
     let is_selected = matches!(main_pane, MainPane::Workspace(id) if id == workspace.id);
     let workspace_id = workspace.id;
+    let is_running = state.workspace_has_running_turn(workspace_id);
+    let has_unread = state.workspace_has_unread_completion(workspace_id);
 
     let title = sidebar_workspace_title(workspace);
     let metadata = sidebar_workspace_metadata(workspace);
@@ -495,6 +548,42 @@ fn render_main_workspace_row(
             theme.sidebar_foreground
         })
         .debug_selector(move || format!("workspace-main-row-{project_index}"))
+        .child(
+            div()
+                .w(px(16.0))
+                .h(px(16.0))
+                .flex_shrink_0()
+                .debug_selector(move || format!("workspace-main-status-container-{project_index}"))
+                .when(is_running, |s| {
+                    s.child(
+                        div()
+                            .id(format!("workspace-main-status-running-{project_index}"))
+                            .debug_selector(move || {
+                                format!("workspace-main-status-running-{project_index}")
+                            })
+                            .child(
+                                Spinner::new()
+                                    .with_size(Size::Small)
+                                    .color(theme.muted_foreground),
+                            ),
+                    )
+                })
+                .when(!is_running && has_unread, |s| {
+                    s.child(
+                        div()
+                            .id(format!("workspace-main-status-unread-{project_index}"))
+                            .debug_selector(move || {
+                                format!("workspace-main-status-unread-{project_index}")
+                            })
+                            .child(
+                                Icon::empty()
+                                    .path("icons/message-square-dot.svg")
+                                    .with_size(Size::Small)
+                                    .text_color(theme.sidebar_accent_foreground),
+                            ),
+                    )
+                }),
+        )
         .child(
             div()
                 .debug_selector(move || format!("workspace-main-icon-{project_index}"))

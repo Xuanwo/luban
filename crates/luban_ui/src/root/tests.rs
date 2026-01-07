@@ -132,6 +132,7 @@ impl ProjectWorkspaceService for FakeService {
             workspace_archived_tabs: HashMap::new(),
             workspace_next_thread_id: HashMap::new(),
             workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
         })
     }
 
@@ -980,6 +981,109 @@ async fn main_workspace_row_is_rendered_and_is_not_archivable(cx: &mut gpui::Tes
     assert!(
         matches!(selected, MainPane::Workspace(id) if id == main_workspace_id),
         "expected main workspace to be selected after click"
+    );
+}
+
+#[gpui::test]
+async fn workspace_row_shows_running_spinner_and_unread_completion_badge(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::ToggleProjectExpanded { project_id });
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    state.apply(Action::OpenProjectSettings { project_id });
+
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    let thread_id = default_thread_id();
+    state.apply(Action::SendAgentMessage {
+        workspace_id,
+        thread_id,
+        text: "run".to_owned(),
+    });
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+    window_cx.refresh().unwrap();
+
+    assert!(
+        window_cx
+            .debug_bounds("workspace-status-running-0-0")
+            .is_some(),
+        "expected running spinner indicator to be visible"
+    );
+
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(
+                Action::AgentTurnFinished {
+                    workspace_id,
+                    thread_id,
+                },
+                cx,
+            );
+        });
+    });
+    window_cx.refresh().unwrap();
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    let running = view.read_with(window_cx, |v, _| {
+        v.debug_state().workspace_has_running_turn(workspace_id)
+    });
+    assert!(
+        !running,
+        "expected state to clear running status after turn finishes"
+    );
+    let unread = view.read_with(window_cx, |v, _| {
+        v.debug_state()
+            .workspace_has_unread_completion(workspace_id)
+    });
+    assert!(
+        unread,
+        "expected state to mark workspace as having unread completion after turn finishes"
+    );
+    assert!(
+        window_cx
+            .debug_bounds("workspace-status-unread-0-0")
+            .is_some(),
+        "expected unread completion badge to be rendered in the sidebar"
+    );
+
+    let row_bounds = window_cx
+        .debug_bounds("workspace-row-0-0")
+        .expect("missing debug bounds for workspace-row-0-0");
+    window_cx.simulate_click(row_bounds.center(), Modifiers::none());
+    window_cx.refresh().unwrap();
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    let (main_pane, unread) = view.read_with(window_cx, |v, _| {
+        (
+            v.debug_state().main_pane,
+            v.debug_state()
+                .workspace_has_unread_completion(workspace_id),
+        )
+    });
+    assert!(
+        matches!(main_pane, MainPane::Workspace(id) if id == workspace_id),
+        "expected workspace to become selected after click"
+    );
+    assert!(
+        !unread,
+        "expected unread completion badge to clear when the workspace is opened"
     );
 }
 
@@ -4407,6 +4511,7 @@ impl ProjectWorkspaceService for FakeGhService {
             workspace_archived_tabs: HashMap::new(),
             workspace_next_thread_id: HashMap::new(),
             workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
         })
     }
 

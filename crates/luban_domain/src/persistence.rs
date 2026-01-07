@@ -5,7 +5,7 @@ use crate::{
     WorkspaceTabs, WorkspaceThreadId,
 };
 use crate::{default_agent_model_id, default_thinking_effort, normalize_thinking_effort};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, UNIX_EPOCH};
 
 pub(crate) fn apply_persisted_app_state(
@@ -63,6 +63,11 @@ pub(crate) fn apply_persisted_app_state(
     state.last_open_workspace_id = persisted.last_open_workspace_id.map(WorkspaceId);
     state.workspace_tabs = HashMap::new();
     state.conversations = HashMap::new();
+    state.workspace_unread_completions = persisted
+        .workspace_unread_completions
+        .into_iter()
+        .filter_map(|(workspace_id, unread)| unread.then_some(WorkspaceId(workspace_id)))
+        .collect::<HashSet<_>>();
 
     for workspace in state.projects.iter().flat_map(|p| &p.workspaces) {
         let workspace_id = workspace.id;
@@ -250,6 +255,11 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
             .map(|((workspace_id, thread_id), offset_y10)| {
                 ((workspace_id.0, thread_id.0), *offset_y10)
             })
+            .collect(),
+        workspace_unread_completions: state
+            .workspace_unread_completions
+            .iter()
+            .map(|workspace_id| (workspace_id.0, true))
             .collect(),
     }
 }

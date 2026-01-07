@@ -12,7 +12,7 @@ use crate::{
 };
 use std::collections::VecDeque;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
 };
 
@@ -37,6 +37,7 @@ impl AppState {
             last_open_workspace_id: None,
             last_error: None,
             workspace_chat_scroll_y10: HashMap::new(),
+            workspace_unread_completions: HashSet::new(),
         }
     }
 
@@ -64,6 +65,16 @@ impl AppState {
         );
 
         this
+    }
+
+    pub fn workspace_has_unread_completion(&self, workspace_id: WorkspaceId) -> bool {
+        self.workspace_unread_completions.contains(&workspace_id)
+    }
+
+    pub fn workspace_has_running_turn(&self, workspace_id: WorkspaceId) -> bool {
+        self.conversations.iter().any(|((id, _), conversation)| {
+            *id == workspace_id && conversation.run_status == OperationStatus::Running
+        })
     }
 
     pub fn apply(&mut self, action: Action) -> Vec<Effect> {
@@ -107,14 +118,19 @@ impl AppState {
                     return Vec::new();
                 }
                 self.dashboard_preview_workspace_id = Some(workspace_id);
+                let cleared = self.workspace_unread_completions.remove(&workspace_id);
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
-                vec![
+                let mut effects = vec![
                     Effect::LoadWorkspaceThreads { workspace_id },
                     Effect::LoadConversation {
                         workspace_id,
                         thread_id: tabs.active_tab,
                     },
-                ]
+                ];
+                if cleared {
+                    effects.insert(0, Effect::SaveAppState);
+                }
+                effects
             }
             Action::DashboardPreviewClosed => {
                 self.dashboard_preview_workspace_id = None;
@@ -192,6 +208,7 @@ impl AppState {
                 self.right_pane = RightPane::Terminal;
                 self.dashboard_preview_workspace_id = None;
                 self.last_open_workspace_id = Some(workspace_id);
+                self.workspace_unread_completions.remove(&workspace_id);
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 let thread_id = tabs.active_tab;
                 vec![
@@ -602,6 +619,10 @@ impl AppState {
                 workspace_id,
                 thread_id,
             } => {
+                let is_visible = matches!(self.main_pane, MainPane::Workspace(id) if id == workspace_id)
+                    || self.dashboard_preview_workspace_id == Some(workspace_id);
+                let mut effects = Vec::new();
+
                 if let Some(conversation) = self.conversations.get_mut(&(workspace_id, thread_id))
                     && conversation.run_status == OperationStatus::Running
                 {
@@ -611,7 +632,15 @@ impl AppState {
                     conversation.in_progress_items.clear();
                     conversation.in_progress_order.clear();
                 }
-                Vec::new()
+
+                if !is_visible && self.workspace(workspace_id).is_some() {
+                    let inserted = self.workspace_unread_completions.insert(workspace_id);
+                    if inserted {
+                        effects.push(Effect::SaveAppState);
+                    }
+                }
+
+                effects
             }
             Action::CancelAgentTurn {
                 workspace_id,
@@ -1493,6 +1522,7 @@ mod tests {
                 workspace_archived_tabs: HashMap::new(),
                 workspace_next_thread_id: HashMap::new(),
                 workspace_chat_scroll_y10: HashMap::new(),
+                workspace_unread_completions: HashMap::new(),
             },
         });
         assert_eq!(state.terminal_pane_width, Some(480));
@@ -1523,6 +1553,7 @@ mod tests {
                 workspace_archived_tabs: HashMap::new(),
                 workspace_next_thread_id: HashMap::new(),
                 workspace_chat_scroll_y10: HashMap::new(),
+                workspace_unread_completions: HashMap::new(),
             },
         });
         assert_eq!(state.sidebar_width, Some(360));
