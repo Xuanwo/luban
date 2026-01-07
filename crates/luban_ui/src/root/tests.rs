@@ -1971,6 +1971,104 @@ async fn user_message_text_can_be_selected_and_copied(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn chat_copy_buttons_copy_user_and_agent_messages(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(FakeService);
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "abandon-about".to_owned(),
+        branch_name: "luban/abandon-about".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/abandon-about"),
+    });
+    let workspace_id = workspace_id_by_name(&state, "abandon-about");
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    let user_message = "User message".to_owned();
+    let agent_message = "Agent message".to_owned();
+    state.apply(Action::ConversationLoaded {
+        workspace_id,
+        thread_id: default_thread_id(),
+        snapshot: ConversationSnapshot {
+            thread_id: Some("thread-1".to_owned()),
+            entries: vec![
+                ConversationEntry::UserMessage {
+                    text: user_message.clone(),
+                },
+                ConversationEntry::CodexItem {
+                    item: Box::new(CodexThreadItem::AgentMessage {
+                        id: "turn-a/item_0".to_owned(),
+                        text: agent_message.clone(),
+                    }),
+                },
+                ConversationEntry::TurnDuration { duration_ms: 1000 },
+            ],
+        },
+    });
+
+    let (_view, window_cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| LubanRootView::with_state(services, state, cx));
+        gpui_component::Root::new(view, window, cx)
+    });
+    window_cx.simulate_resize(size(px(720.0), px(400.0)));
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    let user_copy = window_cx
+        .debug_bounds("conversation-user-copy-button-0")
+        .expect("missing user copy button");
+    assert!(
+        user_copy.size.width > px(0.0) && user_copy.size.height > px(0.0),
+        "expected user copy button to have non-zero bounds: {user_copy:?}"
+    );
+    let agent_copy = window_cx
+        .debug_bounds("conversation-agent-copy-button-agent-turn-0-turn-a/item_0")
+        .expect("missing agent copy button");
+    assert!(
+        agent_copy.size.width > px(0.0) && agent_copy.size.height > px(0.0),
+        "expected agent copy button to have non-zero bounds: {agent_copy:?}"
+    );
+    assert_ne!(
+        (
+            user_copy.left(),
+            user_copy.top(),
+            user_copy.size.width,
+            user_copy.size.height
+        ),
+        (
+            agent_copy.left(),
+            agent_copy.top(),
+            agent_copy.size.width,
+            agent_copy.size.height
+        ),
+        "expected user and agent copy buttons to have distinct bounds"
+    );
+    let agent_click = point(agent_copy.left() + px(1.0), agent_copy.top() + px(1.0));
+    window_cx.simulate_mouse_down(agent_click, MouseButton::Left, Modifiers::none());
+    window_cx.simulate_mouse_up(agent_click, MouseButton::Left, Modifiers::none());
+    window_cx.run_until_parked();
+    assert_eq!(
+        window_cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(agent_message)
+    );
+
+    let user_click = point(user_copy.left() + px(1.0), user_copy.top() + px(1.0));
+    window_cx.simulate_mouse_down(user_click, MouseButton::Left, Modifiers::none());
+    window_cx.simulate_mouse_up(user_click, MouseButton::Left, Modifiers::none());
+    window_cx.run_until_parked();
+    assert_eq!(
+        window_cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(user_message)
+    );
+}
+
+#[gpui::test]
 async fn chat_composer_is_visible_in_workspace(cx: &mut gpui::TestAppContext) {
     cx.update(gpui_component::init);
 

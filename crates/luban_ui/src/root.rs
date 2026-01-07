@@ -2147,6 +2147,12 @@ fn render_conversation_entry(
                 theme.foreground,
                 theme.border,
             );
+            let copy_text = text.to_owned();
+            let copy_button = copy_to_clipboard_button(
+                format!("conversation-user-copy-button-{entry_index}"),
+                copy_text,
+                theme,
+            );
             let bubble = min_width_zero(
                 div()
                     .max_w(bubble_max_w)
@@ -2158,7 +2164,15 @@ fn render_conversation_entry(
                     .border_color(theme.border)
                     .child(min_width_zero(
                         div().w_full().whitespace_normal().child(message),
-                    )),
+                    ))
+                    .child(
+                        div()
+                            .pt_1()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(copy_button),
+                    ),
             );
 
             div()
@@ -2225,6 +2239,31 @@ fn render_conversation_entry(
             .child(div().child(message.clone()))
             .into_any_element(),
     }
+}
+
+fn copy_to_clipboard_button(
+    debug_id: String,
+    copy_text: String,
+    theme: &gpui_component::Theme,
+) -> AnyElement {
+    let icon = Icon::new(IconName::Copy)
+        .with_size(Size::Small)
+        .text_color(theme.muted_foreground);
+
+    let debug_id_for_render = debug_id.clone();
+    div()
+        .debug_selector(move || debug_id_for_render.clone())
+        .w(px(24.0))
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_, _, app| {
+            app.write_to_clipboard(gpui::ClipboardItem::new_string(copy_text.clone()));
+        })
+        .child(icon)
+        .into_any_element()
 }
 
 fn user_message_view_with_context_tokens(
@@ -2612,54 +2651,56 @@ fn build_workspace_history_children(
                 return;
             }
 
-            let turn_container_id = turn.id.clone();
             let turn_id = turn.id.clone();
-            let allow_toggle = !in_progress;
-            let expanded = in_progress || expanded_turns.contains(&turn.id);
-            let header = render_agent_turn_summary_row(
-                &turn.id,
-                TurnSummaryCounts {
-                    tool_calls: turn.tool_calls,
-                    reasonings: turn.reasonings,
-                },
-                !turn.summary_items.is_empty() || in_progress,
-                expanded,
-                in_progress,
-                allow_toggle,
-                theme,
-                view_handle,
-            );
-            let mut summary_children = Vec::with_capacity(turn.summary_items.len());
-            for item in turn.summary_items {
-                summary_children.push(render_tool_summary_item(
-                    &turn_id,
-                    item,
+            if in_progress || !turn.summary_items.is_empty() {
+                let turn_container_id = turn.id.clone();
+                let allow_toggle = !in_progress;
+                let expanded = in_progress || expanded_turns.contains(&turn.id);
+                let header = render_agent_turn_summary_row(
+                    &turn.id,
+                    TurnSummaryCounts {
+                        tool_calls: turn.tool_calls,
+                        reasonings: turn.reasonings,
+                    },
+                    true,
+                    expanded,
+                    in_progress,
+                    allow_toggle,
                     theme,
-                    expanded_items,
-                    chat_column_width,
                     view_handle,
-                ));
-            }
-            let content = div()
-                .pl_4()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .children(summary_children);
+                );
+                let mut summary_children = Vec::with_capacity(turn.summary_items.len());
+                for item in turn.summary_items {
+                    summary_children.push(render_tool_summary_item(
+                        &turn_id,
+                        item,
+                        theme,
+                        expanded_items,
+                        chat_column_width,
+                        view_handle,
+                    ));
+                }
+                let content = div()
+                    .pl_4()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(summary_children);
 
-            children.push(
-                div()
-                    .id(format!("conversation-turn-{turn_container_id}"))
-                    .w_full()
-                    .child(
-                        Collapsible::new()
-                            .open(expanded)
-                            .w_full()
-                            .child(header)
-                            .content(content),
-                    )
-                    .into_any_element(),
-            );
+                children.push(
+                    div()
+                        .id(format!("conversation-turn-{turn_container_id}"))
+                        .w_full()
+                        .child(
+                            Collapsible::new()
+                                .open(expanded)
+                                .w_full()
+                                .child(header)
+                                .content(content),
+                        )
+                        .into_any_element(),
+                );
+            }
 
             for item in turn.agent_messages {
                 children.push(render_codex_item(
@@ -2975,6 +3016,12 @@ fn render_codex_item(
             theme.foreground,
         );
         let debug_id = format!("conversation-agent-message-{render_id}");
+        let copy_text = text.to_owned();
+        let copy_button = copy_to_clipboard_button(
+            format!("conversation-agent-copy-button-{render_id}"),
+            copy_text,
+            theme,
+        );
         return div()
             .debug_selector(move || debug_id.clone())
             .id(format!("codex-agent-message-{render_id}"))
@@ -2984,9 +3031,17 @@ fn render_codex_item(
             .py_1()
             .flex()
             .flex_col()
+            .gap_1()
             .child(min_width_zero(
                 div().w_full().whitespace_normal().child(message),
             ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_start()
+                    .child(copy_button),
+            )
             .into_any_element();
     }
 
