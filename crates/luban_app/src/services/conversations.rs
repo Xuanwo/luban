@@ -7,6 +7,39 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+fn qualify_legacy_conversation_entries(entries: Vec<ConversationEntry>) -> Vec<ConversationEntry> {
+    let mut next_turn_index: usize = 0;
+    let mut current_scope: Option<String> = None;
+
+    entries
+        .into_iter()
+        .map(|entry| match entry {
+            ConversationEntry::UserMessage { .. } => {
+                current_scope = Some(format!("legacy-turn-{next_turn_index}"));
+                next_turn_index = next_turn_index.saturating_add(1);
+                entry
+            }
+            ConversationEntry::CodexItem { item } => {
+                let scope = current_scope
+                    .as_deref()
+                    .unwrap_or("legacy-preamble")
+                    .to_owned();
+                let item = *item;
+                let raw_id = super::codex_item_id(&item);
+                let item = if raw_id.contains('/') {
+                    item
+                } else {
+                    super::qualify_codex_item(&scope, item)
+                };
+                ConversationEntry::CodexItem {
+                    item: Box::new(item),
+                }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct ConversationMeta {
     version: u32,
@@ -155,21 +188,37 @@ impl GitWorkspaceService {
             thread_id,
         )?;
 
-        if !snapshot.entries.is_empty() || snapshot.thread_id.is_some() {
+        if thread_id != 1 {
             return Ok(snapshot);
         }
 
-        if thread_id != 1 {
+        let snapshot_user_count = snapshot
+            .entries
+            .iter()
+            .filter(|e| matches!(e, ConversationEntry::UserMessage { .. }))
+            .count();
+        let snapshot_has_unscoped_codex_items = snapshot.entries.iter().any(|e| match e {
+            ConversationEntry::CodexItem { item } => !super::codex_item_id(item).contains('/'),
+            _ => false,
+        });
+        let snapshot_has_scoped_codex_items = snapshot.entries.iter().any(|e| match e {
+            ConversationEntry::CodexItem { item } => super::codex_item_id(item).contains('/'),
+            _ => false,
+        });
+
+        let should_attempt_legacy_repair = (!snapshot.entries.is_empty()
+            || snapshot.thread_id.is_some())
+            && snapshot_has_unscoped_codex_items
+            && !snapshot_has_scoped_codex_items;
+        let should_attempt_legacy_import =
+            snapshot.entries.is_empty() && snapshot.thread_id.is_none();
+        if !should_attempt_legacy_import && !should_attempt_legacy_repair {
             return Ok(snapshot);
         }
 
         let Some(legacy) = self.load_conversation_legacy(&project_slug, &workspace_name)? else {
             return Ok(snapshot);
         };
-
-        if legacy.entries.is_empty() && legacy.thread_id.is_none() {
-            return Ok(snapshot);
-        }
 
         if let Some(thread_id) = legacy.thread_id.as_deref() {
             let existing_thread_id = self.sqlite.get_conversation_thread_id(
@@ -187,16 +236,180 @@ impl GitWorkspaceService {
             }
         }
 
-        if !legacy.entries.is_empty() {
-            self.sqlite.append_conversation_entries(
-                project_slug.clone(),
-                workspace_name.clone(),
-                1,
-                legacy.entries,
-            )?;
+        if legacy.entries.is_empty() {
+            return Ok(snapshot);
         }
+
+        if should_attempt_legacy_repair {
+            let legacy_user_count = legacy
+                .entries
+                .iter()
+                .filter(|e| matches!(e, ConversationEntry::UserMessage { .. }))
+                .count();
+            if snapshot_user_count > legacy_user_count {
+                return Ok(snapshot);
+            }
+        }
+
+        let qualified_entries = qualify_legacy_conversation_entries(legacy.entries);
+        self.sqlite.replace_conversation_entries(
+            project_slug.clone(),
+            workspace_name.clone(),
+            1,
+            qualified_entries,
+        )?;
 
         self.sqlite
             .load_conversation(project_slug.clone(), workspace_name.clone(), 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite_store::SqliteStore;
+    use luban_domain::CodexThreadItem;
+    use std::path::{Path, PathBuf};
+
+    fn temp_dir(test_name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push("luban-tests");
+        dir.push("services");
+        dir.push(format!(
+            "{test_name}-{}-{}",
+            std::process::id(),
+            GitWorkspaceService::now_unix_seconds()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    fn write_legacy_events(
+        conversations_root: &Path,
+        project_slug: &str,
+        workspace_name: &str,
+        entries: &[ConversationEntry],
+    ) {
+        let dir = conversations_root.join(project_slug).join(workspace_name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("events.jsonl");
+        let content = entries
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(path, format!("{content}\n")).unwrap();
+    }
+
+    fn agent_message(id: &str, text: &str) -> ConversationEntry {
+        ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: id.to_owned(),
+                text: text.to_owned(),
+            }),
+        }
+    }
+
+    #[test]
+    fn legacy_import_scopes_repeated_codex_item_ids() {
+        let root = temp_dir("legacy_import_scopes_repeated_codex_item_ids");
+        let db_path = root.join("state.sqlite");
+        let conversations_root = root.join("conversations");
+        let worktrees_root = root.join("worktrees");
+
+        let sqlite = SqliteStore::new(db_path).unwrap();
+        let svc = GitWorkspaceService {
+            worktrees_root,
+            conversations_root: conversations_root.clone(),
+            sqlite,
+        };
+
+        let legacy_entries = vec![
+            ConversationEntry::UserMessage {
+                text: "u1".to_owned(),
+            },
+            agent_message("item_0", "A"),
+            ConversationEntry::UserMessage {
+                text: "u2".to_owned(),
+            },
+            agent_message("item_0", "B"),
+        ];
+        write_legacy_events(&conversations_root, "p", "w", &legacy_entries);
+
+        let snapshot = svc
+            .load_conversation_internal("p".to_owned(), "w".to_owned(), 1)
+            .unwrap();
+
+        let agent_texts = snapshot
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ConversationEntry::CodexItem { item } => match item.as_ref() {
+                    CodexThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(agent_texts, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn legacy_repair_can_fix_broken_sqlite_import_without_scoped_items() {
+        let root = temp_dir("legacy_repair_can_fix_broken_sqlite_import_without_scoped_items");
+        let db_path = root.join("state.sqlite");
+        let conversations_root = root.join("conversations");
+        let worktrees_root = root.join("worktrees");
+
+        let sqlite = SqliteStore::new(db_path).unwrap();
+        let svc = GitWorkspaceService {
+            worktrees_root,
+            conversations_root: conversations_root.clone(),
+            sqlite: sqlite.clone(),
+        };
+
+        let legacy_entries = vec![
+            ConversationEntry::UserMessage {
+                text: "u1".to_owned(),
+            },
+            agent_message("item_0", "A"),
+            ConversationEntry::UserMessage {
+                text: "u2".to_owned(),
+            },
+            agent_message("item_0", "B"),
+        ];
+        write_legacy_events(&conversations_root, "p", "w", &legacy_entries);
+
+        sqlite
+            .append_conversation_entries("p".to_owned(), "w".to_owned(), 1, legacy_entries.clone())
+            .unwrap();
+        let before = sqlite
+            .load_conversation("p".to_owned(), "w".to_owned(), 1)
+            .unwrap();
+        let before_agent_count = before
+            .entries
+            .iter()
+            .filter(|e| matches!(e, ConversationEntry::CodexItem { .. }))
+            .count();
+        assert_eq!(
+            before_agent_count, 1,
+            "expected broken import to drop duplicates"
+        );
+
+        let after = svc
+            .load_conversation_internal("p".to_owned(), "w".to_owned(), 1)
+            .unwrap();
+        let after_agent_texts = after
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ConversationEntry::CodexItem { item } => match item.as_ref() {
+                    CodexThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(after_agent_texts, vec!["A", "B"]);
     }
 }

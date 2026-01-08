@@ -122,6 +122,13 @@ enum DbCommand {
         entries: Vec<ConversationEntry>,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
+    ReplaceConversationEntries {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        entries: Vec<ConversationEntry>,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
     LoadConversation {
         project_slug: String,
         workspace_name: String,
@@ -215,6 +222,23 @@ impl SqliteStore {
                             },
                         ) => {
                             let _ = reply.send(db.append_conversation_entries(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                &entries,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::ReplaceConversationEntries {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                entries,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.replace_conversation_entries(
                                 &project_slug,
                                 &workspace_name,
                                 thread_local_id,
@@ -358,6 +382,26 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn replace_conversation_entries(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        entries: Vec<ConversationEntry>,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::ReplaceConversationEntries {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                entries,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn load_conversation(
         &self,
         project_slug: String,
@@ -399,6 +443,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::AppendConversationEntries { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::ReplaceConversationEntries { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::LoadConversation { reply, .. } => {
@@ -1255,6 +1302,75 @@ impl SqliteDatabase {
                 ],
             )?;
         }
+        tx.execute(
+            "UPDATE conversations
+             SET updated_at = ?4
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64, now],
+        )?;
+        if let Some(title) = derived_title {
+            tx.execute(
+                "UPDATE conversations
+                 SET title = ?4
+                 WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
+                   AND (title IS NULL OR title LIKE 'Thread %')",
+                params![project_slug, workspace_name, thread_local_id as i64, title],
+            )?;
+        }
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    fn replace_conversation_entries(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        entries: &[ConversationEntry],
+    ) -> anyhow::Result<()> {
+        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
+
+        let now = now_unix_seconds();
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM conversation_entries
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
+
+        let derived_title = entries.iter().find_map(|entry| match entry {
+            ConversationEntry::UserMessage { text } => {
+                let title = luban_domain::derive_thread_title(text);
+                if title.is_empty() { None } else { Some(title) }
+            }
+            _ => None,
+        });
+
+        if !entries.is_empty() {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO conversation_entries
+                 (project_slug, workspace_name, thread_local_id, seq, kind, codex_item_id, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for (idx, entry) in entries.iter().enumerate() {
+                let seq = (idx.saturating_add(1)) as i64;
+                let (kind, codex_item_id) = conversation_entry_index_fields(entry);
+                let payload_json =
+                    serde_json::to_string(entry).context("failed to serialize entry")?;
+                stmt.execute(params![
+                    project_slug,
+                    workspace_name,
+                    thread_local_id as i64,
+                    seq,
+                    kind,
+                    codex_item_id,
+                    payload_json,
+                    now
+                ])?;
+            }
+        }
+
         tx.execute(
             "UPDATE conversations
              SET updated_at = ?4
