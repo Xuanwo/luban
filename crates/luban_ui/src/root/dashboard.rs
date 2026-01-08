@@ -455,6 +455,9 @@ impl LubanRootView {
             &mut self.chat_follow_tail,
             &mut self.chat_last_observed_scroll_offset_y10,
         );
+        if !self.should_chat_follow_tail(chat_key) {
+            self.pending_chat_scroll_to_bottom.remove(&chat_key);
+        }
 
         let theme = cx.theme();
 
@@ -556,19 +559,43 @@ impl LubanRootView {
             Vec::new()
         };
 
-        let history_children = build_workspace_history_children(
+        let chat_column_width = self.chat_column_width;
+        let viewport_height = self.chat_history_viewport_height;
+        let history_children = build_chat_history_children_maybe_virtualized(
+            chat_key,
             entries,
             theme,
             &expanded,
             &expanded_turns,
-            self.chat_column_width,
+            chat_column_width,
+            viewport_height,
+            &self.chat_scroll_handle,
             &view_handle,
             &running_turn_summary_items,
             force_expand_current_turn,
+            window,
+            &mut self.chat_history_block_heights,
+            &mut self.pending_chat_history_block_heights,
         );
 
-        if self.should_chat_follow_tail(chat_key) {
-            self.chat_scroll_handle.scroll_to_bottom();
+        let history_grew = self.last_chat_workspace_id == Some(chat_key)
+            && entries_len > self.last_chat_item_count;
+        let should_scroll_on_open =
+            self.last_chat_workspace_id != Some(chat_key) && agent_turn_count(entries) >= 2;
+        let saved_offset_y10 = self
+            .state
+            .workspace_chat_scroll_y10
+            .get(&(workspace_id, thread_id))
+            .copied();
+        if (history_grew && self.should_chat_follow_tail(chat_key)) || should_scroll_on_open {
+            let pending_saved_offset_y10 = if history_grew { None } else { saved_offset_y10 };
+            self.pending_chat_scroll_to_bottom.insert(
+                chat_key,
+                PendingChatScrollToBottom {
+                    saved_offset_y10: pending_saved_offset_y10,
+                    last_observed_column_width: None,
+                },
+            );
         }
         self.last_chat_workspace_id = Some(chat_key);
         self.last_chat_item_count = entries_len;
@@ -580,10 +607,22 @@ impl LubanRootView {
             .overflow_scroll()
             .track_scroll(&self.chat_scroll_handle)
             .overflow_x_hidden()
-            .when(debug_layout_enabled, |s| {
-                s.on_prepaint(move |bounds, window, _app| {
-                    debug_layout::record("workspace-chat-scroll", window.viewport_size(), bounds);
-                })
+            .on_prepaint({
+                let view_handle = view_handle.clone();
+                move |bounds, window, app| {
+                    if debug_layout_enabled {
+                        debug_layout::record(
+                            "workspace-chat-scroll",
+                            window.viewport_size(),
+                            bounds,
+                        );
+                    }
+                    let height = bounds.size.height.max(px(0.0));
+                    let _ = view_handle.update(app, |view, cx| {
+                        view.chat_history_viewport_height = Some(height);
+                        view.flush_pending_chat_scroll_to_bottom(chat_key, cx);
+                    });
+                }
             })
             .size_full()
             .w_full()

@@ -4,6 +4,7 @@ use gpui::{
 };
 use luban_domain::{
     ConversationEntry, ConversationSnapshot, CreatedWorkspace, PersistedAppState, PullRequestState,
+    WorkspaceConversation, WorkspaceTabs,
 };
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -117,6 +118,287 @@ async fn scroll_wheel_events_are_delivered(cx: &mut gpui::TestAppContext) {
         counter.load(Ordering::SeqCst) > 0,
         "expected scroll wheel listener to fire at least once"
     );
+}
+
+#[gpui::test]
+#[ignore]
+async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
+    cx.update(gpui_component::init);
+
+    struct StreamingService {
+        updates: usize,
+        bytes_per_update: usize,
+        sleep_per_update: Duration,
+    }
+
+    impl ProjectWorkspaceService for StreamingService {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Ok(PersistedAppState {
+                projects: Vec::new(),
+                sidebar_width: None,
+                terminal_pane_width: None,
+                agent_default_model_id: None,
+                agent_default_thinking_effort: None,
+                last_open_workspace_id: None,
+                workspace_active_thread_id: HashMap::new(),
+                workspace_open_tabs: HashMap::new(),
+                workspace_archived_tabs: HashMap::new(),
+                workspace_next_thread_id: HashMap::new(),
+                workspace_chat_scroll_y10: HashMap::new(),
+                workspace_unread_completions: HashMap::new(),
+            })
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+        ) -> Result<CreatedWorkspace, String> {
+            Ok(CreatedWorkspace {
+                workspace_name: "w1".to_owned(),
+                branch_name: "repo/w1".to_owned(),
+                worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+            })
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn ensure_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn list_conversation_threads(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<luban_domain::ConversationThreadMeta>, String> {
+            Ok(vec![luban_domain::ConversationThreadMeta {
+                thread_id: default_thread_id(),
+                remote_thread_id: Some("thread-1".to_owned()),
+                title: "Thread".to_owned(),
+                updated_at_unix_seconds: 0,
+            }])
+        }
+
+        fn load_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<ConversationSnapshot, String> {
+            Ok(ConversationSnapshot {
+                thread_id: Some("thread-1".to_owned()),
+                entries: Vec::new(),
+            })
+        }
+
+        fn store_context_image(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            image: luban_domain::ContextImage,
+        ) -> Result<PathBuf, String> {
+            Ok(PathBuf::from(format!(
+                "/tmp/luban/context/{}.{}",
+                image.bytes.len(),
+                image.extension
+            )))
+        }
+
+        fn store_context_text(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            text: String,
+            extension: String,
+        ) -> Result<PathBuf, String> {
+            Ok(PathBuf::from(format!(
+                "/tmp/luban/context/{}.{}",
+                text.len(),
+                extension
+            )))
+        }
+
+        fn store_context_file(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            source_path: PathBuf,
+        ) -> Result<PathBuf, String> {
+            Ok(source_path)
+        }
+
+        fn run_agent_turn_streamed(
+            &self,
+            request: RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
+            on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync>,
+        ) -> Result<(), String> {
+            let thread_id = request.thread_id.unwrap_or_else(|| "thread-1".to_owned());
+            on_event(CodexThreadEvent::ThreadStarted { thread_id });
+            on_event(CodexThreadEvent::TurnStarted);
+
+            for i in 0..self.updates {
+                let text = "x".repeat(self.bytes_per_update) + &format!("\n{i}");
+                on_event(CodexThreadEvent::ItemUpdated {
+                    item: CodexThreadItem::Reasoning {
+                        id: "reasoning-1".to_owned(),
+                        text,
+                    },
+                });
+                if !self.sleep_per_update.is_zero() {
+                    std::thread::sleep(self.sleep_per_update);
+                }
+            }
+
+            on_event(CodexThreadEvent::TurnCompleted {
+                usage: luban_domain::CodexUsage {
+                    input_tokens: 1,
+                    cached_input_tokens: 0,
+                    output_tokens: 1,
+                },
+            });
+            Ok(())
+        }
+
+        fn gh_is_authorized(&self) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn gh_pull_request_info(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<Option<PullRequestInfo>, String> {
+            Ok(None)
+        }
+
+        fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn gh_open_pull_request_failed_action(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    let services: Arc<dyn ProjectWorkspaceService> = Arc::new(StreamingService {
+        updates: 3_000,
+        bytes_per_update: 256,
+        sleep_per_update: Duration::from_millis(1),
+    });
+
+    let mut state = AppState::new();
+    state.apply(Action::AddProject {
+        path: PathBuf::from("/tmp/repo"),
+    });
+    let project_id = state.projects[0].id;
+    state.apply(Action::WorkspaceCreated {
+        project_id,
+        workspace_name: "w1".to_owned(),
+        branch_name: "repo/w1".to_owned(),
+        worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+    });
+    state.projects[0].expanded = true;
+    let workspace_id = workspace_id_by_name(&state, "w1");
+    let thread_id = default_thread_id();
+    state.main_pane = MainPane::Workspace(workspace_id);
+
+    state
+        .workspace_tabs
+        .insert(workspace_id, WorkspaceTabs::new_with_initial(thread_id));
+
+    let mut entries = Vec::new();
+    for i in 0..1_000usize {
+        entries.push(ConversationEntry::UserMessage {
+            text: format!("Hello {i}"),
+        });
+        entries.push(ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::Reasoning {
+                id: format!("r-{i}"),
+                text: "Initial reasoning".to_owned(),
+            }),
+        });
+        entries.push(ConversationEntry::TurnUsage { usage: None });
+    }
+
+    state.conversations.insert(
+        (workspace_id, thread_id),
+        WorkspaceConversation {
+            local_thread_id: thread_id,
+            title: "Thread 1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            draft: String::new(),
+            draft_attachments: Vec::new(),
+            agent_model_id: default_agent_model_id().to_owned(),
+            thinking_effort: default_thinking_effort(),
+            entries,
+            run_status: OperationStatus::Idle,
+            current_run_config: None,
+            in_progress_items: std::collections::BTreeMap::new(),
+            in_progress_order: std::collections::VecDeque::new(),
+            pending_prompts: std::collections::VecDeque::new(),
+            queue_paused: false,
+        },
+    );
+
+    let (view, window_cx) =
+        cx.add_window_view(|_, cx| LubanRootView::with_state(services, state, cx));
+
+    window_cx.simulate_resize(size(px(1200.0), px(800.0)));
+    window_cx.run_until_parked();
+    window_cx.refresh().unwrap();
+
+    window_cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.dispatch(
+                Action::SendAgentMessage {
+                    workspace_id,
+                    thread_id,
+                    text: "Profile streaming updates".to_owned(),
+                },
+                cx,
+            );
+        });
+    });
+
+    let start = std::time::Instant::now();
+    loop {
+        window_cx.run_until_parked();
+        window_cx.refresh().unwrap();
+
+        let running = view.read_with(window_cx, |v, _| {
+            v.debug_state().workspace_has_running_turn(workspace_id)
+        });
+        if !running {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(20) {
+            panic!("timed out waiting for streaming run to finish");
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 #[derive(Default)]

@@ -30,8 +30,8 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -59,6 +59,7 @@ const CHAT_ATTACHMENT_THUMBNAIL_SIZE: f32 = 72.0;
 const CHAT_ATTACHMENT_FILE_WIDTH: f32 = CHAT_ATTACHMENT_THUMBNAIL_SIZE * 2.0;
 const CHAT_SCROLL_BOTTOM_TOLERANCE_Y10: i32 = 200;
 const CHAT_SCROLL_USER_SCROLL_UP_THRESHOLD_Y10: i32 = 10;
+const WORKSPACE_HISTORY_VIRTUALIZATION_MIN_ENTRIES: usize = 800;
 
 use chat::composer::ContextImportSpec;
 
@@ -66,6 +67,14 @@ type WorkspaceThreadKey = (WorkspaceId, WorkspaceThreadId);
 
 static PENDING_CONTEXT_TOKEN_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
+
+const AGENT_EVENT_FLUSH_INTERVAL: Duration = Duration::from_millis(33);
+
+#[derive(Clone, Copy)]
+struct PendingChatScrollToBottom {
+    saved_offset_y10: Option<i32>,
+    last_observed_column_width: Option<Pixels>,
+}
 
 #[cfg(not(test))]
 const SUCCESS_TOAST_DURATION: Duration = Duration::from_secs(2);
@@ -116,6 +125,10 @@ pub struct LubanRootView {
     pending_turn_durations: HashMap<WorkspaceThreadKey, Duration>,
     running_turn_user_message_count: HashMap<WorkspaceThreadKey, usize>,
     running_turn_summary_order: HashMap<WorkspaceThreadKey, Vec<String>>,
+    pending_chat_scroll_to_bottom: HashMap<WorkspaceThreadKey, PendingChatScrollToBottom>,
+    chat_history_viewport_height: Option<Pixels>,
+    chat_history_block_heights: HashMap<WorkspaceThreadKey, HashMap<String, Pixels>>,
+    pending_chat_history_block_heights: HashMap<WorkspaceThreadKey, HashMap<String, Pixels>>,
     turn_generation: HashMap<WorkspaceThreadKey, u64>,
     turn_cancel_flags: HashMap<WorkspaceThreadKey, Arc<AtomicBool>>,
     chat_scroll_handle: gpui::ScrollHandle,
@@ -174,6 +187,10 @@ impl LubanRootView {
             pending_turn_durations: HashMap::new(),
             running_turn_user_message_count: HashMap::new(),
             running_turn_summary_order: HashMap::new(),
+            pending_chat_scroll_to_bottom: HashMap::new(),
+            chat_history_viewport_height: None,
+            chat_history_block_heights: HashMap::new(),
+            pending_chat_history_block_heights: HashMap::new(),
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
@@ -243,6 +260,10 @@ impl LubanRootView {
             pending_turn_durations: HashMap::new(),
             running_turn_user_message_count: HashMap::new(),
             running_turn_summary_order: HashMap::new(),
+            pending_chat_scroll_to_bottom: HashMap::new(),
+            chat_history_viewport_height: None,
+            chat_history_block_heights: HashMap::new(),
+            pending_chat_history_block_heights: HashMap::new(),
             turn_generation: HashMap::new(),
             turn_cancel_flags: HashMap::new(),
             chat_scroll_handle: gpui::ScrollHandle::new(),
@@ -345,6 +366,55 @@ impl LubanRootView {
             .get(&chat_key)
             .copied()
             .unwrap_or(true)
+    }
+
+    fn flush_pending_chat_scroll_to_bottom(
+        &mut self,
+        chat_key: WorkspaceThreadKey,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.should_chat_follow_tail(chat_key) {
+            self.pending_chat_scroll_to_bottom.remove(&chat_key);
+            return;
+        }
+
+        use std::collections::hash_map::Entry;
+        let Entry::Occupied(mut entry) = self.pending_chat_scroll_to_bottom.entry(chat_key) else {
+            return;
+        };
+
+        let (saved_offset_y10, width_stable) = {
+            let pending = entry.get_mut();
+            let width_stable = match (pending.last_observed_column_width, self.chat_column_width) {
+                (Some(prev), Some(cur)) => (prev - cur).abs() <= px(0.5),
+                _ => false,
+            };
+            pending.last_observed_column_width = self.chat_column_width;
+            (pending.saved_offset_y10, width_stable)
+        };
+
+        let offset_y10 = quantize_pixels_y10(self.chat_scroll_handle.offset().y);
+        let max_y10 = quantize_pixels_y10(self.chat_scroll_handle.max_offset().height);
+        if max_y10 <= 0 {
+            return;
+        }
+
+        if !self.chat_follow_tail.contains_key(&chat_key)
+            && saved_offset_y10
+                .map(|saved| !Self::is_chat_near_bottom(saved, max_y10))
+                .unwrap_or(false)
+        {
+            entry.remove();
+            return;
+        }
+
+        if Self::is_chat_near_bottom(offset_y10, max_y10) && width_stable {
+            entry.remove();
+            return;
+        }
+
+        self.chat_scroll_handle.scroll_to_bottom();
+        cx.notify();
     }
 
     fn is_chat_near_bottom(offset_y10: i32, max_y10: i32) -> bool {
@@ -1226,16 +1296,27 @@ impl LubanRootView {
                 async move {
                     let (tx, rx) = async_channel::unbounded::<CodexThreadEvent>();
 
-                    let tx_for_events = tx.clone();
                     let tx_for_error = tx.clone();
-                    let on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync> =
-                        Arc::new(move |e| {
-                            let _ = tx_for_events.send_blocking(e);
-                        });
+                    let coalescer = Arc::new(Mutex::new(CodexEventCoalescer::new(
+                        tx.clone(),
+                        AGENT_EVENT_FLUSH_INTERVAL,
+                    )));
+                    let on_event: Arc<dyn Fn(CodexThreadEvent) + Send + Sync> = {
+                        let coalescer = coalescer.clone();
+                        Arc::new(move |event| {
+                            if let Ok(mut coalescer) = coalescer.lock() {
+                                coalescer.push(event);
+                            }
+                        })
+                    };
 
                     std::thread::spawn(move || {
                         let result =
                             services.run_agent_turn_streamed(request, cancel_flag, on_event);
+
+                        if let Ok(mut coalescer) = coalescer.lock() {
+                            coalescer.flush();
+                        }
 
                         if let Err(message) = result {
                             let _ = tx_for_error.send_blocking(CodexThreadEvent::Error { message });
@@ -1361,6 +1442,67 @@ impl LubanRootView {
                     .child(div().text_sm().child(message.to_owned())),
             )
             .into_any_element()
+    }
+}
+
+struct CodexEventCoalescer {
+    tx: async_channel::Sender<CodexThreadEvent>,
+    pending_item_updates: HashMap<String, CodexThreadItem>,
+    last_flush: Instant,
+    flush_interval: Duration,
+}
+
+impl CodexEventCoalescer {
+    fn new(tx: async_channel::Sender<CodexThreadEvent>, flush_interval: Duration) -> Self {
+        Self {
+            tx,
+            pending_item_updates: HashMap::new(),
+            last_flush: Instant::now(),
+            flush_interval,
+        }
+    }
+
+    fn push(&mut self, event: CodexThreadEvent) {
+        match event {
+            CodexThreadEvent::ItemUpdated { item } => {
+                let id = codex_item_id(&item).to_owned();
+                self.pending_item_updates.insert(id, item);
+                if self.last_flush.elapsed() >= self.flush_interval {
+                    self.flush();
+                }
+            }
+            CodexThreadEvent::ItemCompleted { item } => {
+                self.pending_item_updates.remove(codex_item_id(&item));
+                self.flush();
+                let _ = self
+                    .tx
+                    .send_blocking(CodexThreadEvent::ItemCompleted { item });
+            }
+            CodexThreadEvent::TurnCompleted { .. }
+            | CodexThreadEvent::TurnFailed { .. }
+            | CodexThreadEvent::Error { .. } => {
+                self.flush();
+                let _ = self.tx.send_blocking(event);
+            }
+            _ => {
+                let _ = self.tx.send_blocking(event);
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.pending_item_updates.is_empty() {
+            self.last_flush = Instant::now();
+            return;
+        }
+
+        let items = std::mem::take(&mut self.pending_item_updates);
+        self.last_flush = Instant::now();
+        for (_, item) in items {
+            let _ = self
+                .tx
+                .send_blocking(CodexThreadEvent::ItemUpdated { item });
+        }
     }
 }
 
@@ -1736,6 +1878,9 @@ impl LubanRootView {
                     &mut self.chat_follow_tail,
                     &mut self.chat_last_observed_scroll_offset_y10,
                 );
+                if !self.should_chat_follow_tail(chat_key) {
+                    self.pending_chat_scroll_to_bottom.remove(&chat_key);
+                }
 
                 let theme = cx.theme();
 
@@ -1839,19 +1984,45 @@ impl LubanRootView {
                     Vec::new()
                 };
 
-                let history_children = build_workspace_history_children(
+                let chat_column_width = self.chat_column_width;
+                let viewport_height = self.chat_history_viewport_height;
+                let history_children = build_chat_history_children_maybe_virtualized(
+                    chat_key,
                     entries,
                     theme,
                     &expanded,
                     &expanded_turns,
-                    self.chat_column_width,
+                    chat_column_width,
+                    viewport_height,
+                    &self.chat_scroll_handle,
                     &view_handle,
                     &running_turn_summary_items,
                     force_expand_current_turn,
+                    window,
+                    &mut self.chat_history_block_heights,
+                    &mut self.pending_chat_history_block_heights,
                 );
 
-                if self.should_chat_follow_tail(chat_key) {
-                    self.chat_scroll_handle.scroll_to_bottom();
+                let history_grew = self.last_chat_workspace_id == Some(chat_key)
+                    && entries_len > self.last_chat_item_count;
+                let should_scroll_on_open =
+                    self.last_chat_workspace_id != Some(chat_key) && agent_turn_count(entries) >= 2;
+                let saved_offset_y10 = self
+                    .state
+                    .workspace_chat_scroll_y10
+                    .get(&(workspace_id, thread_id))
+                    .copied();
+                if (history_grew && self.should_chat_follow_tail(chat_key)) || should_scroll_on_open
+                {
+                    let pending_saved_offset_y10 =
+                        if history_grew { None } else { saved_offset_y10 };
+                    self.pending_chat_scroll_to_bottom.insert(
+                        chat_key,
+                        PendingChatScrollToBottom {
+                            saved_offset_y10: pending_saved_offset_y10,
+                            last_observed_column_width: None,
+                        },
+                    );
                 }
                 self.last_chat_workspace_id = Some(chat_key);
                 self.last_chat_item_count = entries_len;
@@ -1863,14 +2034,22 @@ impl LubanRootView {
                     .overflow_scroll()
                     .track_scroll(&self.chat_scroll_handle)
                     .overflow_x_hidden()
-                    .when(debug_layout_enabled, |s| {
-                        s.on_prepaint(move |bounds, window, _app| {
-                            debug_layout::record(
-                                "workspace-chat-scroll",
-                                window.viewport_size(),
-                                bounds,
-                            );
-                        })
+                    .on_prepaint({
+                        let view_handle = view_handle.clone();
+                        move |bounds, window, app| {
+                            if debug_layout_enabled {
+                                debug_layout::record(
+                                    "workspace-chat-scroll",
+                                    window.viewport_size(),
+                                    bounds,
+                                );
+                            }
+                            let height = bounds.size.height.max(px(0.0));
+                            let _ = view_handle.update(app, |view, cx| {
+                                view.chat_history_viewport_height = Some(height);
+                                view.flush_pending_chat_scroll_to_bottom(chat_key, cx);
+                            });
+                        }
                     })
                     .size_full()
                     .w_full()
@@ -2796,6 +2975,153 @@ fn find_summary_item_in_current_turn<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn build_chat_history_children_maybe_virtualized(
+    chat_key: WorkspaceThreadKey,
+    entries: &[luban_domain::ConversationEntry],
+    theme: &gpui_component::Theme,
+    expanded_items: &HashSet<String>,
+    expanded_turns: &HashSet<String>,
+    chat_column_width: Option<Pixels>,
+    chat_history_viewport_height: Option<Pixels>,
+    chat_scroll_handle: &gpui::ScrollHandle,
+    view_handle: &gpui::WeakEntity<LubanRootView>,
+    running_turn_summary_items: &[&CodexThreadItem],
+    force_expand_current_turn: bool,
+    window: &Window,
+    chat_history_block_heights: &mut HashMap<WorkspaceThreadKey, HashMap<String, Pixels>>,
+    pending_chat_history_block_heights: &mut HashMap<WorkspaceThreadKey, HashMap<String, Pixels>>,
+) -> Vec<AnyElement> {
+    let entries_len = entries.len();
+    if entries_len < WORKSPACE_HISTORY_VIRTUALIZATION_MIN_ENTRIES {
+        return build_workspace_history_children(
+            entries,
+            theme,
+            expanded_items,
+            expanded_turns,
+            chat_column_width,
+            view_handle,
+            running_turn_summary_items,
+            force_expand_current_turn,
+            0,
+            0,
+        );
+    }
+
+    let blocks = workspace_history_blocks(entries);
+
+    let pending_updates = pending_chat_history_block_heights
+        .remove(&chat_key)
+        .unwrap_or_default();
+    let heights = chat_history_block_heights.entry(chat_key).or_default();
+    for (id, height) in pending_updates {
+        heights.insert(id, height);
+    }
+
+    let viewport_h = chat_history_viewport_height
+        .unwrap_or_else(|| window.viewport_size().height)
+        .max(px(1.0));
+    let scroll_offset = chat_scroll_handle.offset().y.max(px(0.0));
+
+    let mut block_starts = Vec::with_capacity(blocks.len());
+    let mut total_height = px(0.0);
+    for block in &blocks {
+        block_starts.push(total_height);
+        total_height += block_estimated_height(heights, block);
+    }
+
+    let overscan = viewport_h * 2.0;
+    let visible_top = (scroll_offset - overscan).max(px(0.0));
+    let visible_bottom = scroll_offset + viewport_h + overscan;
+    let (visible_start, visible_end) =
+        select_visible_blocks(&block_starts, &blocks, heights, visible_top, visible_bottom);
+
+    let top_spacer = block_starts.get(visible_start).copied().unwrap_or(px(0.0));
+    let bottom_spacer = (total_height
+        - block_starts
+            .get(visible_end)
+            .copied()
+            .unwrap_or(total_height))
+    .max(px(0.0));
+
+    let mut children = Vec::new();
+    if top_spacer > px(0.0) {
+        children.push(div().h(top_spacer).w_full().into_any_element());
+    }
+
+    for (idx, block) in blocks
+        .iter()
+        .enumerate()
+        .take(visible_end)
+        .skip(visible_start)
+    {
+        let is_running_turn = force_expand_current_turn && idx + 1 == blocks.len();
+        let block_children = build_workspace_history_children(
+            &entries[block.start_entry_index..block.end_entry_index],
+            theme,
+            expanded_items,
+            expanded_turns,
+            chat_column_width,
+            view_handle,
+            if is_running_turn {
+                running_turn_summary_items
+            } else {
+                &[]
+            },
+            is_running_turn,
+            block.start_entry_index,
+            block.turn_index_base,
+        );
+
+        let id = block.id.clone();
+        let measure_id = block.id.clone();
+        children.push(
+            div()
+                .id(id)
+                .w_full()
+                .when(block.has_top_padding, |s| s.pt_3())
+                .flex()
+                .flex_col()
+                .gap_3()
+                .children(block_children)
+                .on_prepaint({
+                    let view_handle = view_handle.clone();
+                    move |bounds, _window, app| {
+                        let height = bounds.size.height.max(px(0.0));
+                        let _ = view_handle.update(app, |view, cx| {
+                            let pending = view
+                                .pending_chat_history_block_heights
+                                .entry(chat_key)
+                                .or_insert_with(HashMap::new);
+                            let should_update = pending
+                                .get(&measure_id)
+                                .map(|prev| (*prev - height).abs() > px(0.5))
+                                .unwrap_or(true);
+                            if should_update {
+                                pending.insert(measure_id.clone(), height);
+                                cx.notify();
+                            }
+                        });
+                    }
+                })
+                .into_any_element(),
+        );
+    }
+
+    if bottom_spacer > px(0.0) {
+        children.push(div().h(bottom_spacer).w_full().into_any_element());
+    }
+
+    vec![
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .children(children)
+            .into_any_element(),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_workspace_history_children(
     entries: &[luban_domain::ConversationEntry],
     theme: &gpui_component::Theme,
@@ -2805,6 +3131,8 @@ fn build_workspace_history_children(
     view_handle: &gpui::WeakEntity<LubanRootView>,
     running_turn_summary_items: &[&CodexThreadItem],
     force_expand_current_turn: bool,
+    entry_index_base: usize,
+    turn_index_base: usize,
 ) -> Vec<AnyElement> {
     struct TurnAccumulator<'a> {
         id: String,
@@ -2815,7 +3143,7 @@ fn build_workspace_history_children(
     }
 
     let mut children = Vec::new();
-    let mut turn_index = 0usize;
+    let mut turn_index = turn_index_base;
     let mut current_turn: Option<TurnAccumulator<'_>> = None;
     let mut pending_turn_agent_copy: Option<(String, String)> = None;
 
@@ -2905,7 +3233,8 @@ fn build_workspace_history_children(
             pending_agent_copy
         };
 
-    for (entry_index, entry) in entries.iter().enumerate() {
+    for (local_entry_index, entry) in entries.iter().enumerate() {
+        let entry_index = entry_index_base + local_entry_index;
         match entry {
             luban_domain::ConversationEntry::UserMessage { text: _ } => {
                 if let Some(turn) = current_turn.take() {
@@ -3037,6 +3366,116 @@ fn build_workspace_history_children(
     }
 
     children
+}
+
+#[derive(Clone, Debug)]
+struct WorkspaceHistoryBlock {
+    id: String,
+    start_entry_index: usize,
+    end_entry_index: usize,
+    turn_index_base: usize,
+    has_top_padding: bool,
+}
+
+fn workspace_history_blocks(
+    entries: &[luban_domain::ConversationEntry],
+) -> Vec<WorkspaceHistoryBlock> {
+    let mut user_message_indices = Vec::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        if matches!(entry, luban_domain::ConversationEntry::UserMessage { .. }) {
+            user_message_indices.push(idx);
+        }
+    }
+
+    if user_message_indices.is_empty() {
+        return vec![WorkspaceHistoryBlock {
+            id: "history-block-preamble".to_owned(),
+            start_entry_index: 0,
+            end_entry_index: entries.len(),
+            turn_index_base: 0,
+            has_top_padding: false,
+        }];
+    }
+
+    let mut blocks = Vec::new();
+    let mut has_top_padding = false;
+
+    let first_user = user_message_indices[0];
+    if first_user > 0 {
+        blocks.push(WorkspaceHistoryBlock {
+            id: "history-block-preamble".to_owned(),
+            start_entry_index: 0,
+            end_entry_index: first_user,
+            turn_index_base: 0,
+            has_top_padding,
+        });
+        has_top_padding = true;
+    }
+
+    for (turn_index, &start) in user_message_indices.iter().enumerate() {
+        let end = user_message_indices
+            .get(turn_index + 1)
+            .copied()
+            .unwrap_or(entries.len());
+        blocks.push(WorkspaceHistoryBlock {
+            id: format!("history-block-agent-turn-{turn_index}"),
+            start_entry_index: start,
+            end_entry_index: end,
+            turn_index_base: turn_index,
+            has_top_padding,
+        });
+        has_top_padding = true;
+    }
+
+    blocks
+}
+
+fn block_estimated_height(
+    heights: &HashMap<String, Pixels>,
+    block: &WorkspaceHistoryBlock,
+) -> Pixels {
+    if let Some(height) = heights.get(&block.id).copied() {
+        return height.max(px(0.0));
+    }
+    let entry_count = block
+        .end_entry_index
+        .saturating_sub(block.start_entry_index);
+    let estimate = 72.0 + (entry_count as f32) * 18.0;
+    px(estimate.clamp(120.0, 1600.0))
+}
+
+fn select_visible_blocks(
+    block_starts: &[Pixels],
+    blocks: &[WorkspaceHistoryBlock],
+    heights: &HashMap<String, Pixels>,
+    visible_top: Pixels,
+    visible_bottom: Pixels,
+) -> (usize, usize) {
+    if blocks.is_empty() {
+        return (0, 0);
+    }
+
+    let mut start = block_starts.partition_point(|v| *v < visible_top);
+    start = start.saturating_sub(1);
+    while start < blocks.len() {
+        let end_y = block_starts[start] + block_estimated_height(heights, &blocks[start]);
+        if end_y > visible_top {
+            break;
+        }
+        start += 1;
+    }
+    start = start.min(blocks.len().saturating_sub(1));
+
+    let mut end = start;
+    while end < blocks.len() {
+        if block_starts[end] >= visible_bottom {
+            break;
+        }
+        end += 1;
+    }
+    end = end.max(start + 1);
+
+    (start, end)
 }
 
 fn render_turn_duration_row_for_agent_turn(
