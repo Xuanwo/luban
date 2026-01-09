@@ -1,0 +1,19 @@
+{
+  "productName": "Luban",
+  "version": "0.1.0",
+  "identifier": "io.luban.app",
+  "app": {
+    "security": {
+      "csp": null
+    }
+  },
+  "build": {
+    "frontendDist": "../../web/out"
+  },
+  "bundle": {
+    "active": false,
+    "resources": [
+      "../../web/out"
+    ]
+  }
+}

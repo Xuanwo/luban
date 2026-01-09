@@ -1,11 +1,6 @@
 use anyhow::Context as _;
-use axum::Router;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
-
-mod engine;
-mod pty;
-mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,14 +13,8 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .context("invalid LUBAN_SERVER_ADDR")?;
 
-    let app: Router = server::router().await?;
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("failed to bind {addr}"))?;
-
-    tracing::info!(%addr, "luban_server listening");
-
-    axum::serve(listener, app).await.context("server failed")?;
+    let server = luban_server::start_server(addr).await?;
+    tracing::info!(addr = %server.addr, "luban_server listening");
+    server.wait().await?;
     Ok(())
 }

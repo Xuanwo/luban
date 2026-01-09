@@ -6,6 +6,7 @@ members = [
     "crates/luban_backend",
     "crates/luban_domain",
     "crates/luban_server",
+    "crates/luban_tauri",
     "crates/luban_ui",
 ]
 

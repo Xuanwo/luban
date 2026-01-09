@@ -1,0 +1,13 @@
+[package]
+name = "luban_tauri"
+version.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+anyhow.workspace = true
+luban_server = { path = "../luban_server" }
+tauri = "2"
+

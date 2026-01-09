@@ -167,6 +167,6 @@ The server serves the built web assets so the user can open a browser and visit 
 The browser UI is built via Next.js static export (`output: "export"`), and the Rust server serves the output folder.
 
 - Development: run `just run-server` + `cd web && pnpm dev` (hot reload).
-  - Note: the dev server does not proxy `/api/*` by default; for end-to-end testing, prefer `just run`.
+  - Note: the dev server does not proxy `/api/*` by default; for end-to-end testing, prefer `just web run` (alias: `just run`).
 - Production: build `web/` into `web/out` and serve it from `luban_server` (default).
   - Override the served directory via `LUBAN_WEB_DIST_DIR`.
