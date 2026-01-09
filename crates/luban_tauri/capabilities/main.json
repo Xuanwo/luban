@@ -9,9 +9,8 @@
   ],
   "remote": {
     "urls": [
-      "http://127.0.0.1:*/*",
-      "http://localhost:*/*"
+      "http://127.0.0.1:8421/*",
+      "http://localhost:8421/*"
     ]
   }
 }
-

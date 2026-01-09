@@ -89,21 +89,19 @@ export function Titlebar() {
 
   return (
     <div className={containerClass}>
-      {/* Full-surface drag region behind interactive controls */}
-      <div className="absolute inset-0" data-tauri-drag-region />
-
-      <div className="relative z-10 flex items-stretch flex-1 min-w-0">
+      <div className="flex items-stretch flex-1 min-w-0">
         {/* macOS uses native traffic lights (TitleBarStyle::Overlay). Reserve space so the title doesn't overlap. */}
         {platform === "macos" ? <div className="w-[84px] flex-shrink-0" /> : null}
 
         <div
           className={cn("flex-1 flex items-center min-w-0 px-3", "text-sm font-medium")}
+          data-tauri-drag-region
           onDoubleClick={() => {
             if (platform === "macos") return
             void toggleMaximize()
           }}
         >
-          <span className="truncate">Luban</span>
+          <span className="truncate pointer-events-none">Luban</span>
         </div>
 
         {platform === "macos" ? null : (
@@ -111,6 +109,7 @@ export function Titlebar() {
             <button
               aria-label="Minimize window"
               className="w-11 flex items-center justify-center hover:bg-muted/60 transition-colors"
+              data-tauri-drag-region="false"
               onClick={() => void minimize()}
               title="Minimize"
             >
@@ -119,6 +118,7 @@ export function Titlebar() {
             <button
               aria-label={isMaximized ? "Restore window" : "Maximize window"}
               className="w-11 flex items-center justify-center hover:bg-muted/60 transition-colors"
+              data-tauri-drag-region="false"
               onClick={() => void toggleMaximize()}
               title={isMaximized ? "Restore" : "Maximize"}
             >
@@ -127,6 +127,7 @@ export function Titlebar() {
             <button
               aria-label="Close window"
               className="w-11 flex items-center justify-center hover:bg-destructive hover:text-destructive-foreground transition-colors"
+              data-tauri-drag-region="false"
               onClick={() => void close()}
               title="Close"
             >

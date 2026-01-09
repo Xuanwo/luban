@@ -29,7 +29,10 @@ fn main() -> anyhow::Result<()> {
             }
 
             let server = tauri::async_runtime::block_on(async {
-                let addr: SocketAddr = "127.0.0.1:0".parse().context("invalid bind addr")?;
+                let addr: SocketAddr = std::env::var("LUBAN_SERVER_ADDR")
+                    .unwrap_or_else(|_| "127.0.0.1:8421".to_owned())
+                    .parse()
+                    .context("invalid LUBAN_SERVER_ADDR")?;
                 luban_server::start_server(addr).await
             })
             .context("failed to start luban_server")?;
@@ -41,7 +44,7 @@ fn main() -> anyhow::Result<()> {
             app.manage(server);
 
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("Luban")
+                .title("")
                 .inner_size(1280.0, 800.0);
 
             #[cfg(target_os = "macos")]
@@ -54,7 +57,16 @@ fn main() -> anyhow::Result<()> {
                 builder = builder.decorations(false);
             }
 
-            builder.build().context("failed to build window")?;
+            let window = builder.build().context("failed to build window")?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let w = window.clone();
+                // Best-effort re-apply at runtime to avoid platform defaults winning during creation.
+                tauri::async_runtime::spawn(async move {
+                    let _ = w.set_title_bar_style(tauri::TitleBarStyle::Overlay);
+                });
+            }
 
             Ok(())
         })
