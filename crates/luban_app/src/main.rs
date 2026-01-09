@@ -64,12 +64,14 @@ mod tests {
 
         cx.read(|app| {
             assert_eq!(Theme::global(app).mode, ThemeMode::Light);
-            assert_eq!(Theme::global(app).font_size, px(14.0));
-            assert_eq!(Theme::global(app).radius, px(8.0));
+            assert_eq!(Theme::global(app).font_family.as_ref(), "Inter");
+            assert_eq!(Theme::global(app).font_size, px(16.0));
+            assert_eq!(Theme::global(app).mono_font_family.as_ref(), "Geist Mono");
+            assert_eq!(Theme::global(app).radius, px(6.0));
             assert_eq!(Theme::global(app).scrollbar_show, ScrollbarShow::Scrolling);
             assert_eq!(
                 Theme::global(app).theme_name().as_ref(),
-                "Luban Linear Light"
+                "Luban Prototype Light"
             );
         });
     }

@@ -119,17 +119,36 @@ pub(super) fn render_titlebar(
     });
 
     let view_handle = cx.entity().downgrade();
-    let add_project_button = {
-        let view_handle = view_handle.clone();
-        move || {
+
+    let is_dashboard_selected = state.main_pane == MainPane::Dashboard;
+    let dashboard_preview_open =
+        is_dashboard_selected && state.dashboard_preview_workspace_id.is_some();
+
+    let sidebar_titlebar = if sidebar_width <= px(0.0) {
+        div()
+            .w(px(0.0))
+            .h(titlebar_height)
+            .hidden()
+            .into_any_element()
+    } else {
+        let add_project_button = {
             let view_handle = view_handle.clone();
-            Button::new("add-project")
-                .ghost()
-                .compact()
+            div()
+                .p(px(6.0))
+                .rounded(px(4.0))
+                .text_color(theme.muted_foreground)
+                .hover(move |s| {
+                    s.bg(theme.sidebar_accent)
+                        .text_color(theme.sidebar_foreground)
+                })
+                .cursor_pointer()
                 .debug_selector(|| "add-project-button".to_owned())
-                .icon(Icon::new(IconName::Plus).text_color(theme.muted_foreground))
-                .tooltip("Add project")
-                .on_click(move |_, _window, app| {
+                .child(
+                    Icon::empty()
+                        .path("icons/plus.svg")
+                        .with_size(Size::Size(px(16.0))),
+                )
+                .on_mouse_down(MouseButton::Left, move |_, _window, app| {
                     let view_handle = view_handle.clone();
                     let options = gpui::PathPromptOptions {
                         files: false,
@@ -162,34 +181,119 @@ pub(super) fn render_titlebar(
                     })
                     .detach();
                 })
-        }
-    };
-
-    let is_dashboard_selected = state.main_pane == MainPane::Dashboard;
-    let dashboard_preview_open =
-        is_dashboard_selected && state.dashboard_preview_workspace_id.is_some();
-
-    let sidebar_titlebar = if sidebar_width <= px(0.0) {
-        div()
-            .w(px(0.0))
-            .h(titlebar_height)
-            .hidden()
-            .into_any_element()
-    } else {
-        let (toggle_label, toggle_label_debug, toggle_icon_path) = if is_dashboard_selected {
-            (
-                "Dashboard",
-                "titlebar-dashboard-label",
-                "icons/square-kanban.svg",
-            )
-        } else {
-            (
-                "Workspace",
-                "titlebar-workspace-label",
-                "icons/notebook-text.svg",
-            )
         };
-        let toggle_color = theme.muted_foreground;
+
+        let workspace_menu = {
+            let view_handle_for_menu = view_handle.clone();
+
+            let trigger = WorkspaceMenuTrigger::new(
+                theme.sidebar_accent,
+                theme.primary,
+                theme.muted_foreground,
+                theme.sidebar_foreground,
+            );
+
+            Popover::new("sidebar-workspace-menu-popover")
+                .appearance(true)
+                .anchor(gpui::Corner::TopLeft)
+                .trigger(trigger)
+                .content(move |_popover_state, _window, cx| {
+                    let theme = cx.theme();
+                    let popover_handle = cx.entity();
+
+                    let view_handle_for_close_preview = view_handle_for_menu.clone();
+                    let popover_handle_for_close_preview = popover_handle.clone();
+                    let close_preview = div()
+                        .h(px(32.0))
+                        .w_full()
+                        .px(px(8.0))
+                        .rounded_md()
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(theme.list_hover))
+                        .debug_selector(|| "sidebar-workspace-menu-close-preview".to_owned())
+                        .child(div().text_sm().child("Close Preview"))
+                        .on_mouse_down(MouseButton::Left, move |_, window, app| {
+                            let _ = view_handle_for_close_preview.update(app, |view, cx| {
+                                view.dispatch(Action::DashboardPreviewClosed, cx);
+                            });
+                            popover_handle_for_close_preview
+                                .update(app, |state, cx| state.dismiss(window, cx));
+                        });
+
+                    let view_handle_for_create = view_handle_for_menu.clone();
+                    let popover_handle_for_create = popover_handle.clone();
+                    let create_worktree = div()
+                        .h(px(32.0))
+                        .w_full()
+                        .px(px(8.0))
+                        .rounded_md()
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(theme.list_hover))
+                        .debug_selector(|| "sidebar-workspace-menu-new-worktree".to_owned())
+                        .child(div().text_sm().child("New Worktree"))
+                        .on_mouse_down(MouseButton::Left, move |_, window, app| {
+                            let _ = view_handle_for_create.update(app, |view, cx| {
+                                let Some(project_id) = active_project_id(&view.state) else {
+                                    return;
+                                };
+                                view.dispatch(Action::CreateWorkspace { project_id }, cx);
+                            });
+                            popover_handle_for_create
+                                .update(app, |state, cx| state.dismiss(window, cx));
+                        });
+
+                    let view_handle_for_toggle = view_handle_for_menu.clone();
+                    let popover_handle_for_toggle = popover_handle.clone();
+                    let dashboard_label = if is_dashboard_selected {
+                        "Return to Workspace"
+                    } else {
+                        "Open Dashboard"
+                    };
+                    let toggle_dashboard = div()
+                        .h(px(32.0))
+                        .w_full()
+                        .px(px(8.0))
+                        .rounded_md()
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(theme.list_hover))
+                        .debug_selector(|| "sidebar-workspace-menu-toggle-dashboard".to_owned())
+                        .child(div().text_sm().child(dashboard_label))
+                        .on_mouse_down(MouseButton::Left, move |_, window, app| {
+                            let _ = view_handle_for_toggle.update(app, |view, cx| {
+                                if view.state.main_pane == MainPane::Dashboard {
+                                    if let Some(workspace_id) = workspace_to_return_to(view) {
+                                        view.dispatch(Action::OpenWorkspace { workspace_id }, cx);
+                                    }
+                                } else {
+                                    view.dispatch(Action::OpenDashboard, cx);
+                                }
+                            });
+                            popover_handle_for_toggle
+                                .update(app, |state, cx| state.dismiss(window, cx));
+                        });
+
+                    div()
+                        .w(px(220.0))
+                        .p(px(4.0))
+                        .bg(theme.popover)
+                        .border_1()
+                        .border_color(theme.border)
+                        .rounded_md()
+                        .shadow_sm()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .when(dashboard_preview_open, |s| s.child(close_preview))
+                        .child(create_worktree)
+                        .child(toggle_dashboard)
+                })
+        };
 
         div()
             .w(sidebar_width)
@@ -197,6 +301,8 @@ pub(super) fn render_titlebar(
             .flex_shrink_0()
             .flex()
             .items_center()
+            .justify_between()
+            .px(px(12.0))
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
             .when(!is_dashboard_selected, |s| {
@@ -205,12 +311,10 @@ pub(super) fn render_titlebar(
             .debug_selector(|| "titlebar-sidebar".to_owned())
             .child(
                 div()
-                    .h_full()
-                    .mx_3()
-                    .w_full()
+                    .flex_1()
                     .flex()
                     .items_center()
-                    .child(div().flex_1().when(dashboard_preview_open, |s| {
+                    .when(dashboard_preview_open, |s| {
                         let view_handle = view_handle.clone();
                         s.cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, app| {
@@ -218,57 +322,10 @@ pub(super) fn render_titlebar(
                                     view.dispatch(Action::DashboardPreviewClosed, cx);
                                 });
                             })
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.sidebar_border)
-                            .debug_selector(|| "titlebar-dashboard-title".to_owned())
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(theme.sidebar_accent))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    if this.state.main_pane == MainPane::Dashboard {
-                                        if let Some(workspace_id) = workspace_to_return_to(this) {
-                                            this.dispatch(
-                                                Action::OpenWorkspace { workspace_id },
-                                                cx,
-                                            );
-                                        }
-                                    } else {
-                                        this.dispatch(Action::OpenDashboard, cx);
-                                    }
-                                }),
-                            )
-                            .child(
-                                Icon::new(Icon::empty().path(toggle_icon_path))
-                                    .with_size(Size::Small)
-                                    .text_color(toggle_color),
-                            )
-                            .child(
-                                div()
-                                    .debug_selector(move || toggle_label_debug.to_owned())
-                                    .text_sm()
-                                    .font_semibold()
-                                    .text_color(toggle_color)
-                                    .child(toggle_label),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .justify_end()
-                            .when(!is_dashboard_selected, |s| s.child(add_project_button())),
-                    ),
+                    })
+                    .child(workspace_menu),
             )
+            .when(!is_dashboard_selected, |s| s.child(add_project_button))
             .into_any_element()
     };
 
@@ -416,5 +473,102 @@ pub(super) fn titlebar_context(state: &AppState) -> TitlebarContext {
             .map(|workspace| workspace.branch_name.clone())
             .unwrap_or(fallback_title),
         ide_workspace_id: active_workspace.map(|workspace| workspace.id),
+    }
+}
+
+#[derive(IntoElement)]
+struct WorkspaceMenuTrigger {
+    sidebar_accent: gpui::Hsla,
+    primary: gpui::Hsla,
+    muted_foreground: gpui::Hsla,
+    sidebar_foreground: gpui::Hsla,
+    selected: bool,
+}
+
+impl WorkspaceMenuTrigger {
+    fn new(
+        sidebar_accent: gpui::Hsla,
+        primary: gpui::Hsla,
+        muted_foreground: gpui::Hsla,
+        sidebar_foreground: gpui::Hsla,
+    ) -> Self {
+        Self {
+            sidebar_accent,
+            primary,
+            muted_foreground,
+            sidebar_foreground,
+            selected: false,
+        }
+    }
+}
+
+impl gpui_component::Selectable for WorkspaceMenuTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl gpui::RenderOnce for WorkspaceMenuTrigger {
+    fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
+        let mut icon_bg = self.primary;
+        icon_bg.a = 0.15;
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(6.0))
+            .py(px(4.0))
+            .rounded(px(4.0))
+            .hover(move |s| s.bg(self.sidebar_accent))
+            .debug_selector(|| "sidebar-workspace-menu".to_owned())
+            .child(
+                div()
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .bg(icon_bg)
+                    .child(
+                        Icon::empty()
+                            .path("icons/sparkles.svg")
+                            .with_size(Size::Size(px(14.0)))
+                            .text_color(self.primary),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(self.sidebar_foreground)
+                    .child("Workspace"),
+            )
+            .child(
+                Icon::empty()
+                    .path("icons/chevron-down.svg")
+                    .with_size(Size::Size(px(12.0)))
+                    .text_color(self.muted_foreground),
+            )
+    }
+}
+
+fn active_project_id(state: &AppState) -> Option<ProjectId> {
+    match state.main_pane {
+        MainPane::ProjectSettings(project_id) => Some(project_id),
+        MainPane::Workspace(workspace_id) => state.projects.iter().find_map(|project| {
+            project
+                .workspaces
+                .iter()
+                .any(|w| w.status == WorkspaceStatus::Active && w.id == workspace_id)
+                .then_some(project.id)
+        }),
+        MainPane::Dashboard | MainPane::None => state.projects.first().map(|p| p.id),
     }
 }

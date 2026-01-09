@@ -32,7 +32,7 @@ use std::{
     rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use crate::selectable_text::SelectablePlainText;
