@@ -1,4 +1,4 @@
-use crate::{AgentRunConfig, ProjectId, WorkspaceId, WorkspaceThreadId};
+use crate::{AgentRunConfig, AttachmentRef, ProjectId, WorkspaceId, WorkspaceThreadId};
 
 #[derive(Clone, Debug)]
 pub enum Effect {
@@ -32,6 +32,7 @@ pub enum Effect {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         text: String,
+        attachments: Vec<AttachmentRef>,
         run_config: AgentRunConfig,
     },
     CancelAgentTurn {

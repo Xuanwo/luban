@@ -7,9 +7,8 @@ The UI model is browser-like tabs. A tab is an opened view of a thread.
 
 - Allow multiple independent conversation threads within one workspace.
 - Provide browser-like tab navigation with minimal chrome.
-- Preserve draft/scroll/model settings per thread.
-- Allow concurrent agent runs per tab.
-- Avoid terminal output interleaving by isolating terminal sessions per tab.
+- Preserve draft/scroll/model settings per thread (UI-only where applicable).
+- Allow concurrent agent runs per thread.
 
 ## Non-goals (initial)
 
@@ -24,8 +23,8 @@ The UI model is browser-like tabs. A tab is an opened view of a thread.
 A thread is the durable conversation unit:
 
 - Messages (user/assistant/agent events)
-- Draft text + draft attachments
-- Scroll position
+- Draft text
+- Follow-tail / scroll preference (UI-only)
 - Per-thread run configuration (model + thinking effort)
 - Turn state (running, pending, etc.)
 
@@ -67,9 +66,9 @@ The tab strip is rendered inside the chat pane:
 - Tabs are shown in a stable, user-defined order.
 - `+` creates a new thread, appends a tab at the end, and activates it.
 - A `v` dropdown button opens the Threads menu (all threads in this workspace).
-- Activating a thread does not reorder the tab strip. Users reorder tabs by dragging.
-- The tab strip does not horizontally scroll. Tabs compress to fit (min/max width per tab).
-  Use the dropdown menu when tabs become too narrow.
+- Activating a thread does not reorder the tab strip.
+- The tab strip does not horizontally scroll. Tabs compress to fit (min/max width per tab). Use the
+  dropdown menu when tabs become too narrow.
 - Tabs show:
   - Title (derived from thread title)
   - Dirty indicator when the thread has a non-empty draft or draft attachments
@@ -97,13 +96,12 @@ Future (not implemented in the initial delivery):
 
 ## Terminal behavior
 
-Terminal sessions are isolated per tab:
+The web terminal is scoped per workspace (shared across threads):
 
-- Each `(workspace_id, thread_id)` maps to one terminal session (PTY) and one terminal renderer state.
-- The right-side terminal pane displays the active tab's terminal session.
-- Non-active sessions remain running but are not visible.
+- The current web UI uses one reserved PTY session per workspace.
+- Switching tabs does not switch PTY state.
 
-Rationale: concurrent runs in one workspace must not interleave terminal output into a single PTY.
+See `docs/terminal.md`.
 
 ## Agent execution model
 
@@ -120,10 +118,8 @@ If a thread has `remote_thread_id = None`, the first turn starts a new remote th
 
 Persisted app state includes:
 
-- Per-workspace: `open_tabs`, `archived_tabs`, and `active_tab`.
-- Per-thread: draft text, draft attachments, scroll position, run config, and conversation entries.
-
-We keep attachments on disk at the workspace-level context directory; threads only reference paths.
+- Server (SQLite): projects/workspaces, threads, conversation entries, agent state.
+- Browser (`localStorage`): tab strip ordering, drafts, and other presentational state.
 
 ## Test strategy
 
@@ -131,7 +127,5 @@ We keep attachments on disk at the workspace-level context directory; threads on
   - Closing tabs archives them and preserves thread state (draft/messages preserved).
   - Restoring an archived tab returns it to `open_tabs`.
   - Concurrent turns are isolated per thread.
-- UI tests (GPUI inspector bounds):
-  - Tab strip renders in both workspace and dashboard preview.
-  - Overflow menu separates Active/Archived and hides Archived when empty.
-  - Active tab changes update the visible conversation and terminal selection.
+- UI tests (Playwright):
+  - Tab strip ordering and restore behavior match `design/`.

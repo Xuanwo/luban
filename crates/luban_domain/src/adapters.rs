@@ -1,4 +1,7 @@
-use crate::{CodexThreadEvent, ConversationSnapshot, ConversationThreadMeta, PersistedAppState};
+use crate::{
+    AttachmentRef, CodexThreadEvent, ConversationSnapshot, ConversationThreadMeta,
+    PersistedAppState,
+};
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 
 #[derive(Clone, Debug)]
@@ -51,6 +54,7 @@ pub struct RunAgentTurnRequest {
     pub thread_local_id: u64,
     pub thread_id: Option<String>,
     pub prompt: String,
+    pub attachments: Vec<AttachmentRef>,
     pub model: Option<String>,
     pub model_reasoning_effort: Option<String>,
 }
@@ -99,7 +103,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         project_slug: String,
         workspace_name: String,
         image: ContextImage,
-    ) -> Result<PathBuf, String>;
+    ) -> Result<AttachmentRef, String>;
 
     fn store_context_text(
         &self,
@@ -107,14 +111,14 @@ pub trait ProjectWorkspaceService: Send + Sync {
         workspace_name: String,
         text: String,
         extension: String,
-    ) -> Result<PathBuf, String>;
+    ) -> Result<AttachmentRef, String>;
 
     fn store_context_file(
         &self,
         project_slug: String,
         workspace_name: String,
         source_path: PathBuf,
-    ) -> Result<PathBuf, String>;
+    ) -> Result<AttachmentRef, String>;
 
     fn run_agent_turn_streamed(
         &self,

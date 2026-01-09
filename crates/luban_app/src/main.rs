@@ -8,9 +8,7 @@ use gpui_ghostty_terminal::view::{Copy, Paste, SelectAll};
 use luban_ui::{LubanRootView, apply_linear_theme};
 
 mod app_assets;
-mod services;
-mod sqlite_store;
-use services::GitWorkspaceService;
+use luban_backend::GitWorkspaceService;
 
 fn init_components(cx: &mut App) {
     gpui_component::init(cx);

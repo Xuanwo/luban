@@ -407,6 +407,10 @@ pub(in crate::root) fn render_chat_composer(props: ChatComposerViewProps<'_>) ->
                                                     let view_handle = view_handle.clone();
                                                     let input_state = input_state.clone();
                                                     let composed = composed.to_owned();
+                                                    let attachments =
+                                                        ordered_draft_attachments_for_send(
+                                                            draft_attachments,
+                                                        );
                                                     Button::new("chat-send-message")
                                                         .primary()
                                                         .compact()
@@ -414,7 +418,7 @@ pub(in crate::root) fn render_chat_composer(props: ChatComposerViewProps<'_>) ->
                                                         .icon(Icon::new(IconName::ArrowUp))
                                                         .tooltip(if is_running { "Queue" } else { "Send" })
                                                         .on_click(move |_, window, app| {
-                                                            if composed.trim().is_empty() {
+                                                            if composed.trim().is_empty() && attachments.is_empty() {
                                                                 return;
                                                             }
 
@@ -428,6 +432,7 @@ pub(in crate::root) fn render_chat_composer(props: ChatComposerViewProps<'_>) ->
                                                                         workspace_id,
                                                                         thread_id,
                                                                         text: composed.clone(),
+                                                                        attachments: attachments.clone(),
                                                                     },
                                                                     cx,
                                                                 );

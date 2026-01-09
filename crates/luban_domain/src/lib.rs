@@ -16,8 +16,8 @@ pub use context_tokens::{
 };
 mod chat_draft;
 pub use chat_draft::{
-    compose_user_message_text, draft_text_and_attachments_from_message_text,
-    ordered_draft_attachments_for_display,
+    compose_user_message_text, ordered_draft_attachments_for_display,
+    ordered_draft_attachments_for_send,
 };
 mod actions;
 pub use actions::Action;

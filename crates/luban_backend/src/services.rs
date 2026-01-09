@@ -2,9 +2,10 @@ use anyhow::{Context as _, anyhow};
 use bip39::Language;
 use luban_domain::paths;
 use luban_domain::{
-    CodexThreadEvent, CodexThreadItem, ContextImage, ConversationEntry, ConversationSnapshot,
-    CreatedWorkspace, PersistedAppState, ProjectWorkspaceService, PullRequestCiState,
-    PullRequestInfo, PullRequestState, RunAgentTurnRequest,
+    AttachmentKind, AttachmentRef, CodexThreadEvent, CodexThreadItem, ContextImage,
+    ConversationEntry, ConversationSnapshot, CreatedWorkspace, PersistedAppState,
+    ProjectWorkspaceService, PullRequestCiState, PullRequestInfo, PullRequestState,
+    RunAgentTurnRequest,
 };
 use rand::{Rng as _, rngs::OsRng};
 use std::{
@@ -16,7 +17,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crate::sqlite_store::SqliteStore;
+use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
 
 mod codex_cli;
 mod context_blobs;
@@ -179,6 +180,10 @@ pub struct GitWorkspaceService {
 
 impl GitWorkspaceService {
     pub fn new() -> anyhow::Result<Arc<Self>> {
+        Self::new_with_options(SqliteStoreOptions::default())
+    }
+
+    pub fn new_with_options(options: SqliteStoreOptions) -> anyhow::Result<Arc<Self>> {
         let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
         let mut luban_root = PathBuf::from(home);
         luban_root.push("luban");
@@ -189,7 +194,8 @@ impl GitWorkspaceService {
         let worktrees_root = paths::worktrees_root(&luban_root);
         let conversations_root = paths::conversations_root(&luban_root);
         let sqlite_path = paths::sqlite_path(&luban_root);
-        let sqlite = SqliteStore::new(sqlite_path).context("failed to init sqlite store")?;
+        let sqlite = SqliteStore::new_with_options(sqlite_path, options)
+            .context("failed to init sqlite store")?;
 
         Ok(Arc::new(Self {
             worktrees_root,
@@ -399,22 +405,34 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         project_slug: String,
         workspace_name: String,
         image: ContextImage,
-    ) -> Result<PathBuf, String> {
-        let result: anyhow::Result<PathBuf> = self.store_context_bytes(
+    ) -> Result<AttachmentRef, String> {
+        let byte_len = image.bytes.len() as u64;
+        let stored: anyhow::Result<(String, PathBuf)> = self.store_context_bytes(
             &project_slug,
             &workspace_name,
             &image.bytes,
             &image.extension,
-            "image",
         );
-        let stored = result.map_err(|e| format!("{e:#}"))?;
+        let (id, stored_path) = stored.map_err(|e| format!("{e:#}"))?;
         let _ = self.maybe_store_context_image_thumbnail(
             &project_slug,
             &workspace_name,
-            &stored,
+            &stored_path,
             &image.bytes,
         );
-        Ok(stored)
+        let extension = stored_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("png")
+            .to_owned();
+        Ok(AttachmentRef {
+            id,
+            kind: AttachmentKind::Image,
+            name: format!("image.{extension}"),
+            extension,
+            mime: None,
+            byte_len,
+        })
     }
 
     fn store_context_text(
@@ -423,15 +441,25 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         workspace_name: String,
         text: String,
         extension: String,
-    ) -> Result<PathBuf, String> {
-        let result: anyhow::Result<PathBuf> = self.store_context_bytes(
-            &project_slug,
-            &workspace_name,
-            text.as_bytes(),
-            &extension,
-            "text",
-        );
-        result.map_err(|e| format!("{e:#}"))
+    ) -> Result<AttachmentRef, String> {
+        let bytes = text.into_bytes();
+        let byte_len = bytes.len() as u64;
+        let result: anyhow::Result<(String, PathBuf)> =
+            self.store_context_bytes(&project_slug, &workspace_name, &bytes, &extension);
+        let (id, stored_path) = result.map_err(|e| format!("{e:#}"))?;
+        let extension = stored_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("txt")
+            .to_owned();
+        Ok(AttachmentRef {
+            id,
+            kind: AttachmentKind::Text,
+            name: format!("text.{extension}"),
+            extension,
+            mime: None,
+            byte_len,
+        })
     }
 
     fn store_context_file(
@@ -439,10 +467,23 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         project_slug: String,
         workspace_name: String,
         source_path: PathBuf,
-    ) -> Result<PathBuf, String> {
-        let result: anyhow::Result<PathBuf> =
+    ) -> Result<AttachmentRef, String> {
+        let name = source_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file")
+            .to_owned();
+        let result: anyhow::Result<(String, String, u64, PathBuf)> =
             self.store_context_file_internal(&project_slug, &workspace_name, &source_path);
-        result.map_err(|e| format!("{e:#}"))
+        let (id, extension, byte_len, _path) = result.map_err(|e| format!("{e:#}"))?;
+        Ok(AttachmentRef {
+            id,
+            kind: AttachmentKind::File,
+            name,
+            extension,
+            mime: None,
+            byte_len,
+        })
     }
 
     fn run_agent_turn_streamed(
@@ -458,6 +499,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             thread_local_id,
             thread_id,
             prompt,
+            attachments,
             model,
             model_reasoning_effort,
         } = request;
@@ -500,11 +542,17 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 thread_local_id,
                 vec![ConversationEntry::UserMessage {
                     text: prompt.clone(),
+                    attachments: attachments.clone(),
                 }],
             )?;
 
             let resolved_thread_id = thread_id.or(existing_thread_id);
-            let image_paths = luban_domain::extract_context_image_paths_in_order(&prompt);
+            let blobs_dir = self.context_blobs_dir(&project_slug, &workspace_name);
+            let image_paths = attachments
+                .iter()
+                .filter(|a| a.kind == AttachmentKind::Image)
+                .map(|a| blobs_dir.join(format!("{}.{}", a.id, a.extension)))
+                .collect::<Vec<_>>();
 
             let mut turn_error: Option<String> = None;
             let mut transient_error_seq: u64 = 0;
@@ -969,7 +1017,7 @@ impl GitWorkspaceService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1148,60 +1196,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base_dir);
     }
 
-    fn assert_timestamped_basename(file_name: &str, expected_base: &str, expected_ext: &str) {
-        let expected_prefix = format!("{expected_base}-");
-        assert!(
-            file_name.starts_with(&expected_prefix),
-            "expected filename to start with {expected_prefix:?}, got {file_name:?}"
-        );
-        assert!(
-            file_name.ends_with(expected_ext),
-            "expected filename to end with {expected_ext:?}, got {file_name:?}"
-        );
-
-        let mid = &file_name[expected_prefix.len()..file_name.len() - expected_ext.len()];
-        let mut parts = mid.split('-');
-        let date = parts
-            .next()
-            .unwrap_or_else(|| panic!("expected timestamp suffix in filename: {file_name:?}"));
-        let time = parts
-            .next()
-            .unwrap_or_else(|| panic!("expected timestamp suffix in filename: {file_name:?}"));
-        let rest = parts.next().unwrap_or("");
-        assert!(
-            parts.next().is_none(),
-            "unexpected extra '-' segments in filename: {file_name:?}"
-        );
-
-        assert_eq!(
-            date.len(),
-            8,
-            "expected YYYYMMDD date segment in filename: {file_name:?}"
-        );
-        assert!(
-            date.chars().all(|c| c.is_ascii_digit()),
-            "expected numeric YYYYMMDD date segment in filename: {file_name:?}"
-        );
-        assert_eq!(
-            time.len(),
-            6,
-            "expected HHMMSS time segment in filename: {file_name:?}"
-        );
-        assert!(
-            time.chars().all(|c| c.is_ascii_digit()),
-            "expected numeric HHMMSS time segment in filename: {file_name:?}"
-        );
-
-        if !rest.is_empty() {
-            assert!(
-                rest.chars().all(|c| c.is_ascii_digit()),
-                "expected numeric collision suffix in filename: {file_name:?}"
-            );
-        }
+    fn stored_blob_path(
+        service: &GitWorkspaceService,
+        project_slug: &str,
+        workspace_name: &str,
+        attachment: &AttachmentRef,
+    ) -> PathBuf {
+        service
+            .context_blobs_dir(project_slug, workspace_name)
+            .join(format!("{}.{}", attachment.id, attachment.extension))
     }
 
     #[test]
-    fn context_files_keep_original_name_with_timestamp_suffix() {
+    fn context_files_are_content_addressed_and_preserve_display_name() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should be valid")
@@ -1223,7 +1230,8 @@ mod tests {
         };
 
         let source = base_dir.join("abc.png");
-        std::fs::write(&source, b"not-a-real-png").expect("write should succeed");
+        let bytes = b"not-a-real-png";
+        std::fs::write(&source, bytes).expect("write should succeed");
 
         let stored = ProjectWorkspaceService::store_context_file(
             &service,
@@ -1233,19 +1241,20 @@ mod tests {
         )
         .expect("store_context_file should succeed");
 
-        let file_name = stored
-            .file_name()
-            .and_then(|s| s.to_str())
-            .expect("stored path should be utf-8");
-        assert_timestamped_basename(file_name, "abc", ".png");
-        assert!(stored.exists(), "stored path should exist");
+        assert_eq!(stored.name, "abc.png");
+        assert_eq!(stored.extension, "png");
+        assert_eq!(stored.id, blake3::hash(bytes).to_hex().to_string());
+        assert!(
+            stored_blob_path(&service, "proj", "main", &stored).exists(),
+            "stored blob should exist"
+        );
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
     }
 
     #[test]
-    fn context_images_use_timestamped_names() {
+    fn context_images_are_content_addressed() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should be valid")
@@ -1277,12 +1286,16 @@ mod tests {
         )
         .expect("store_context_image should succeed");
 
-        let file_name = stored
-            .file_name()
-            .and_then(|s| s.to_str())
-            .expect("stored path should be utf-8");
-        assert_timestamped_basename(file_name, "image", ".png");
-        assert!(stored.exists(), "stored path should exist");
+        assert_eq!(stored.name, "image.png");
+        assert_eq!(stored.extension, "png");
+        assert_eq!(
+            stored.id,
+            blake3::hash(b"not-a-real-png").to_hex().to_string()
+        );
+        assert!(
+            stored_blob_path(&service, "proj", "main", &stored).exists(),
+            "stored blob should exist"
+        );
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
@@ -1329,13 +1342,10 @@ mod tests {
         )
         .expect("store_context_image should succeed");
 
-        let stem = stored
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .expect("stored path should be utf-8");
-        let thumb = stored.with_file_name(format!("{stem}-thumb.png"));
+        let stored_path = stored_blob_path(&service, "proj", "main", &stored);
+        let thumb = stored_path.with_file_name(format!("{}-thumb.png", stored.id));
 
-        assert!(stored.exists(), "stored path should exist");
+        assert!(stored_path.exists(), "stored path should exist");
         assert!(thumb.exists(), "thumbnail path should exist");
 
         let thumb_bytes = std::fs::read(&thumb).expect("read thumbnail");
@@ -1347,7 +1357,7 @@ mod tests {
             thumb_img.height()
         );
 
-        let stored_len = std::fs::metadata(&stored).expect("stat stored").len();
+        let stored_len = std::fs::metadata(&stored_path).expect("stat stored").len();
         let thumb_len = std::fs::metadata(&thumb).expect("stat thumb").len();
         assert!(
             thumb_len <= stored_len,

@@ -1,29 +1,41 @@
-# UI Testing (Inspector-first)
+# UI Testing (Playwright-first)
 
-Luban UI tests aim to be stable across small layout/styling changes while still preventing UX
-regressions.
+The web UI is the primary frontend. UI regression testing should be done with Playwright and should
+prioritize stability over pixel-perfect diffs.
 
 ## Principles
 
-- Prefer semantic assertions (element exists, is visible, is inside viewport) over pixel-perfect
+- Prefer semantic assertions (element exists, state changes, scroll behavior) over screenshot-only
   comparisons.
-- Use stable ids and the GPUI inspector to locate elements.
+- When a screenshot is useful, keep it scoped (component-level) and treat it as supporting evidence,
+  not the only assertion.
 
-## Stable selectors
+## Selectors
 
-Use `debug_selector` to attach stable identifiers to elements that tests need to query.
-Selectors should be:
+- Prefer stable `title=` attributes and structural selectors aligned with `design/`.
+- Avoid selectors derived from transient values (timestamps, random ids, etc.).
 
-- Explicit and unique within a view (e.g. `workspace-thread-tabs-menu-trigger`).
-- Stable across refactors (avoid including transient runtime values unless necessary).
+## Recommended checks
 
-## Bounds assertions
+- Tab behavior:
+  - new tab always appends to the end
+  - restore appends to the end
+- Scroll behavior:
+  - follow-tail when at bottom
+  - show "Scroll to bottom" only when user scrolls away
+  - no page-level scroll (only content panes scroll)
+- Terminal:
+  - reconnect/refresh preserves output (bounded replay)
+  - resize sends rows/cols correctly
+  - theme matches CSS variables
 
-When layout stability matters, tests may record element bounds and assert invariants, such as:
+## Running locally
 
-- Composer stays within the viewport even with a long message history.
-- Sidebar and terminal resizers remain interactive.
-- Active indicators are vertically centered in rows.
+Install browsers (once):
 
-This avoids relying on brittle screenshots while still catching major regressions.
+`cd web && pnpm exec playwright install`
 
+Run:
+
+- `just test-ui`
+- `just test-ui-headed`

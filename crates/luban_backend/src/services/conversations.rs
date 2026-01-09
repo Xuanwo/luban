@@ -327,10 +327,12 @@ mod tests {
         let legacy_entries = vec![
             ConversationEntry::UserMessage {
                 text: "u1".to_owned(),
+                attachments: Vec::new(),
             },
             agent_message("item_0", "A"),
             ConversationEntry::UserMessage {
                 text: "u2".to_owned(),
+                attachments: Vec::new(),
             },
             agent_message("item_0", "B"),
         ];
@@ -371,10 +373,12 @@ mod tests {
         let legacy_entries = vec![
             ConversationEntry::UserMessage {
                 text: "u1".to_owned(),
+                attachments: Vec::new(),
             },
             agent_message("item_0", "A"),
             ConversationEntry::UserMessage {
                 text: "u2".to_owned(),
+                attachments: Vec::new(),
             },
             agent_message("item_0", "B"),
         ];

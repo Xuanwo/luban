@@ -357,6 +357,7 @@ impl AppState {
                 workspace_id,
                 thread_id,
                 text,
+                attachments,
             } => {
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 tabs.activate(thread_id);
@@ -378,16 +379,19 @@ impl AppState {
                 };
 
                 if conversation.run_status == OperationStatus::Running {
-                    conversation
-                        .pending_prompts
-                        .push_back(QueuedPrompt { text, run_config });
+                    conversation.pending_prompts.push_back(QueuedPrompt {
+                        text,
+                        attachments,
+                        run_config,
+                    });
                     return Vec::new();
                 }
 
                 if conversation.queue_paused && !conversation.pending_prompts.is_empty() {
-                    conversation
-                        .entries
-                        .push(ConversationEntry::UserMessage { text: text.clone() });
+                    conversation.entries.push(ConversationEntry::UserMessage {
+                        text: text.clone(),
+                        attachments: attachments.clone(),
+                    });
                     conversation.run_status = OperationStatus::Running;
                     conversation.current_run_config = Some(run_config.clone());
                     conversation.in_progress_items.clear();
@@ -396,15 +400,17 @@ impl AppState {
                         workspace_id,
                         thread_id,
                         text,
+                        attachments,
                         run_config,
                     }];
                 }
 
                 if conversation.pending_prompts.is_empty() {
                     conversation.queue_paused = false;
-                    conversation
-                        .entries
-                        .push(ConversationEntry::UserMessage { text: text.clone() });
+                    conversation.entries.push(ConversationEntry::UserMessage {
+                        text: text.clone(),
+                        attachments: attachments.clone(),
+                    });
                     conversation.run_status = OperationStatus::Running;
                     conversation.current_run_config = Some(run_config.clone());
                     conversation.in_progress_items.clear();
@@ -413,13 +419,16 @@ impl AppState {
                         workspace_id,
                         thread_id,
                         text,
+                        attachments,
                         run_config,
                     }];
                 }
 
-                conversation
-                    .pending_prompts
-                    .push_back(QueuedPrompt { text, run_config });
+                conversation.pending_prompts.push_back(QueuedPrompt {
+                    text,
+                    attachments,
+                    run_config,
+                });
                 start_next_queued_prompt(conversation, workspace_id, thread_id)
                     .into_iter()
                     .collect()
@@ -476,7 +485,7 @@ impl AppState {
                     id,
                     kind,
                     anchor,
-                    path: None,
+                    attachment: None,
                     failed: false,
                 });
                 Vec::new()
@@ -485,7 +494,7 @@ impl AppState {
                 workspace_id,
                 thread_id,
                 id,
-                path,
+                attachment: resolved,
             } => {
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 if let Some(attachment) = conversation
@@ -493,7 +502,7 @@ impl AppState {
                     .iter_mut()
                     .find(|a| a.id == id)
                 {
-                    attachment.path = Some(path);
+                    attachment.attachment = Some(resolved);
                     attachment.failed = false;
                 }
                 Vec::new()
@@ -699,6 +708,7 @@ impl AppState {
                         workspace_id,
                         thread_id,
                     },
+                    Effect::LoadWorkspaceThreads { workspace_id },
                 ]
             }
             Action::ActivateWorkspaceThread {
@@ -1279,6 +1289,7 @@ fn start_next_queued_prompt(
 
     conversation.entries.push(ConversationEntry::UserMessage {
         text: queued.text.clone(),
+        attachments: queued.attachments.clone(),
     });
     conversation.run_status = OperationStatus::Running;
     conversation.current_run_config = Some(queued.run_config.clone());
@@ -1288,6 +1299,7 @@ fn start_next_queued_prompt(
         workspace_id,
         thread_id,
         text: queued.text,
+        attachments: queued.attachments,
         run_config: queued.run_config,
     })
 }
@@ -1418,6 +1430,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "hi".to_owned(),
+            attachments: Vec::new(),
         });
         assert_eq!(effects.len(), 1);
         let (sent_model_id, sent_effort) = match &effects[0] {
@@ -1477,6 +1490,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "first".to_owned(),
+            attachments: Vec::new(),
         });
 
         state.apply(Action::ChatModelChanged {
@@ -1493,6 +1507,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "second".to_owned(),
+            attachments: Vec::new(),
         });
 
         let conversation = state
@@ -1904,6 +1919,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Test".to_owned(),
+            attachments: Vec::new(),
         });
         state.apply(Action::AgentEventReceived {
             workspace_id,
@@ -2214,7 +2230,14 @@ mod tests {
             workspace_id: w1,
             thread_id,
             id: 1,
-            path: PathBuf::from("/tmp/a.png"),
+            attachment: crate::AttachmentRef {
+                id: "blob-a".to_owned(),
+                kind: crate::AttachmentKind::Image,
+                name: "a.png".to_owned(),
+                extension: "png".to_owned(),
+                mime: None,
+                byte_len: 1,
+            },
         });
         state.apply(Action::ChatDraftAttachmentAdded {
             workspace_id: w1,
@@ -2227,7 +2250,14 @@ mod tests {
             workspace_id: w1,
             thread_id,
             id: 2,
-            path: PathBuf::from("/tmp/b.txt"),
+            attachment: crate::AttachmentRef {
+                id: "blob-b".to_owned(),
+                kind: crate::AttachmentKind::Text,
+                name: "b.txt".to_owned(),
+                extension: "txt".to_owned(),
+                mime: None,
+                byte_len: 1,
+            },
         });
 
         // Delete bytes [3,7): "3456" -> "012789".
@@ -2270,6 +2300,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
 
         let item = CodexThreadItem::AgentMessage {
@@ -2313,7 +2344,7 @@ mod tests {
         assert_eq!(conversation.entries.len(), 1);
         assert!(matches!(
             &conversation.entries[0],
-            ConversationEntry::UserMessage { text } if text == "Hello"
+            ConversationEntry::UserMessage { text, .. } if text == "Hello"
         ));
         assert_eq!(conversation.thread_id.as_deref(), Some("thread_0"));
     }
@@ -2328,6 +2359,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
         state.apply(Action::AgentEventReceived {
             workspace_id,
@@ -2342,6 +2374,7 @@ mod tests {
                 thread_id: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
+                    attachments: Vec::new(),
                 }],
             },
         });
@@ -2350,7 +2383,7 @@ mod tests {
         assert_eq!(after.len(), 2);
         assert!(matches!(
             &after[0],
-            ConversationEntry::UserMessage { text } if text == "Hello"
+            ConversationEntry::UserMessage { text, .. } if text == "Hello"
         ));
         assert!(matches!(
             &after[1],
@@ -2371,6 +2404,7 @@ mod tests {
                 thread_id: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
+                    attachments: Vec::new(),
                 }],
             },
         });
@@ -2383,6 +2417,7 @@ mod tests {
                 entries: vec![
                     ConversationEntry::UserMessage {
                         text: "Hello".to_owned(),
+                        attachments: Vec::new(),
                     },
                     ConversationEntry::TurnDuration { duration_ms: 1234 },
                 ],
@@ -2409,6 +2444,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
         assert_eq!(effects.len(), 1);
         assert!(matches!(
@@ -2417,7 +2453,8 @@ mod tests {
                 workspace_id: wid,
                 thread_id: tid,
                 text,
-                run_config
+                run_config,
+                ..
             } if *wid == workspace_id
                 && *tid == thread_id
                 && text == "Hello"
@@ -2430,7 +2467,7 @@ mod tests {
         assert_eq!(conversation.entries.len(), 1);
         assert!(matches!(
             &conversation.entries[0],
-            ConversationEntry::UserMessage { text } if text == "Hello"
+            ConversationEntry::UserMessage { text, .. } if text == "Hello"
         ));
     }
 
@@ -2444,6 +2481,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
 
         let item = CodexThreadItem::AgentMessage {
@@ -2481,6 +2519,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
 
         let item = CodexThreadItem::AgentMessage {
@@ -2523,6 +2562,7 @@ mod tests {
             workspace_id,
             thread_id,
             text: "Hello".to_owned(),
+            attachments: Vec::new(),
         });
 
         let effects = state.apply(Action::CancelAgentTurn {
@@ -2551,11 +2591,13 @@ mod tests {
             workspace_id,
             thread_id,
             text: "First".to_owned(),
+            attachments: Vec::new(),
         });
         let effects = state.apply(Action::SendAgentMessage {
             workspace_id,
             thread_id,
             text: "Second".to_owned(),
+            attachments: Vec::new(),
         });
         assert!(effects.is_empty());
 
@@ -2576,11 +2618,13 @@ mod tests {
             workspace_id,
             thread_id,
             text: "First".to_owned(),
+            attachments: Vec::new(),
         });
         state.apply(Action::SendAgentMessage {
             workspace_id,
             thread_id,
             text: "Second".to_owned(),
+            attachments: Vec::new(),
         });
 
         let effects = state.apply(Action::AgentEventReceived {
@@ -2601,7 +2645,8 @@ mod tests {
                 workspace_id: wid,
                 thread_id: tid,
                 text,
-                run_config
+                run_config,
+                ..
             } if *wid == workspace_id
                 && *tid == thread_id
                 && text == "Second"
@@ -2614,11 +2659,11 @@ mod tests {
         assert!(conversation.pending_prompts.is_empty());
         assert!(matches!(
             &conversation.entries[0],
-            ConversationEntry::UserMessage { text } if text == "First"
+            ConversationEntry::UserMessage { text, .. } if text == "First"
         ));
         assert!(matches!(
             &conversation.entries[1],
-            ConversationEntry::UserMessage { text } if text == "Second"
+            ConversationEntry::UserMessage { text, .. } if text == "Second"
         ));
     }
 
@@ -2632,11 +2677,13 @@ mod tests {
             workspace_id,
             thread_id,
             text: "First".to_owned(),
+            attachments: Vec::new(),
         });
         state.apply(Action::SendAgentMessage {
             workspace_id,
             thread_id,
             text: "Second".to_owned(),
+            attachments: Vec::new(),
         });
 
         let effects = state.apply(Action::AgentEventReceived {
@@ -2666,7 +2713,8 @@ mod tests {
                 workspace_id: wid,
                 thread_id: tid,
                 text,
-                run_config
+                run_config,
+                ..
             } if *wid == workspace_id
                 && *tid == thread_id
                 && text == "Second"

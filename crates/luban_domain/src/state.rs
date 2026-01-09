@@ -7,8 +7,28 @@ use std::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ProjectId(pub(crate) u64);
 
+impl ProjectId {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    pub fn from_u64(id: u64) -> Self {
+        Self(id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct WorkspaceId(pub(crate) u64);
+
+impl WorkspaceId {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    pub fn from_u64(id: u64) -> Self {
+        Self(id)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct WorkspaceThreadId(pub(crate) u64);
@@ -52,12 +72,42 @@ pub enum OperationStatus {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConversationEntry {
-    UserMessage { text: String },
-    CodexItem { item: Box<CodexThreadItem> },
-    TurnUsage { usage: Option<CodexUsage> },
-    TurnDuration { duration_ms: u64 },
+    UserMessage {
+        text: String,
+        #[serde(default)]
+        attachments: Vec<AttachmentRef>,
+    },
+    CodexItem {
+        item: Box<CodexThreadItem>,
+    },
+    TurnUsage {
+        usage: Option<CodexUsage>,
+    },
+    TurnDuration {
+        duration_ms: u64,
+    },
     TurnCanceled,
-    TurnError { message: String },
+    TurnError {
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    Image,
+    Text,
+    File,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AttachmentRef {
+    pub id: String,
+    pub kind: AttachmentKind,
+    pub name: String,
+    pub extension: String,
+    pub mime: Option<String>,
+    pub byte_len: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -121,9 +171,15 @@ pub(crate) fn flush_in_progress_items(conversation: &mut WorkspaceConversation) 
 fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
     match (a, b) {
         (
-            ConversationEntry::UserMessage { text: a },
-            ConversationEntry::UserMessage { text: b },
-        ) => a == b,
+            ConversationEntry::UserMessage {
+                text: a,
+                attachments: a_attachments,
+            },
+            ConversationEntry::UserMessage {
+                text: b,
+                attachments: b_attachments,
+            },
+        ) => a == b && a_attachments == b_attachments,
         (ConversationEntry::CodexItem { item: a }, ConversationEntry::CodexItem { item: b }) => {
             codex_item_id(a) == codex_item_id(b)
         }
@@ -280,7 +336,7 @@ pub struct DraftAttachment {
     pub id: u64,
     pub kind: ContextTokenKind,
     pub anchor: usize,
-    pub path: Option<PathBuf>,
+    pub attachment: Option<AttachmentRef>,
     pub failed: bool,
 }
 
@@ -334,6 +390,7 @@ pub struct AgentRunConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrompt {
     pub text: String,
+    pub attachments: Vec<AttachmentRef>,
     pub run_config: AgentRunConfig,
 }
 

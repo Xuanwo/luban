@@ -1,0 +1,3 @@
+[submodule "design"]
+	path = design
+	url = https://github.com/Xuanwo/luban-design.git

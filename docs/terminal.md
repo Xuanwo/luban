@@ -1,28 +1,45 @@
-# Embedded Terminal
+# Web Terminal (PTY + `ghostty-web`)
 
-Luban embeds a terminal using upstream `gpui-ghostty` and isolates sessions per workspace thread.
+Luban provides an interactive terminal pane in the web UI.
 
-## Dependency
+## Components
 
-- The terminal renderer uses a git dependency on `gpui-ghostty`.
-- Building the terminal requires Zig for `ghostty_vt_sys`.
+- Client: `web/components/pty-terminal.tsx` renders the terminal with `ghostty-web`.
+- Server: `crates/luban_server/src/pty.rs` owns the PTY process and multiplexes IO over WebSocket.
 
-## Session isolation
+## Protocol
 
-- Each `(workspace_id, thread_id)` owns one terminal session and renderer state.
-- The right-side terminal pane displays the active thread's session.
-- Non-active sessions remain running but are hidden.
+- Endpoint: `GET /api/pty/:workspace_id/:pty_id`
+- Messages:
+  - client -> server:
+    - `{ "type": "input", "data": "..." }`
+    - `{ "type": "resize", "cols": <u16>, "rows": <u16> }`
+  - server -> client:
+    - binary frames containing PTY output bytes
 
-Rationale: concurrent agent runs must not interleave output into a single PTY.
+The PTY channel is separate from `/api/events` to avoid head-of-line blocking.
 
-## Session lifecycle
+## Session scoping
 
-If the user exits the terminal session (e.g. `Ctrl+D`):
+- The server keys PTY sessions by `(workspace_id, pty_id)`.
+- The current web UI uses a single reserved `pty_id = 1` per workspace, so the terminal is shared
+  across conversation threads within the workspace.
 
-- Luban clears the session state for that thread and initializes a fresh session.
+If strict per-thread terminal isolation is needed later, the client can use a distinct `pty_id` per
+conversation thread and keep the server unchanged.
 
-## Layout and persistence
+## Refresh/reconnect behavior
 
-- The terminal pane width is user-resizable via dragging.
-- The width is persisted in SQLite as a single global value and restored on startup.
+When a browser refreshes or reconnects:
+
+- the server replays a bounded amount of recent output for that PTY session (best-effort)
+- then the connection continues streaming new output
+
+This avoids a blank terminal after refresh while keeping memory bounded.
+
+## Theme + layout
+
+- The terminal theme is derived from CSS variables and applied by emitting OSC color sequences on
+  initialization.
+- Pane width is resizable and stored in browser `localStorage` (UI-only).
 

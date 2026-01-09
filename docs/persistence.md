@@ -1,240 +1,50 @@
-# Persistence (SQLite + domain mapping)
+# Persistence
 
-This document describes the implemented persistence model and how it is versioned and migrated.
-Some older sections are kept for historical context, but the **Current implementation** section
-is the source of truth.
+This document describes what is durable (server-side) and what is UI-only (browser-side).
 
-## Current implementation
+## Durable (server-side)
 
-- SQLite is the durable store for projects/workspaces and app-level settings.
-- Conversations are persisted via:
-  - SQLite tables (`conversation_entries`, `conversations`)
-  - Workspace-local `context/` files for attachment blobs
-- Schema migrations are versioned via `PRAGMA user_version` and applied in
-  `crates/luban_app/src/sqlite_store.rs`.
-- The mapping between `PersistedAppState` (adapter boundary) and `AppState` (domain state) is
-  centralized in `crates/luban_domain/src/persistence.rs`.
+### SQLite
 
-## Historical notes: SQLite persistence and migrations design
+- SQLite is the durable store for projects/workspaces and conversation history.
+- Migrations are applied via `PRAGMA user_version` in `crates/luban_backend/src/sqlite_store.rs`.
+- Domain <-> persisted mapping is centralized in `crates/luban_domain/src/persistence.rs`.
 
-### Goals
+### Workspace-scoped context storage
 
-- Persist user-added `Project`s and `Workspace`s so a restart restores the sidebar list.
-- Preserve existing per-workspace conversation history across restarts.
-- Support automated, testable schema evolution (migrations) without blocking the UI thread.
-- Keep the `domain` crate pure (no IO) and keep all IO in an adapter layer.
+Attachments are stored on disk under a workspace-scoped directory:
 
-### Non-goals
+```
+~/luban/conversations/<project_slug>/<workspace_name>/context/
+  blobs/
+    <blake3>.<ext>
+    <blake3>.thumb.<ext>
+```
+
+- Blobs are content-addressed (BLAKE3).
+- Attachments are referenced from messages as structured `AttachmentRef`s; the web UI does not embed
+  filesystem paths in message text.
+
+## UI-only (browser-side)
+
+The web UI is a single-page app. State that does not affect correctness lives in browser
+`localStorage` (and is not required to be durable across machines).
+
+Current keys (non-exhaustive):
+
+- `luban:ui:right_sidebar_open`
+- `luban:ui:view_mode`
+- `luban:ui:sidebar_width_px`
+- `luban:ui:right_sidebar_width_px`
+- `luban:draft:<workspace_id>:<thread_id>`
+- `luban:follow_tail:<workspace_id>:<thread_id>`
+- `luban:ui:thread_order:<workspace_id>`
+
+## Non-goals
 
 - Cross-device sync.
 - Multi-user / concurrent writers.
-- Full-text search, indexing, or analytics over conversations (can be added later).
-- Migrating existing on-disk worktrees/conversations into a new storage engine in the first iteration.
 
----
-
-## Current state (observed)
-
-- Conversations are persisted under `~/luban/conversations/<project_slug>/<workspace_name>/`:
-  - `conversation.json` (meta; includes `version` and `thread_id`)
-  - `events.jsonl` (append-only JSON Lines of `ConversationEntry`)
-- Projects/workspaces and conversations are loaded from SQLite on startup and persisted back via
-  explicit `Effect`s.
-- All IO runs off the UI thread via adapter implementations in `luban_app`.
-
----
-
-## Recommended v2: SQLite as the source of truth
-
-The database becomes the durable store for:
-
-- projects/workspaces (the sidebar model)
-- per-workspace conversations (thread id + event stream)
-
-The UI and `domain` continue to use an in-memory `AppState`, but it is loaded from SQLite on startup and persisted back via explicit effects.
-
-### Storage layout
-
-- Root directory: `~/luban/`
-- Database file: `~/luban/luban.db`
-- Existing `~/luban/conversations/...` can be kept as legacy (optional, see “Migration from legacy files”).
-
-### SQLite configuration (startup)
-
-Open the database in background work and apply the following per-connection settings:
-
-- `PRAGMA foreign_keys = ON;`
-- `PRAGMA journal_mode = WAL;`
-- `PRAGMA synchronous = NORMAL;`
-- `PRAGMA busy_timeout = 5000;`
-
-Notes:
-
-- WAL keeps the UI responsive under frequent small writes (conversation streaming) and provides crash safety.
-- `busy_timeout` reduces “database is locked” errors under contention (still prefer a single-writer design).
-
-### Schema overview
-
-Core entities:
-
-- `projects`
-- `workspaces`
-- `conversations` (1:1 with workspace; stores `thread_id`)
-- `conversation_entries` (append-only event stream per workspace)
-
-Durable keys:
-
-- Use stable integer IDs for projects/workspaces.
-- Preserve `slug` and `workspace_name` as stable routing keys (also helpful for imports and debugging).
-
-### DDL (initial migration example)
-
-Prefer embedding migrations as SQL files (monotonic numbering). Example `0001_init.sql`:
-
-```sql
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE projects (
-  id              INTEGER PRIMARY KEY,
-  slug            TEXT NOT NULL UNIQUE,
-  name            TEXT NOT NULL,
-  path            TEXT NOT NULL,
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
-);
-
-CREATE TABLE workspaces (
-  id              INTEGER PRIMARY KEY,
-  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  workspace_name  TEXT NOT NULL,
-  branch_name     TEXT NOT NULL,
-  worktree_path   TEXT NOT NULL,
-  status          INTEGER NOT NULL, -- 0 = active, 1 = archived
-  last_activity_at INTEGER,
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL,
-  UNIQUE(project_id, workspace_name)
-);
-
-CREATE TABLE conversations (
-  project_slug    TEXT NOT NULL,
-  workspace_name  TEXT NOT NULL,
-  thread_id       TEXT,
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL,
-  PRIMARY KEY (project_slug, workspace_name)
-);
-
-CREATE TABLE conversation_entries (
-  id              INTEGER PRIMARY KEY,
-  project_slug    TEXT NOT NULL,
-  workspace_name  TEXT NOT NULL,
-  seq             INTEGER NOT NULL,
-  kind            TEXT NOT NULL, -- "user_message" | "codex_item" | "turn_duration" | ...
-  codex_item_id   TEXT,          -- populated only when kind = "codex_item"
-  payload_json    TEXT NOT NULL, -- serde_json of ConversationEntry
-  created_at      INTEGER NOT NULL,
-  UNIQUE(project_slug, workspace_name, seq),
-  UNIQUE(project_slug, workspace_name, codex_item_id)
-);
-
-CREATE INDEX conversation_entries_workspace_seq
-  ON conversation_entries(project_slug, workspace_name, seq);
-```
-
-### Event encoding (`conversation_entries.payload_json`)
-
-Store `luban_domain::ConversationEntry` as JSON, but also denormalize:
-
-- `kind` for cheap filtering/diagnostics
-- `codex_item_id` for idempotent insertion of Codex items
-- `seq` for stable ordering
-
-This pattern minimizes schema churn when the conversation model evolves.
-
-### Migration strategy
-
-Migrations must be:
-
-- automatic (applied on startup)
-- transactional (either fully applied or not applied)
-- monotonic and testable
-
-Recommended mechanism:
-
-- Track the current schema version using `PRAGMA user_version`.
-- Keep migrations as an ordered list of SQL scripts.
-- Apply `BEGIN IMMEDIATE;` → run scripts → set `PRAGMA user_version = <n>;` → `COMMIT;`
-- On failure: rollback and surface a user-visible error (do not proceed with partial schema).
-
-This avoids adding a “schema_migrations” table while still being robust for an internal desktop app.
-
-### Concurrency model
-
-To keep the UI responsive and eliminate lock contention:
-
-- Treat SQLite as a single-writer resource.
-- All DB access runs in background tasks.
-- Prefer one of two implementations:
-  1. **Dedicated DB worker thread (recommended):** a single `rusqlite::Connection` lives on that thread; all operations are executed by sending commands over a channel.
-  2. **Per-operation connection (simpler):** open a `rusqlite::Connection` inside each background task, set PRAGMAs, execute, close.
-
-Option (1) is more stable under frequent streaming writes.
-
-### Domain integration (actions/effects)
-
-Keep `luban_domain` pure by modeling persistence as effects and by avoiding DB-driven IDs in the reducer.
-
-- New `Effect` variants (examples):
-  - `LoadAppState`
-  - `SaveAppState`
-- New `Action` variants (examples):
-  - `AppStateLoaded { snapshot: PersistedSnapshot }`
-  - `AppStateLoadFailed { message: String }`
-  - `AppStateSaved`
-  - `AppStateSaveFailed { message: String }`
-
-Reducer behavior:
-
-- On startup, issue `Effect::LoadAppState`.
-- On state mutations that change projects/workspaces, issue `Effect::SaveAppState`.
-- Optional: debounce saves (e.g. 250ms) to reduce write churn.
-
-Adapter behavior:
-
-- Perform load/save on background threads.
-  - For v2, load from SQLite (projects/workspaces tables).
-  - Restore `next_project_id`/`next_workspace_id` from `MAX(id) + 1`.
-
-### Conversation compatibility and evolution
-
-Persist conversations in SQLite as an append-only stream.
-
-Rules to maintain forward/backward compatibility:
-
-- Do not remove/rename existing `ConversationEntry` variants.
-- When adding fields, use `#[serde(default)]` for new fields.
-- If future-proofing is needed, introduce an `Unknown` entry variant and preserve raw JSON to avoid hard failures on unknown tags.
-
----
-
-## Migration from legacy files (optional, recommended)
-
-If `~/luban/conversations/...` exists, we can import it once:
-
-- On first startup with SQLite enabled:
-  - If `projects` is empty, scan the legacy directory tree and import known conversation logs.
-  - If `projects` is non-empty, skip import.
-
-Import strategy:
-
-- Import only conversations for existing projects/workspaces (match by `slug` and `workspace_name`).
-- Use `INSERT OR IGNORE` for `conversation_entries` to make imports idempotent.
-- Record a marker in `PRAGMA user_version` or a small `meta` table once completed.
-
-If we want to keep legacy files for debugging, add an export command later; it should not be part of the critical path.
-
----
 
 ## Verification plan (for implementation)
 

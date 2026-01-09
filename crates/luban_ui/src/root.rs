@@ -22,13 +22,13 @@ use luban_domain::{
     ProjectWorkspaceService, PullRequestInfo, RightPane, RunAgentTurnRequest, ThinkingEffort,
     WorkspaceId, WorkspaceStatus, WorkspaceThreadId, agent_model_label, agent_models,
     compose_user_message_text, dashboard_cards, dashboard_preview, default_agent_model_id,
-    default_thinking_effort, draft_text_and_attachments_from_message_text,
-    ordered_draft_attachments_for_display, thinking_effort_supported,
+    default_thinking_effort, ordered_draft_attachments_for_display,
+    ordered_draft_attachments_for_send, thinking_effort_supported,
 };
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
@@ -86,11 +86,6 @@ const SUCCESS_TOAST_DURATION: Duration = Duration::from_millis(30);
 
 fn next_pending_context_id() -> u64 {
     PENDING_CONTEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed)
-}
-
-#[cfg(test)]
-fn context_token(kind: &str, value: &str) -> String {
-    format!("<<context:{kind}:{value}>>>")
 }
 
 pub struct LubanRootView {
@@ -693,8 +688,9 @@ impl LubanRootView {
                 workspace_id,
                 thread_id,
                 text,
+                attachments,
                 run_config,
-            } => self.run_agent_turn(workspace_id, thread_id, text, run_config, cx),
+            } => self.run_agent_turn(workspace_id, thread_id, text, attachments, run_config, cx),
             Effect::CancelAgentTurn {
                 workspace_id,
                 thread_id,
@@ -949,13 +945,13 @@ impl LubanRootView {
                     let _ = this.update(
                         &mut async_cx,
                         |view: &mut LubanRootView, view_cx: &mut Context<LubanRootView>| {
-                            if let Ok(path) = result {
+                            if let Ok(attachment) = result {
                                 view.dispatch(
                                     Action::ChatDraftAttachmentResolved {
                                         workspace_id,
                                         thread_id,
                                         id: attachment_id,
-                                        path,
+                                        attachment,
                                     },
                                     view_cx,
                                 );
@@ -1259,6 +1255,7 @@ impl LubanRootView {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         text: String,
+        attachments: Vec<luban_domain::AttachmentRef>,
         run_config: AgentRunConfig,
         cx: &mut Context<Self>,
     ) {
@@ -1289,6 +1286,7 @@ impl LubanRootView {
             thread_local_id: thread_id.as_u64(),
             thread_id: remote_thread_id,
             prompt: text,
+            attachments,
             model: Some(run_config.model_id),
             model_reasoning_effort: Some(run_config.thinking_effort.as_str().to_owned()),
         };
@@ -1739,6 +1737,7 @@ impl gpui::Render for LubanRootView {
 }
 
 impl LubanRootView {
+    #[allow(dead_code)]
     fn open_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.image_viewer_path = Some(path);
         cx.notify();
@@ -2012,12 +2011,14 @@ impl LubanRootView {
                     .map(|c| c.draft_attachments.clone())
                     .unwrap_or_default();
                 let composed = compose_user_message_text(&draft_text, &draft_attachments);
+                let attachments_for_send = ordered_draft_attachments_for_send(&draft_attachments);
                 let pending_context_imports = self
                     .pending_context_imports
                     .get(&chat_key)
                     .copied()
                     .unwrap_or(0);
-                let send_disabled = pending_context_imports > 0 || composed.trim().is_empty();
+                let send_disabled = pending_context_imports > 0
+                    || (composed.trim().is_empty() && attachments_for_send.is_empty());
                 let running_elapsed = if is_running {
                     self.running_turn_started_at
                         .get(&chat_key)
@@ -2349,8 +2350,7 @@ impl LubanRootView {
                                         .icon(IconName::Replace)
                                         .tooltip("Move to input and remove from queue")
                                         .on_click(move |_, window, app| {
-                                            let (draft_text, attachments) =
-                                                draft_text_and_attachments_from_message_text(&text);
+                                            let draft_text = text.clone();
                                             input_state.update(app, |state, cx| {
                                                 state.set_value(&draft_text, window, cx);
                                                 let end = state
@@ -2387,28 +2387,6 @@ impl LubanRootView {
                                                     },
                                                     cx,
                                                 );
-                                                for (kind, anchor, path) in attachments {
-                                                    let id = next_pending_context_id();
-                                                    view.dispatch(
-                                                        Action::ChatDraftAttachmentAdded {
-                                                            workspace_id,
-                                                            thread_id,
-                                                            id,
-                                                            kind,
-                                                            anchor,
-                                                        },
-                                                        cx,
-                                                    );
-                                                    view.dispatch(
-                                                        Action::ChatDraftAttachmentResolved {
-                                                            workspace_id,
-                                                            thread_id,
-                                                            id,
-                                                            path,
-                                                        },
-                                                        cx,
-                                                    );
-                                                }
                                                 view.dispatch(
                                                     Action::RemoveQueuedPrompt {
                                                         workspace_id,
@@ -2568,7 +2546,7 @@ fn render_conversation_entry(
     view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
     match entry {
-        luban_domain::ConversationEntry::UserMessage { text } => {
+        luban_domain::ConversationEntry::UserMessage { text, attachments } => {
             let is_short_single_line = text.lines().nth(1).is_none() && text.chars().count() <= 80;
             let bubble_max_w = chat_column_width
                 .map(|w| (w - px(48.0)).min(px(680.0)).max(px(0.0)))
@@ -2578,9 +2556,10 @@ fn render_conversation_entry(
             } else {
                 Some((bubble_max_w - px(32.0)).max(px(0.0)))
             };
-            let message = user_message_view_with_context_tokens(
+            let message = user_message_view_with_attachments(
                 entry_index,
                 text,
+                attachments,
                 wrap_width,
                 theme.foreground,
                 theme.border,
@@ -2711,51 +2690,32 @@ fn copy_to_clipboard_button(
         .into_any_element()
 }
 
-fn user_message_view_with_context_tokens(
+fn user_message_view_with_attachments(
     entry_index: usize,
     text: &str,
+    attachments: &[luban_domain::AttachmentRef],
     wrap_width: Option<Pixels>,
     text_color: gpui::Hsla,
     border_color: gpui::Hsla,
-    view_handle: &gpui::WeakEntity<LubanRootView>,
+    _view_handle: &gpui::WeakEntity<LubanRootView>,
 ) -> AnyElement {
-    let tokens = luban_domain::find_context_tokens(text);
-    if tokens.is_empty() {
-        return chat_message_view(
+    let mut children: Vec<AnyElement> = Vec::new();
+
+    if !text.trim().is_empty() {
+        children.push(chat_message_view(
             &format!("user-message-{entry_index}"),
             text,
             wrap_width,
             text_color,
-        );
+        ));
     }
 
-    let mut children: Vec<AnyElement> = Vec::new();
-    let mut cursor = 0usize;
-
-    for (attachment_index, token) in tokens.into_iter().enumerate() {
-        if token.range.start > cursor {
-            let segment = &text[cursor..token.range.start];
-            if !segment.trim().is_empty() {
-                children.push(chat_message_view(
-                    &format!("user-message-{entry_index}-seg-{attachment_index}"),
-                    segment,
-                    wrap_width,
-                    text_color,
-                ));
-            }
-        }
-
+    for (attachment_index, attachment) in attachments.iter().enumerate() {
         let debug_id = format!("conversation-user-attachment-{entry_index}-{attachment_index}");
-        let attachment = match token.kind {
-            luban_domain::ContextTokenKind::Image => {
-                let path = token.path;
-                let original_path = path.clone();
-                let open_path = path.clone();
-                let thumbnail_path = context_image_thumbnail_path(&path);
-                let view_handle = view_handle.clone();
+        let attachment = match attachment.kind {
+            luban_domain::AttachmentKind::Image => {
                 let max_w = px(CHAT_INLINE_IMAGE_MAX_WIDTH);
                 let max_h = px(CHAT_INLINE_IMAGE_MAX_HEIGHT);
-
                 div()
                     .debug_selector(move || {
                         format!(
@@ -2765,73 +2725,24 @@ fn user_message_view_with_context_tokens(
                     .w_full()
                     .max_w(max_w)
                     .h(max_h)
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, _, app| {
-                        app.stop_propagation();
-                        let path = open_path.clone();
-                        let _ = view_handle.update(app, |view, cx| {
-                            view.open_image_viewer(path, cx);
-                        });
-                    })
                     .rounded_md()
                     .border_1()
                     .border_color(border_color)
                     .overflow_hidden()
-                    .child(
-                        gpui::img(thumbnail_path)
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain)
-                            .with_loading(|| {
-                                div()
-                                    .size_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(Spinner::new().with_size(Size::Small))
-                                    .into_any_element()
-                            })
-                            .with_fallback(move || {
-                                gpui::img(original_path.clone())
-                                    .size_full()
-                                    .object_fit(gpui::ObjectFit::Contain)
-                                    .with_loading(|| {
-                                        div()
-                                            .size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(Spinner::new().with_size(Size::Small))
-                                            .into_any_element()
-                                    })
-                                    .with_fallback(|| {
-                                        div()
-                                            .size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child("Missing image")
-                                            .into_any_element()
-                                    })
-                                    .into_any_element()
-                            }),
-                    )
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(format!("Image: {}", attachment.name))
                     .into_any_element()
             }
-            luban_domain::ContextTokenKind::Text | luban_domain::ContextTokenKind::File => {
-                let filename = token
-                    .path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "attachment".to_owned());
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border_color)
-                    .child(format!("Attachment: {filename}"))
-                    .into_any_element()
-            }
+            luban_domain::AttachmentKind::Text | luban_domain::AttachmentKind::File => div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(border_color)
+                .child(format!("Attachment: {}", attachment.name))
+                .into_any_element(),
         };
 
         children.push(
@@ -2840,20 +2751,6 @@ fn user_message_view_with_context_tokens(
                 .child(attachment)
                 .into_any_element(),
         );
-
-        cursor = token.range.end;
-    }
-
-    if cursor < text.len() {
-        let tail = &text[cursor..];
-        if !tail.trim().is_empty() {
-            children.push(chat_message_view(
-                &format!("user-message-{entry_index}-tail"),
-                tail,
-                wrap_width,
-                text_color,
-            ));
-        }
     }
 
     div()
@@ -2878,11 +2775,6 @@ fn min_height_zero<E: gpui::Styled>(mut element: E) -> E {
 
 fn quantize_pixels_y10(pixels: Pixels) -> i32 {
     (f32::from(pixels) * 10.0).round() as i32
-}
-
-fn context_image_thumbnail_path(path: &Path) -> PathBuf {
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-    path.with_file_name(format!("{stem}-thumb.png"))
 }
 
 fn update_chat_follow_state(
@@ -3466,7 +3358,7 @@ fn build_workspace_history_children(
     for (local_entry_index, entry) in entries.iter().enumerate() {
         let entry_index = entry_index_base + local_entry_index;
         match entry {
-            luban_domain::ConversationEntry::UserMessage { text: _ } => {
+            luban_domain::ConversationEntry::UserMessage { text: _, .. } => {
                 if let Some(turn) = current_turn.take() {
                     let _ = flush_turn(turn, &mut children, false);
                 }

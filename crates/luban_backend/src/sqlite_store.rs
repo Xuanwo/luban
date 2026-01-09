@@ -76,6 +76,19 @@ pub struct SqliteStore {
     tx: mpsc::Sender<DbCommand>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SqliteStoreOptions {
+    pub persist_ui_state: bool,
+}
+
+impl Default for SqliteStoreOptions {
+    fn default() -> Self {
+        Self {
+            persist_ui_state: true,
+        }
+    }
+}
+
 impl Clone for SqliteStore {
     fn clone(&self) -> Self {
         Self {
@@ -140,12 +153,16 @@ enum DbCommand {
 
 impl SqliteStore {
     pub fn new(db_path: PathBuf) -> anyhow::Result<Self> {
+        Self::new_with_options(db_path, SqliteStoreOptions::default())
+    }
+
+    pub fn new_with_options(db_path: PathBuf, options: SqliteStoreOptions) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel::<DbCommand>();
 
         std::thread::Builder::new()
             .name("luban-sqlite".to_owned())
             .spawn(move || {
-                let mut db = SqliteDatabase::open(&db_path);
+                let mut db = SqliteDatabase::open(&db_path, options);
                 while let Ok(cmd) = rx.recv() {
                     match (&mut db, cmd) {
                         (Ok(db), DbCommand::LoadAppState { reply }) => {
@@ -457,10 +474,11 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
 
 struct SqliteDatabase {
     conn: Connection,
+    persist_ui_state: bool,
 }
 
 impl SqliteDatabase {
-    fn open(db_path: &Path) -> anyhow::Result<Self> {
+    fn open(db_path: &Path, options: SqliteStoreOptions) -> anyhow::Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -472,7 +490,10 @@ impl SqliteDatabase {
         configure_connection(&mut conn).context("failed to configure sqlite connection")?;
         apply_migrations(&mut conn).context("failed to apply sqlite migrations")?;
 
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            persist_ui_state: options.persist_ui_state,
+        })
     }
 
     fn load_app_state(&mut self) -> anyhow::Result<PersistedAppState> {
@@ -546,6 +567,44 @@ impl SqliteDatabase {
             });
         }
 
+        let agent_default_model_id = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_MODEL_ID_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load agent default model id")?;
+
+        let agent_default_thinking_effort = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![AGENT_DEFAULT_THINKING_EFFORT_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load agent default thinking effort")?;
+
+        if !self.persist_ui_state {
+            return Ok(PersistedAppState {
+                projects,
+                sidebar_width: None,
+                terminal_pane_width: None,
+                agent_default_model_id,
+                agent_default_thinking_effort,
+                last_open_workspace_id: None,
+                workspace_active_thread_id: HashMap::new(),
+                workspace_open_tabs: HashMap::new(),
+                workspace_archived_tabs: HashMap::new(),
+                workspace_next_thread_id: HashMap::new(),
+                workspace_chat_scroll_y10: HashMap::new(),
+                workspace_chat_scroll_anchor: HashMap::new(),
+                workspace_unread_completions: HashMap::new(),
+            });
+        }
+
         let sidebar_width = self
             .conn
             .query_row(
@@ -578,26 +637,6 @@ impl SqliteDatabase {
             .optional()
             .context("failed to load last open workspace id")?
             .and_then(|value| u64::try_from(value).ok());
-
-        let agent_default_model_id = self
-            .conn
-            .query_row(
-                "SELECT value FROM app_settings_text WHERE key = ?1",
-                params![AGENT_DEFAULT_MODEL_ID_KEY],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .context("failed to load agent default model id")?;
-
-        let agent_default_thinking_effort = self
-            .conn
-            .query_row(
-                "SELECT value FROM app_settings_text WHERE key = ?1",
-                params![AGENT_DEFAULT_THINKING_EFFORT_KEY],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .context("failed to load agent default thinking effort")?;
 
         let mut workspace_active_thread_id = HashMap::new();
         let mut stmt = self.conn.prepare(
@@ -989,33 +1028,35 @@ impl SqliteDatabase {
             )?;
         }
 
-        if let Some(value) = snapshot.sidebar_width {
-            tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params!["sidebar_width", value as i64, now],
-            )?;
-        } else {
-            tx.execute("DELETE FROM app_settings WHERE key = 'sidebar_width'", [])?;
-        }
+        if self.persist_ui_state {
+            if let Some(value) = snapshot.sidebar_width {
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params!["sidebar_width", value as i64, now],
+                )?;
+            } else {
+                tx.execute("DELETE FROM app_settings WHERE key = 'sidebar_width'", [])?;
+            }
 
-        if let Some(value) = snapshot.terminal_pane_width {
-            tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params!["terminal_pane_width", value as i64, now],
-            )?;
-        } else {
-            tx.execute(
-                "DELETE FROM app_settings WHERE key = 'terminal_pane_width'",
-                [],
-            )?;
+            if let Some(value) = snapshot.terminal_pane_width {
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params!["terminal_pane_width", value as i64, now],
+                )?;
+            } else {
+                tx.execute(
+                    "DELETE FROM app_settings WHERE key = 'terminal_pane_width'",
+                    [],
+                )?;
+            }
         }
 
         if let Some(value) = snapshot.agent_default_model_id.as_deref() {
@@ -1050,141 +1091,144 @@ impl SqliteDatabase {
             )?;
         }
 
-        if let Some(value) = snapshot.last_open_workspace_id {
-            tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![LAST_OPEN_WORKSPACE_ID_KEY, value as i64, now],
-            )?;
-        } else {
-            tx.execute(
-                "DELETE FROM app_settings WHERE key = ?1",
-                params![LAST_OPEN_WORKSPACE_ID_KEY],
-            )?;
-        }
-
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_active_thread_id_%'",
-            [],
-        )?;
-        for (workspace_id, thread_id) in &snapshot.workspace_active_thread_id {
-            let key = format!("{WORKSPACE_ACTIVE_THREAD_PREFIX}{workspace_id}");
-            tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![key, *thread_id as i64, now],
-            )?;
-        }
-
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_open_tab_%'",
-            [],
-        )?;
-        for (workspace_id, tabs) in &snapshot.workspace_open_tabs {
-            for (idx, thread_id) in tabs.iter().copied().enumerate() {
-                let key = format!("{WORKSPACE_OPEN_TAB_PREFIX}{idx}_{workspace_id}");
+        if self.persist_ui_state {
+            if let Some(value) = snapshot.last_open_workspace_id {
                 tx.execute(
                     "INSERT INTO app_settings (key, value, created_at, updated_at)
                      VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
                      ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        updated_at = excluded.updated_at",
-                    params![key, thread_id as i64, now],
+                    params![LAST_OPEN_WORKSPACE_ID_KEY, value as i64, now],
+                )?;
+            } else {
+                tx.execute(
+                    "DELETE FROM app_settings WHERE key = ?1",
+                    params![LAST_OPEN_WORKSPACE_ID_KEY],
                 )?;
             }
-        }
 
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_archived_tab_%'",
-            [],
-        )?;
-        for (workspace_id, tabs) in &snapshot.workspace_archived_tabs {
-            for (idx, thread_id) in tabs.iter().copied().enumerate() {
-                let key = format!("{WORKSPACE_ARCHIVED_TAB_PREFIX}{idx}_{workspace_id}");
+            tx.execute(
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_active_thread_id_%'",
+                [],
+            )?;
+            for (workspace_id, thread_id) in &snapshot.workspace_active_thread_id {
+                let key = format!("{WORKSPACE_ACTIVE_THREAD_PREFIX}{workspace_id}");
                 tx.execute(
                     "INSERT INTO app_settings (key, value, created_at, updated_at)
                      VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
                      ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        updated_at = excluded.updated_at",
-                    params![key, thread_id as i64, now],
+                    params![key, *thread_id as i64, now],
                 )?;
             }
-        }
 
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_next_thread_id_%'",
-            [],
-        )?;
-        for (workspace_id, next_id) in &snapshot.workspace_next_thread_id {
-            let key = format!("{WORKSPACE_NEXT_THREAD_ID_PREFIX}{workspace_id}");
             tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![key, *next_id as i64, now],
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_open_tab_%'",
+                [],
             )?;
-        }
-
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_chat_scroll_y10_%'",
-            [],
-        )?;
-        for ((workspace_id, thread_id), offset_y10) in &snapshot.workspace_chat_scroll_y10 {
-            let key = format!("{WORKSPACE_CHAT_SCROLL_PREFIX}{workspace_id}_{thread_id}");
-            tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![key, *offset_y10 as i64, now],
-            )?;
-        }
-
-        tx.execute(
-            "DELETE FROM app_settings_text WHERE key LIKE 'workspace_chat_scroll_anchor_%'",
-            [],
-        )?;
-        for ((workspace_id, thread_id), anchor) in &snapshot.workspace_chat_scroll_anchor {
-            let key = format!("{WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX}{workspace_id}_{thread_id}");
-            let value =
-                serde_json::to_string(anchor).context("failed to serialize chat scroll anchor")?;
-            tx.execute(
-                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![key, value, now],
-            )?;
-        }
-
-        tx.execute(
-            "DELETE FROM app_settings WHERE key LIKE 'workspace_unread_completion_%'",
-            [],
-        )?;
-        for (workspace_id, unread) in &snapshot.workspace_unread_completions {
-            if !*unread {
-                continue;
+            for (workspace_id, tabs) in &snapshot.workspace_open_tabs {
+                for (idx, thread_id) in tabs.iter().copied().enumerate() {
+                    let key = format!("{WORKSPACE_OPEN_TAB_PREFIX}{idx}_{workspace_id}");
+                    tx.execute(
+                        "INSERT INTO app_settings (key, value, created_at, updated_at)
+                         VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                         ON CONFLICT(key) DO UPDATE SET
+                           value = excluded.value,
+                           updated_at = excluded.updated_at",
+                        params![key, thread_id as i64, now],
+                    )?;
+                }
             }
-            let key = format!("{WORKSPACE_UNREAD_COMPLETION_PREFIX}{workspace_id}");
+
             tx.execute(
-                "INSERT INTO app_settings (key, value, created_at, updated_at)
-                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
-                 ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = excluded.updated_at",
-                params![key, 1i64, now],
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_archived_tab_%'",
+                [],
             )?;
+            for (workspace_id, tabs) in &snapshot.workspace_archived_tabs {
+                for (idx, thread_id) in tabs.iter().copied().enumerate() {
+                    let key = format!("{WORKSPACE_ARCHIVED_TAB_PREFIX}{idx}_{workspace_id}");
+                    tx.execute(
+                        "INSERT INTO app_settings (key, value, created_at, updated_at)
+                         VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                         ON CONFLICT(key) DO UPDATE SET
+                           value = excluded.value,
+                           updated_at = excluded.updated_at",
+                        params![key, thread_id as i64, now],
+                    )?;
+                }
+            }
+
+            tx.execute(
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_next_thread_id_%'",
+                [],
+            )?;
+            for (workspace_id, next_id) in &snapshot.workspace_next_thread_id {
+                let key = format!("{WORKSPACE_NEXT_THREAD_ID_PREFIX}{workspace_id}");
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params![key, *next_id as i64, now],
+                )?;
+            }
+
+            tx.execute(
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_chat_scroll_y10_%'",
+                [],
+            )?;
+            for ((workspace_id, thread_id), offset_y10) in &snapshot.workspace_chat_scroll_y10 {
+                let key = format!("{WORKSPACE_CHAT_SCROLL_PREFIX}{workspace_id}_{thread_id}");
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params![key, *offset_y10 as i64, now],
+                )?;
+            }
+
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key LIKE 'workspace_chat_scroll_anchor_%'",
+                [],
+            )?;
+            for ((workspace_id, thread_id), anchor) in &snapshot.workspace_chat_scroll_anchor {
+                let key =
+                    format!("{WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX}{workspace_id}_{thread_id}");
+                let value = serde_json::to_string(anchor)
+                    .context("failed to serialize chat scroll anchor")?;
+                tx.execute(
+                    "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params![key, value, now],
+                )?;
+            }
+
+            tx.execute(
+                "DELETE FROM app_settings WHERE key LIKE 'workspace_unread_completion_%'",
+                [],
+            )?;
+            for (workspace_id, unread) in &snapshot.workspace_unread_completions {
+                if !*unread {
+                    continue;
+                }
+                let key = format!("{WORKSPACE_UNREAD_COMPLETION_PREFIX}{workspace_id}");
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, created_at, updated_at)
+                     VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                     ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = excluded.updated_at",
+                    params![key, 1i64, now],
+                )?;
+            }
         }
 
         tx.commit()?;
@@ -1326,7 +1370,7 @@ impl SqliteDatabase {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserMessage { text } => {
+            ConversationEntry::UserMessage { text, .. } => {
                 let title = luban_domain::derive_thread_title(text);
                 if title.is_empty() { None } else { Some(title) }
             }
@@ -1395,7 +1439,7 @@ impl SqliteDatabase {
         )?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserMessage { text } => {
+            ConversationEntry::UserMessage { text, .. } => {
                 let title = luban_domain::derive_thread_title(text);
                 if title.is_empty() { None } else { Some(title) }
             }
@@ -1586,6 +1630,7 @@ fn codex_item_id(item: &luban_domain::CodexThreadItem) -> &str {
 mod tests {
     use super::*;
     use luban_domain::{ChatScrollAnchor, CodexThreadItem, PersistedProject, PersistedWorkspace};
+    use std::path::Path;
 
     fn temp_db_path(test_name: &str) -> PathBuf {
         let mut dir = std::env::temp_dir();
@@ -1599,10 +1644,14 @@ mod tests {
         dir
     }
 
+    fn open_db(path: &Path) -> SqliteDatabase {
+        SqliteDatabase::open(path, SqliteStoreOptions::default()).unwrap()
+    }
+
     #[test]
     fn migrations_create_schema() {
         let path = temp_db_path("migrations_create_schema");
-        let db = SqliteDatabase::open(&path).unwrap();
+        let db = open_db(&path);
 
         let count: i64 = db
             .conn
@@ -1618,7 +1667,7 @@ mod tests {
     #[test]
     fn save_and_load_app_state_roundtrips() {
         let path = temp_db_path("save_and_load_app_state_roundtrips");
-        let mut db = SqliteDatabase::open(&path).unwrap();
+        let mut db = open_db(&path);
 
         let snapshot = PersistedAppState {
             projects: vec![PersistedProject {
@@ -1665,7 +1714,7 @@ mod tests {
     #[test]
     fn conversation_append_is_idempotent_by_codex_item_id() {
         let path = temp_db_path("conversation_append_is_idempotent_by_codex_item_id");
-        let mut db = SqliteDatabase::open(&path).unwrap();
+        let mut db = open_db(&path);
 
         let snapshot = PersistedAppState {
             projects: vec![PersistedProject {
@@ -1725,7 +1774,7 @@ mod tests {
     #[test]
     fn conversation_append_allows_same_raw_id_across_turns_when_scoped() {
         let path = temp_db_path("conversation_append_allows_same_raw_id_across_turns_when_scoped");
-        let mut db = SqliteDatabase::open(&path).unwrap();
+        let mut db = open_db(&path);
 
         let snapshot = PersistedAppState {
             projects: vec![PersistedProject {
@@ -1801,7 +1850,7 @@ mod tests {
     #[test]
     fn save_app_state_can_move_workspaces_without_losing_conversations() {
         let path = temp_db_path("save_app_state_can_move_workspaces_without_losing_conversations");
-        let mut db = SqliteDatabase::open(&path).unwrap();
+        let mut db = open_db(&path);
 
         let snapshot_before = PersistedAppState {
             projects: vec![
@@ -1855,6 +1904,7 @@ mod tests {
         db.ensure_conversation("p2", "w", 1).unwrap();
         let entry = ConversationEntry::UserMessage {
             text: "hello".to_owned(),
+            attachments: Vec::new(),
         };
         db.append_conversation_entries("p2", "w", 1, std::slice::from_ref(&entry))
             .unwrap();
@@ -1906,9 +1956,9 @@ mod tests {
 
         let conv = db.load_conversation("p1", "w", 1).unwrap();
         assert!(
-            conv.entries
-                .iter()
-                .any(|e| matches!(e, ConversationEntry::UserMessage { text } if text == "hello")),
+            conv.entries.iter().any(
+                |e| matches!(e, ConversationEntry::UserMessage { text, .. } if text == "hello")
+            ),
             "expected conversation entries to be preserved across workspace move"
         );
     }
@@ -1916,7 +1966,7 @@ mod tests {
     #[test]
     fn save_app_state_deletes_conversations_for_removed_workspaces() {
         let path = temp_db_path("save_app_state_deletes_conversations_for_removed_workspaces");
-        let mut db = SqliteDatabase::open(&path).unwrap();
+        let mut db = open_db(&path);
 
         let snapshot = PersistedAppState {
             projects: vec![PersistedProject {
@@ -1952,6 +2002,7 @@ mod tests {
         db.ensure_conversation("p", "w", 1).unwrap();
         let entry = ConversationEntry::UserMessage {
             text: "hello".to_owned(),
+            attachments: Vec::new(),
         };
         db.append_conversation_entries("p", "w", 1, std::slice::from_ref(&entry))
             .unwrap();

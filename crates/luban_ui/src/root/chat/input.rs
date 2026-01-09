@@ -60,7 +60,8 @@ impl LubanRootView {
                         .map(|c| c.draft_attachments.clone())
                         .unwrap_or_default();
                     let composed = compose_user_message_text(&draft_text, &draft_attachments);
-                    if composed.trim().is_empty() {
+                    let attachments = ordered_draft_attachments_for_send(&draft_attachments);
+                    if composed.trim().is_empty() && attachments.is_empty() {
                         return;
                     }
                     input_state.update(cx, |state, cx| state.set_value("", window, cx));
@@ -69,6 +70,7 @@ impl LubanRootView {
                             workspace_id,
                             thread_id,
                             text: composed,
+                            attachments,
                         },
                         cx,
                     );

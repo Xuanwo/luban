@@ -1,0 +1,14 @@
+.next/
+out/
+dist/
+
+public/ghostty-vt.wasm
+
+.playwright-home/
+.playwright-project/
+playwright-report/
+test-results/
+
+*.log
+.DS_Store
+tsconfig.tsbuildinfo

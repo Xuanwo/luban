@@ -1,5 +1,5 @@
 use crate::{
-    ChatScrollAnchor, CodexThreadEvent, ContextTokenKind, ConversationSnapshot,
+    AttachmentRef, ChatScrollAnchor, CodexThreadEvent, ContextTokenKind, ConversationSnapshot,
     ConversationThreadMeta, PersistedAppState, ProjectId, ThinkingEffort, WorkspaceId,
     WorkspaceThreadId,
 };
@@ -88,6 +88,7 @@ pub enum Action {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         text: String,
+        attachments: Vec<AttachmentRef>,
     },
     ChatModelChanged {
         workspace_id: WorkspaceId,
@@ -115,7 +116,7 @@ pub enum Action {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         id: u64,
-        path: PathBuf,
+        attachment: AttachmentRef,
     },
     ChatDraftAttachmentFailed {
         workspace_id: WorkspaceId,

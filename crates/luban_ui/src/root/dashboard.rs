@@ -798,8 +798,7 @@ impl LubanRootView {
                                 .icon(IconName::Replace)
                                 .tooltip("Move to input and remove from queue")
                                 .on_click(move |_, window, app| {
-                                    let (draft_text, attachments) =
-                                        draft_text_and_attachments_from_message_text(&text);
+                                    let draft_text = text.clone();
                                     input_state.update(app, |state, cx| {
                                         state.set_value(&draft_text, window, cx);
                                         let end =
@@ -835,28 +834,6 @@ impl LubanRootView {
                                             },
                                             cx,
                                         );
-                                        for (kind, anchor, path) in attachments {
-                                            let id = next_pending_context_id();
-                                            view.dispatch(
-                                                Action::ChatDraftAttachmentAdded {
-                                                    workspace_id,
-                                                    thread_id,
-                                                    id,
-                                                    kind,
-                                                    anchor,
-                                                },
-                                                cx,
-                                            );
-                                            view.dispatch(
-                                                Action::ChatDraftAttachmentResolved {
-                                                    workspace_id,
-                                                    thread_id,
-                                                    id,
-                                                    path,
-                                                },
-                                                cx,
-                                            );
-                                        }
                                         view.dispatch(
                                             Action::RemoveQueuedPrompt {
                                                 workspace_id,
@@ -1280,6 +1257,8 @@ impl LubanRootView {
 	                                                        let view_handle = view_handle.clone();
 	                                                        let input_state = input_state.clone();
 	                                                        let composed = composed.clone();
+	                                                        let attachments =
+	                                                            ordered_draft_attachments_for_send(&draft_attachments);
 	                                                        Button::new("chat-send-message")
 	                                                            .primary()
 	                                                            .compact()
@@ -1287,7 +1266,9 @@ impl LubanRootView {
 	                                                            .icon(Icon::new(IconName::ArrowUp))
 	                                                            .tooltip(if is_running { "Queue" } else { "Send" })
 	                                                            .on_click(move |_, window, app| {
-	                                                                if composed.trim().is_empty() {
+	                                                                if composed.trim().is_empty()
+	                                                                    && attachments.is_empty()
+	                                                                {
 	                                                                    return;
 	                                                                }
 
@@ -1301,6 +1282,7 @@ impl LubanRootView {
 	                                                                            workspace_id,
 	                                                                            thread_id,
 	                                                                            text: composed.clone(),
+	                                                                            attachments: attachments.clone(),
 	                                                                        },
 	                                                                        cx,
 	                                                                    );

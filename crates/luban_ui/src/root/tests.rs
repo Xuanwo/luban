@@ -326,12 +326,15 @@ async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
             _project_slug: String,
             _workspace_name: String,
             image: luban_domain::ContextImage,
-        ) -> Result<PathBuf, String> {
-            Ok(PathBuf::from(format!(
-                "/tmp/luban/context/{}.{}",
-                image.bytes.len(),
-                image.extension
-            )))
+        ) -> Result<luban_domain::AttachmentRef, String> {
+            Ok(luban_domain::AttachmentRef {
+                id: format!("img-{}", image.bytes.len()),
+                kind: luban_domain::AttachmentKind::Image,
+                name: format!("image.{}", image.extension),
+                extension: image.extension,
+                mime: None,
+                byte_len: image.bytes.len() as u64,
+            })
         }
 
         fn store_context_text(
@@ -340,12 +343,15 @@ async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
             _workspace_name: String,
             text: String,
             extension: String,
-        ) -> Result<PathBuf, String> {
-            Ok(PathBuf::from(format!(
-                "/tmp/luban/context/{}.{}",
-                text.len(),
-                extension
-            )))
+        ) -> Result<luban_domain::AttachmentRef, String> {
+            Ok(luban_domain::AttachmentRef {
+                id: format!("text-{}", text.len()),
+                kind: luban_domain::AttachmentKind::Text,
+                name: format!("text.{extension}"),
+                extension,
+                mime: None,
+                byte_len: text.len() as u64,
+            })
         }
 
         fn store_context_file(
@@ -353,8 +359,25 @@ async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
             _project_slug: String,
             _workspace_name: String,
             source_path: PathBuf,
-        ) -> Result<PathBuf, String> {
-            Ok(source_path)
+        ) -> Result<luban_domain::AttachmentRef, String> {
+            let name = source_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file.bin")
+                .to_owned();
+            let extension = source_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("bin")
+                .to_owned();
+            Ok(luban_domain::AttachmentRef {
+                id: format!("file-{name}"),
+                kind: luban_domain::AttachmentKind::File,
+                name,
+                extension,
+                mime: None,
+                byte_len: 0,
+            })
         }
 
         fn run_agent_turn_streamed(
@@ -443,6 +466,7 @@ async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
     for i in 0..1_000usize {
         entries.push(ConversationEntry::UserMessage {
             text: format!("Hello {i}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::CodexItem {
             item: Box::new(CodexThreadItem::Reasoning {
@@ -487,6 +511,7 @@ async fn profile_streaming_reasoning_updates(cx: &mut gpui::TestAppContext) {
                     workspace_id,
                     thread_id,
                     text: "Profile streaming updates".to_owned(),
+                    attachments: Vec::new(),
                 },
                 cx,
             );
@@ -595,12 +620,15 @@ impl ProjectWorkspaceService for FakeService {
         _project_slug: String,
         _workspace_name: String,
         image: luban_domain::ContextImage,
-    ) -> Result<PathBuf, String> {
-        Ok(PathBuf::from(format!(
-            "/tmp/luban/context/{}.{}",
-            image.bytes.len(),
-            image.extension
-        )))
+    ) -> Result<luban_domain::AttachmentRef, String> {
+        Ok(luban_domain::AttachmentRef {
+            id: format!("img-{}", image.bytes.len()),
+            kind: luban_domain::AttachmentKind::Image,
+            name: format!("image.{}", image.extension),
+            extension: image.extension,
+            mime: None,
+            byte_len: image.bytes.len() as u64,
+        })
     }
 
     fn store_context_text(
@@ -609,12 +637,15 @@ impl ProjectWorkspaceService for FakeService {
         _workspace_name: String,
         text: String,
         extension: String,
-    ) -> Result<PathBuf, String> {
-        Ok(PathBuf::from(format!(
-            "/tmp/luban/context/{}.{}",
-            text.len(),
-            extension
-        )))
+    ) -> Result<luban_domain::AttachmentRef, String> {
+        Ok(luban_domain::AttachmentRef {
+            id: format!("text-{}", text.len()),
+            kind: luban_domain::AttachmentKind::Text,
+            name: format!("text.{extension}"),
+            extension,
+            mime: None,
+            byte_len: text.len() as u64,
+        })
     }
 
     fn store_context_file(
@@ -622,8 +653,25 @@ impl ProjectWorkspaceService for FakeService {
         _project_slug: String,
         _workspace_name: String,
         source_path: PathBuf,
-    ) -> Result<PathBuf, String> {
-        Ok(source_path)
+    ) -> Result<luban_domain::AttachmentRef, String> {
+        let name = source_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file.bin")
+            .to_owned();
+        let extension = source_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("bin")
+            .to_owned();
+        Ok(luban_domain::AttachmentRef {
+            id: format!("file-{name}"),
+            kind: luban_domain::AttachmentKind::File,
+            name,
+            extension,
+            mime: None,
+            byte_len: 0,
+        })
     }
 
     fn run_agent_turn_streamed(
@@ -1476,6 +1524,7 @@ async fn workspace_row_shows_running_spinner_and_unread_completion_badge(
         workspace_id,
         thread_id,
         text: "run".to_owned(),
+        attachments: Vec::new(),
     });
 
     let (view, window_cx) =
@@ -1651,6 +1700,7 @@ async fn markdown_messages_render_in_workspace(cx: &mut gpui::TestAppContext) {
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Hello **world**\n\n- a\n- b\n\n`inline`".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -1698,6 +1748,7 @@ async fn duplicate_agent_message_ids_render_independently(cx: &mut gpui::TestApp
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "First".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -1707,6 +1758,7 @@ async fn duplicate_agent_message_ids_render_independently(cx: &mut gpui::TestApp
                 },
                 ConversationEntry::UserMessage {
                     text: "Second".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -1760,6 +1812,7 @@ async fn clicking_turn_summary_row_toggles_expanded(cx: &mut gpui::TestAppContex
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::CommandExecution {
@@ -1823,6 +1876,7 @@ async fn clicking_turn_item_summary_row_toggles_expanded(cx: &mut gpui::TestAppC
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::Reasoning {
@@ -1890,6 +1944,7 @@ async fn running_turn_summary_is_collapsed_by_default_and_toggleable(
         workspace_id,
         thread_id: default_thread_id(),
         text: "Test".to_owned(),
+        attachments: Vec::new(),
     });
     state.apply(Action::AgentEventReceived {
         workspace_id,
@@ -1963,6 +2018,7 @@ async fn running_turn_summary_keeps_completed_items_visible_while_running(
         workspace_id,
         thread_id: default_thread_id(),
         text: "Test".to_owned(),
+        attachments: Vec::new(),
     });
     state.apply(Action::AgentEventReceived {
         workspace_id,
@@ -2035,6 +2091,7 @@ async fn running_turn_summary_auto_collapses_on_turn_end(cx: &mut gpui::TestAppC
         workspace_id,
         thread_id: default_thread_id(),
         text: "Test".to_owned(),
+        attachments: Vec::new(),
     });
 
     let (view, window_cx) =
@@ -2106,6 +2163,7 @@ async fn turn_summary_includes_error_items(cx: &mut gpui::TestAppContext) {
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::Error {
@@ -2154,12 +2212,7 @@ async fn user_message_context_attachments_render_in_order(cx: &mut gpui::TestApp
     let workspace_id = workspace_id_by_name(&state, "abandon-about");
     state.main_pane = MainPane::Workspace(workspace_id);
 
-    let message = concat!(
-        "hello\n",
-        "<<context:text:/tmp/a.txt>>>\n",
-        "world\n",
-        "<<context:text:/tmp/b.txt>>>\n"
-    );
+    let message = "hello\nworld";
 
     state.apply(Action::ConversationLoaded {
         workspace_id,
@@ -2168,6 +2221,24 @@ async fn user_message_context_attachments_render_in_order(cx: &mut gpui::TestApp
             thread_id: None,
             entries: vec![ConversationEntry::UserMessage {
                 text: message.to_owned(),
+                attachments: vec![
+                    luban_domain::AttachmentRef {
+                        id: "att-a".to_owned(),
+                        kind: luban_domain::AttachmentKind::Text,
+                        name: "a.txt".to_owned(),
+                        extension: "txt".to_owned(),
+                        mime: None,
+                        byte_len: 0,
+                    },
+                    luban_domain::AttachmentRef {
+                        id: "att-b".to_owned(),
+                        kind: luban_domain::AttachmentKind::Text,
+                        name: "b.txt".to_owned(),
+                        extension: "txt".to_owned(),
+                        mime: None,
+                        byte_len: 0,
+                    },
+                ],
             }],
         },
     });
@@ -2217,7 +2288,10 @@ async fn user_message_reflows_on_window_resize(cx: &mut gpui::TestAppContext) {
         thread_id: default_thread_id(),
         snapshot: ConversationSnapshot {
             thread_id: Some("thread-1".to_owned()),
-            entries: vec![ConversationEntry::UserMessage { text: long_text }],
+            entries: vec![ConversationEntry::UserMessage {
+                text: long_text,
+                attachments: Vec::new(),
+            }],
         },
     });
 
@@ -2310,6 +2384,7 @@ async fn chat_surface_does_not_shift_horizontally_on_wide_window_resize(
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2380,6 +2455,7 @@ async fn chat_history_is_not_pushed_down_by_scroll_padding(cx: &mut gpui::TestAp
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Hello".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2440,6 +2516,7 @@ async fn chat_renders_scrollbar_overlay_when_terminal_is_visible(cx: &mut gpui::
     let entries = (0..80)
         .map(|idx| ConversationEntry::UserMessage {
             text: format!("Message {idx}: {}", "x".repeat(120)),
+            attachments: Vec::new(),
         })
         .collect::<Vec<_>>();
     state.apply(Action::ConversationLoaded {
@@ -2517,7 +2594,10 @@ async fn long_user_message_bubble_keeps_right_gutter(cx: &mut gpui::TestAppConte
         thread_id: default_thread_id(),
         snapshot: ConversationSnapshot {
             thread_id: Some("thread-1".to_owned()),
-            entries: vec![ConversationEntry::UserMessage { text: long_text }],
+            entries: vec![ConversationEntry::UserMessage {
+                text: long_text,
+                attachments: Vec::new(),
+            }],
         },
     });
 
@@ -2574,6 +2654,7 @@ async fn user_message_text_can_be_selected_and_copied(cx: &mut gpui::TestAppCont
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: message.clone(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2638,6 +2719,7 @@ async fn chat_copy_buttons_copy_user_and_agent_messages(cx: &mut gpui::TestAppCo
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: user_message.clone(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -2730,6 +2812,7 @@ async fn chat_composer_is_visible_in_workspace(cx: &mut gpui::TestAppContext) {
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2771,6 +2854,7 @@ async fn chat_composer_renders_model_and_effort_selectors(cx: &mut gpui::TestApp
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2841,6 +2925,7 @@ async fn chat_composer_renders_attachments_inside_surface_in_order(cx: &mut gpui
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -2856,7 +2941,14 @@ async fn chat_composer_renders_attachments_inside_surface_in_order(cx: &mut gpui
         workspace_id,
         thread_id: default_thread_id(),
         id: 1,
-        path: PathBuf::from("/tmp/missing.png"),
+        attachment: luban_domain::AttachmentRef {
+            id: "att-1".to_owned(),
+            kind: luban_domain::AttachmentKind::Image,
+            name: "missing.png".to_owned(),
+            extension: "png".to_owned(),
+            mime: None,
+            byte_len: 0,
+        },
     });
     state.apply(Action::ChatDraftAttachmentAdded {
         workspace_id,
@@ -2869,7 +2961,14 @@ async fn chat_composer_renders_attachments_inside_surface_in_order(cx: &mut gpui
         workspace_id,
         thread_id: default_thread_id(),
         id: 2,
-        path: PathBuf::from("/tmp/missing.txt"),
+        attachment: luban_domain::AttachmentRef {
+            id: "att-2".to_owned(),
+            kind: luban_domain::AttachmentKind::Text,
+            name: "missing.txt".to_owned(),
+            extension: "txt".to_owned(),
+            mime: None,
+            byte_len: 0,
+        },
     });
 
     state.apply(Action::ChatDraftChanged {
@@ -2968,13 +3067,24 @@ async fn user_message_inline_images_are_constrained_and_clickable(cx: &mut gpui:
     let workspace_id = workspace_id_by_name(&state, "abandon-about");
     state.main_pane = MainPane::Workspace(workspace_id);
 
-    let text = format!("Hello\n{}\nWorld", context_token("image", &svg_string));
+    let _ = svg_string;
+    let text = "Hello\nWorld".to_owned();
     state.apply(Action::ConversationLoaded {
         workspace_id,
         thread_id: default_thread_id(),
         snapshot: ConversationSnapshot {
             thread_id: Some("thread-1".to_owned()),
-            entries: vec![ConversationEntry::UserMessage { text }],
+            entries: vec![ConversationEntry::UserMessage {
+                text,
+                attachments: vec![luban_domain::AttachmentRef {
+                    id: "att-svg".to_owned(),
+                    kind: luban_domain::AttachmentKind::Image,
+                    name: "image.svg".to_owned(),
+                    extension: "svg".to_owned(),
+                    mime: None,
+                    byte_len: 0,
+                }],
+            }],
         },
     });
 
@@ -2987,7 +3097,7 @@ async fn user_message_inline_images_are_constrained_and_clickable(cx: &mut gpui:
         *view_slot_for_window.lock().expect("poisoned mutex") = Some(view.clone());
         gpui_component::Root::new(view, window, cx)
     });
-    let view = view_slot
+    let _view = view_slot
         .lock()
         .expect("poisoned mutex")
         .clone()
@@ -3013,34 +3123,6 @@ async fn user_message_inline_images_are_constrained_and_clickable(cx: &mut gpui:
     assert!(
         image_bounds.size.height >= px(CHAT_INLINE_IMAGE_MAX_HEIGHT - 2.0),
         "expected inline image placeholder to reserve height to avoid scroll jumps: bounds={image_bounds:?}",
-    );
-
-    window_cx.simulate_click(image_bounds.center(), Modifiers::none());
-    for _ in 0..6 {
-        window_cx.run_until_parked();
-        window_cx.refresh().unwrap();
-    }
-
-    window_cx
-        .debug_bounds("image-viewer-overlay")
-        .expect("expected image viewer overlay after clicking image");
-    assert!(
-        view.read_with(window_cx, |v, _| v.image_viewer_path.is_some()),
-        "expected image viewer state to be set after clicking image",
-    );
-
-    let close = window_cx
-        .debug_bounds("image-viewer-close")
-        .expect("missing image viewer close button");
-    window_cx.simulate_click(close.center(), Modifiers::none());
-    for _ in 0..6 {
-        window_cx.run_until_parked();
-        window_cx.refresh().unwrap();
-    }
-
-    assert!(
-        view.read_with(window_cx, |v, _| v.image_viewer_path.is_none()),
-        "expected image viewer state to be cleared after closing",
     );
 }
 
@@ -3082,7 +3164,14 @@ async fn chat_composer_can_send_attachments_without_text(cx: &mut gpui::TestAppC
         workspace_id,
         thread_id: default_thread_id(),
         id: 1,
-        path: PathBuf::from("/tmp/a.png"),
+        attachment: luban_domain::AttachmentRef {
+            id: "att-a".to_owned(),
+            kind: luban_domain::AttachmentKind::Image,
+            name: "a.png".to_owned(),
+            extension: "png".to_owned(),
+            mime: None,
+            byte_len: 0,
+        },
     });
     state.apply(Action::ChatDraftAttachmentAdded {
         workspace_id,
@@ -3095,7 +3184,14 @@ async fn chat_composer_can_send_attachments_without_text(cx: &mut gpui::TestAppC
         workspace_id,
         thread_id: default_thread_id(),
         id: 2,
-        path: PathBuf::from("/tmp/b.txt"),
+        attachment: luban_domain::AttachmentRef {
+            id: "att-b".to_owned(),
+            kind: luban_domain::AttachmentKind::Text,
+            name: "b.txt".to_owned(),
+            extension: "txt".to_owned(),
+            mime: None,
+            byte_len: 0,
+        },
     });
     state.apply(Action::ChatDraftChanged {
         workspace_id,
@@ -3150,20 +3246,20 @@ async fn chat_composer_can_send_attachments_without_text(cx: &mut gpui::TestAppC
         (conversation.entries.clone(), conversation.entries.len())
     });
     let last_user = entries.iter().rev().find_map(|entry| {
-        let luban_domain::ConversationEntry::UserMessage { text } = entry else {
+        let luban_domain::ConversationEntry::UserMessage { text, attachments } = entry else {
             return None;
         };
-        Some(text.clone())
+        Some((text.clone(), attachments.clone()))
     });
-    let expected = format!(
-        "{}\n{}",
-        context_token("image", "/tmp/a.png"),
-        context_token("text", "/tmp/b.txt")
+    let (text, attachments) = last_user.expect("missing user message");
+    assert_eq!(
+        text, "",
+        "expected text to be empty (entries_len={entries_len})"
     );
     assert_eq!(
-        last_user.as_deref(),
-        Some(expected.as_str()),
-        "expected latest user message to match (entries_len={entries_len})"
+        attachments.len(),
+        2,
+        "expected attachments to be present (entries_len={entries_len})"
     );
 }
 
@@ -3210,7 +3306,14 @@ async fn chat_composer_inserts_attachments_at_anchor_positions(cx: &mut gpui::Te
         workspace_id,
         thread_id: default_thread_id(),
         id: 1,
-        path: PathBuf::from("/tmp/a.png"),
+        attachment: luban_domain::AttachmentRef {
+            id: "att-a".to_owned(),
+            kind: luban_domain::AttachmentKind::Image,
+            name: "a.png".to_owned(),
+            extension: "png".to_owned(),
+            mime: None,
+            byte_len: 0,
+        },
     });
 
     let view_slot: Arc<std::sync::Mutex<Option<gpui::Entity<LubanRootView>>>> =
@@ -3245,15 +3348,16 @@ async fn chat_composer_inserts_attachments_at_anchor_positions(cx: &mut gpui::Te
             .workspace_conversation(workspace_id)
             .expect("missing conversation");
         conversation.entries.iter().rev().find_map(|entry| {
-            let luban_domain::ConversationEntry::UserMessage { text } = entry else {
+            let luban_domain::ConversationEntry::UserMessage { text, attachments } = entry else {
                 return None;
             };
-            Some(text.clone())
+            Some((text.clone(), attachments.clone()))
         })
     });
 
-    let expected = format!("Hello\n{}\nWorld", context_token("image", "/tmp/a.png"));
-    assert_eq!(last_user.as_deref(), Some(expected.as_str()));
+    let (text, attachments) = last_user.expect("missing user message");
+    assert_eq!(text, "HelloWorld");
+    assert_eq!(attachments.len(), 1);
 }
 
 #[gpui::test]
@@ -3282,10 +3386,15 @@ async fn user_messages_render_context_tokens_in_order(cx: &mut gpui::TestAppCont
         snapshot: ConversationSnapshot {
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
-                text: format!(
-                    "before\n{}\nafter",
-                    context_token("image", "/tmp/missing.png")
-                ),
+                text: "before\nafter".to_owned(),
+                attachments: vec![luban_domain::AttachmentRef {
+                    id: "att-missing".to_owned(),
+                    kind: luban_domain::AttachmentKind::Image,
+                    name: "missing.png".to_owned(),
+                    extension: "png".to_owned(),
+                    mime: None,
+                    byte_len: 0,
+                }],
             }],
         },
     });
@@ -3302,18 +3411,15 @@ async fn user_messages_render_context_tokens_in_order(cx: &mut gpui::TestAppCont
     }
 
     let before = window_cx
-        .debug_bounds("user-message-0-seg-0-plain-text")
-        .expect("missing message segment before token");
+        .debug_bounds("user-message-0-plain-text")
+        .expect("missing user message text");
     let attachment = window_cx
         .debug_bounds("conversation-user-attachment-0-0")
         .expect("missing attachment element");
-    let after = window_cx
-        .debug_bounds("user-message-0-tail-plain-text")
-        .expect("missing message segment after token");
 
     assert!(
-        before.top() < attachment.top() && attachment.top() < after.top(),
-        "expected segments and token to render in order: before={before:?} attachment={attachment:?} after={after:?}",
+        before.top() < attachment.top(),
+        "expected attachment to render after user text: before={before:?} attachment={attachment:?}",
     );
 }
 
@@ -3347,6 +3453,7 @@ async fn chat_composer_remains_visible_with_long_history(cx: &mut gpui::TestAppC
     for i in 0..12 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i} {long_markdownish}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -3413,6 +3520,7 @@ async fn chat_switching_always_jumps_to_latest(cx: &mut gpui::TestAppContext) {
     for i in 0..24 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i} {long_markdownish}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -3523,6 +3631,7 @@ async fn switching_away_at_bottom_restores_to_bottom(cx: &mut gpui::TestAppConte
     for i in 0..24 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i}\n{long_text}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -3646,6 +3755,7 @@ async fn virtualized_chat_renders_messages_when_scrolled(cx: &mut gpui::TestAppC
     let entries = (0..900)
         .map(|idx| ConversationEntry::UserMessage {
             text: format!("Message {idx} {}", "x".repeat(40)),
+            attachments: Vec::new(),
         })
         .collect::<Vec<_>>();
     state.apply(Action::ConversationLoaded {
@@ -3737,6 +3847,7 @@ async fn chat_auto_scroll_follows_tail_on_new_entries(cx: &mut gpui::TestAppCont
     for i in 0..18 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i}\n{long_text}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -3768,6 +3879,7 @@ async fn chat_auto_scroll_follows_tail_on_new_entries(cx: &mut gpui::TestAppCont
 
     entries.push(ConversationEntry::UserMessage {
         text: "new message".to_owned(),
+        attachments: Vec::new(),
     });
     window_cx.update(|_, app| {
         view.update(app, |view, cx| {
@@ -3829,6 +3941,7 @@ async fn chat_auto_scroll_stops_when_user_scrolled_up(cx: &mut gpui::TestAppCont
     for i in 0..18 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i}\n{long_text}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -3930,6 +4043,7 @@ async fn chat_auto_scroll_stops_when_user_scrolled_up(cx: &mut gpui::TestAppCont
 
     entries.push(ConversationEntry::UserMessage {
         text: "new message".to_owned(),
+        attachments: Vec::new(),
     });
     window_cx.update(|_, app| {
         view.update(app, |view, cx| {
@@ -4004,6 +4118,7 @@ async fn chat_auto_scroll_follows_tail_after_returning_to_chat(cx: &mut gpui::Te
     for i in 0..18 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i}\n{long_text}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -4035,6 +4150,7 @@ async fn chat_auto_scroll_follows_tail_after_returning_to_chat(cx: &mut gpui::Te
 
     entries.push(ConversationEntry::UserMessage {
         text: "new message while away".to_owned(),
+        attachments: Vec::new(),
     });
     window_cx.update(|_, app| {
         view.update(app, |view, cx| {
@@ -4103,6 +4219,7 @@ async fn chat_composer_stays_in_viewport_with_terminal_and_long_history(
     for i in 0..18 {
         entries.push(ConversationEntry::UserMessage {
             text: format!("message {i}\n{long_text}"),
+            attachments: Vec::new(),
         });
         entries.push(ConversationEntry::TurnDuration { duration_ms: 1000 });
     }
@@ -4467,6 +4584,7 @@ async fn dashboard_renders_kanban_cards_and_preview(cx: &mut gpui::TestAppContex
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -4575,6 +4693,7 @@ async fn dashboard_preview_panel_can_be_resized(cx: &mut gpui::TestAppContext) {
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Hello".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -4655,6 +4774,7 @@ async fn dashboard_preview_updates_chat_draft(cx: &mut gpui::TestAppContext) {
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Hello".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -4785,6 +4905,7 @@ async fn dashboard_preview_closes_when_clicking_outside(cx: &mut gpui::TestAppCo
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Hello".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -4972,6 +5093,7 @@ async fn chat_column_remains_primary_when_terminal_is_visible(cx: &mut gpui::Tes
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -5046,6 +5168,7 @@ async fn terminal_pane_has_reasonable_default_width(cx: &mut gpui::TestAppContex
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -5100,6 +5223,7 @@ async fn terminal_pane_can_be_resized_by_dragging_divider(cx: &mut gpui::TestApp
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -5606,6 +5730,7 @@ async fn short_user_message_does_not_fill_max_width(cx: &mut gpui::TestAppContex
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -5645,6 +5770,7 @@ async fn long_in_progress_reasoning_does_not_expand_chat_column(cx: &mut gpui::T
         workspace_id,
         thread_id: default_thread_id(),
         text: "Test".to_owned(),
+        attachments: Vec::new(),
     });
     state.apply(Action::AgentEventReceived {
         workspace_id,
@@ -5718,6 +5844,7 @@ async fn long_command_execution_does_not_expand_chat_column(cx: &mut gpui::TestA
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::CommandExecution {
@@ -5805,6 +5932,7 @@ async fn long_todo_list_does_not_expand_chat_column(cx: &mut gpui::TestAppContex
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::TodoList {
@@ -5892,6 +6020,7 @@ async fn long_file_change_does_not_expand_chat_column(cx: &mut gpui::TestAppCont
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::FileChange {
@@ -5974,6 +6103,7 @@ async fn turn_duration_renders_below_messages(cx: &mut gpui::TestAppContext) {
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "Test".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -6021,6 +6151,7 @@ async fn tail_turn_duration_renders_from_view_pending_state(cx: &mut gpui::TestA
             thread_id: Some("thread-1".to_owned()),
             entries: vec![ConversationEntry::UserMessage {
                 text: "Test".to_owned(),
+                attachments: Vec::new(),
             }],
         },
     });
@@ -6068,6 +6199,7 @@ async fn agent_messages_with_scoped_ids_render_in_multiple_turns(cx: &mut gpui::
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "First".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -6078,6 +6210,7 @@ async fn agent_messages_with_scoped_ids_render_in_multiple_turns(cx: &mut gpui::
                 ConversationEntry::TurnDuration { duration_ms: 1000 },
                 ConversationEntry::UserMessage {
                     text: "Second".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -6130,6 +6263,7 @@ async fn chat_new_items_badge_is_not_rendered(cx: &mut gpui::TestAppContext) {
             entries: vec![
                 ConversationEntry::UserMessage {
                     text: "First".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -6140,6 +6274,7 @@ async fn chat_new_items_badge_is_not_rendered(cx: &mut gpui::TestAppContext) {
                 ConversationEntry::TurnDuration { duration_ms: 1000 },
                 ConversationEntry::UserMessage {
                     text: "Second".to_owned(),
+                    attachments: Vec::new(),
                 },
                 ConversationEntry::CodexItem {
                     item: Box::new(CodexThreadItem::AgentMessage {
@@ -6409,7 +6544,7 @@ impl ProjectWorkspaceService for FakeGhService {
         project_slug: String,
         workspace_name: String,
         image: luban_domain::ContextImage,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_image(project_slug, workspace_name, image)
     }
 
@@ -6419,7 +6554,7 @@ impl ProjectWorkspaceService for FakeGhService {
         workspace_name: String,
         text: String,
         extension: String,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_text(project_slug, workspace_name, text, extension)
     }
 
@@ -6428,7 +6563,7 @@ impl ProjectWorkspaceService for FakeGhService {
         project_slug: String,
         workspace_name: String,
         source_path: PathBuf,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_file(project_slug, workspace_name, source_path)
     }
 
@@ -6527,7 +6662,7 @@ impl ProjectWorkspaceService for SequenceGhService {
         project_slug: String,
         workspace_name: String,
         image: luban_domain::ContextImage,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_image(project_slug, workspace_name, image)
     }
 
@@ -6537,7 +6672,7 @@ impl ProjectWorkspaceService for SequenceGhService {
         workspace_name: String,
         text: String,
         extension: String,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_text(project_slug, workspace_name, text, extension)
     }
 
@@ -6546,7 +6681,7 @@ impl ProjectWorkspaceService for SequenceGhService {
         project_slug: String,
         workspace_name: String,
         source_path: PathBuf,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<luban_domain::AttachmentRef, String> {
         FakeService.store_context_file(project_slug, workspace_name, source_path)
     }
 

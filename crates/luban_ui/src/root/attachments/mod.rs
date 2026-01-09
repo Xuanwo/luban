@@ -2,11 +2,10 @@ use super::*;
 
 fn attachment_title_and_icon(
     kind: luban_domain::ContextTokenKind,
-    path: &std::path::Path,
+    attachment: Option<&luban_domain::AttachmentRef>,
 ) -> (String, IconName, &'static str) {
-    let filename = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
+    let filename = attachment
+        .map(|a| a.name.clone())
         .unwrap_or_else(|| "attachment".to_owned());
     match kind {
         luban_domain::ContextTokenKind::Image => (filename, IconName::GalleryVerticalEnd, "Image"),
@@ -100,7 +99,7 @@ pub(super) fn chat_composer_attachments_row(
                             .into_any_element()
                     }
                 }
-            } else if attachment.path.is_none() {
+            } else if attachment.attachment.is_none() {
                 match attachment.kind {
                     luban_domain::ContextTokenKind::Image => div()
                         .relative()
@@ -168,7 +167,10 @@ pub(super) fn chat_composer_attachments_row(
                     }
                 }
             } else {
-                let path = attachment.path.clone().unwrap_or_default();
+                let stored = attachment
+                    .attachment
+                    .as_ref()
+                    .expect("attachment should be resolved");
                 match attachment.kind {
                     luban_domain::ContextTokenKind::Image => div()
                         .relative()
@@ -179,36 +181,16 @@ pub(super) fn chat_composer_attachments_row(
                         .border_color(theme.border)
                         .bg(theme.muted)
                         .overflow_hidden()
-                        .child(
-                            gpui::img(path)
-                                .w_full()
-                                .h_full()
-                                .object_fit(gpui::ObjectFit::Cover)
-                                .with_loading(|| {
-                                    Spinner::new().with_size(Size::Small).into_any_element()
-                                })
-                                .with_fallback({
-                                    let muted = theme.muted;
-                                    let muted_foreground = theme.muted_foreground;
-                                    move || {
-                                        div()
-                                            .w_full()
-                                            .h_full()
-                                            .bg(muted)
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .text_color(muted_foreground)
-                                            .child("Missing")
-                                            .into_any_element()
-                                    }
-                                }),
-                        )
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::new(IconName::GalleryVerticalEnd).with_size(Size::Small))
                         .child(div().absolute().top(px(6.0)).right(px(6.0)).child(remove()))
                         .into_any_element(),
                     luban_domain::ContextTokenKind::Text | luban_domain::ContextTokenKind::File => {
                         let (filename, icon_name, subtitle) =
-                            attachment_title_and_icon(attachment.kind, &path);
+                            attachment_title_and_icon(attachment.kind, Some(stored));
                         div()
                             .relative()
                             .h(px(CHAT_ATTACHMENT_THUMBNAIL_SIZE))

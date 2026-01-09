@@ -51,9 +51,9 @@ The goal is to keep the UI responsive even if Codex changes minor details of its
 
 ## Images and attachments
 
-- The message text is persisted as-is (including any `<<context:...>>` tokens).
-- Image tokens are additionally passed to the Codex CLI via `--image <path>` arguments in token
-  order. Text/file tokens are not automatically inlined into the prompt.
+- User messages persist plain text plus structured attachments (`attachments: Vec<AttachmentRef>`).
+- Image attachments are passed to the Codex CLI via `--image <absolute_path>` arguments in a stable
+  order (resolved server-side).
+- The web UI never embeds absolute paths in user-visible text.
 
-See `docs/context-tokens.md` for the token format and storage layout.
-
+See `docs/persistence.md` for attachment storage layout.
