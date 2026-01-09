@@ -1,0 +1,17 @@
+{
+  "identifier": "main",
+  "description": "Enable core IPC for the main window when loading the UI from localhost.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*"
+    ]
+  }
+}
+

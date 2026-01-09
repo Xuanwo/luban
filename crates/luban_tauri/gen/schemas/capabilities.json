@@ -1,1 +1,1 @@
-{}
+{"main":{"identifier":"main","description":"Enable core IPC for the main window when loading the UI from localhost.","remote":{"urls":["http://127.0.0.1:*/*","http://localhost:*/*"]},"local":true,"windows":["main"],"permissions":["core:default"]}}

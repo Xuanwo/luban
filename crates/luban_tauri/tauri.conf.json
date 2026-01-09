@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "identifier": "io.luban.app",
   "app": {
+    "withGlobalTauri": true,
     "security": {
       "csp": null
     }
