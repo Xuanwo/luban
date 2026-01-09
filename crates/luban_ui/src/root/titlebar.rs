@@ -134,6 +134,11 @@ pub(super) fn render_titlebar(
         let add_project_button = {
             let view_handle = view_handle.clone();
             div()
+                .w(px(28.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
                 .p(px(6.0))
                 .rounded(px(4.0))
                 .text_color(theme.muted_foreground)
@@ -302,7 +307,12 @@ pub(super) fn render_titlebar(
             .flex()
             .items_center()
             .justify_between()
-            .px(px(12.0))
+            .pl(if cfg!(target_os = "macos") {
+                px(84.0)
+            } else {
+                px(12.0)
+            })
+            .pr(px(12.0))
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
             .when(!is_dashboard_selected, |s| {
@@ -519,6 +529,7 @@ impl gpui::RenderOnce for WorkspaceMenuTrigger {
         icon_bg.a = 0.15;
 
         div()
+            .h(px(32.0))
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -546,6 +557,7 @@ impl gpui::RenderOnce for WorkspaceMenuTrigger {
             .child(
                 div()
                     .text_size(px(14.0))
+                    .line_height(px(20.0))
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(self.sidebar_foreground)
                     .child("Workspace"),

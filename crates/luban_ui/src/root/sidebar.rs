@@ -121,7 +121,6 @@ fn render_project(
         .py(px(6.0))
         .flex()
         .items_center()
-        .text_size(px(13.0))
         .text_color(muted_foreground)
         .bg(if is_highlighted {
             highlighted_bg
@@ -157,6 +156,8 @@ fn render_project(
                         .flex_1()
                         .truncate()
                         .debug_selector(move || format!("project-title-{project_index}"))
+                        .text_size(px(13.0))
+                        .line_height(px(19.5))
                         .child(project.name.clone()),
                 )),
         );
@@ -327,6 +328,7 @@ fn render_workspace_row(
                 .min_w(px(0.0))
                 .truncate()
                 .text_size(px(12.0))
+                .line_height(px(16.0))
                 .text_color(theme.muted_foreground)
                 .child(title),
         )
@@ -405,6 +407,7 @@ fn render_main_workspace_row(
                 .min_w(px(0.0))
                 .truncate()
                 .text_size(px(12.0))
+                .line_height(px(16.0))
                 .text_color(theme.muted_foreground)
                 .child(title),
         )
@@ -465,12 +468,14 @@ fn render_sidebar_footer(
 
     let settings_button = div()
         .w_full()
+        .h(px(36.0))
         .flex()
         .items_center()
         .gap(px(8.0))
         .px(px(12.0))
         .py(px(8.0))
         .text_size(px(14.0))
+        .line_height(px(20.0))
         .text_color(theme.muted_foreground)
         .rounded(px(4.0))
         .hover(move |s| {
@@ -582,6 +587,7 @@ fn render_workspace_row_right(
                     .items_center()
                     .gap(px(2.0))
                     .text_size(px(10.0))
+                    .line_height(px(15.0))
                     .text_color(link_color)
                     .cursor_pointer()
                     .hover(move |s| s.text_color(link_hover))

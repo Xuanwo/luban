@@ -4223,10 +4223,52 @@ async fn sidebar_renders_at_prototype_viewport(cx: &mut gpui::TestAppContext) {
     window_cx.refresh().unwrap();
 
     assert!(window_cx.debug_bounds("titlebar-sidebar").is_some());
-    assert!(window_cx.debug_bounds("sidebar-workspace-menu").is_some());
-    assert!(window_cx.debug_bounds("workspace-main-row-0").is_some());
-    assert!(window_cx.debug_bounds("workspace-row-0-0").is_some());
-    assert!(window_cx.debug_bounds("sidebar-settings").is_some());
+
+    let workspace_menu = window_cx
+        .debug_bounds("sidebar-workspace-menu")
+        .expect("missing workspace menu trigger");
+    assert!(
+        (workspace_menu.size.height - px(32.0)).abs() <= px(1.0),
+        "expected workspace menu trigger to be 32px tall: {workspace_menu:?}"
+    );
+    #[cfg(target_os = "macos")]
+    assert!(
+        workspace_menu.origin.x >= px(72.0),
+        "expected workspace menu trigger to avoid macOS traffic lights: {workspace_menu:?}"
+    );
+
+    let add_project = window_cx
+        .debug_bounds("add-project-button")
+        .expect("missing add project button");
+    assert!(
+        (add_project.size.width - px(28.0)).abs() <= px(1.0)
+            && (add_project.size.height - px(28.0)).abs() <= px(1.0),
+        "expected add project button to be 28x28: {add_project:?}"
+    );
+
+    let main_row = window_cx
+        .debug_bounds("workspace-main-row-0")
+        .expect("missing main workspace row");
+    assert!(
+        (main_row.size.height - px(28.0)).abs() <= px(1.0),
+        "expected main workspace row to be 28px tall: {main_row:?}"
+    );
+
+    let row = window_cx
+        .debug_bounds("workspace-row-0-0")
+        .expect("missing workspace row");
+    assert!(
+        (row.size.height - px(28.0)).abs() <= px(1.0),
+        "expected workspace row to be 28px tall: {row:?}"
+    );
+
+    let settings = window_cx
+        .debug_bounds("sidebar-settings")
+        .expect("missing sidebar settings");
+    assert!(
+        (settings.size.height - px(36.0)).abs() <= px(1.0),
+        "expected sidebar settings to be 36px tall: {settings:?}"
+    );
 }
 
 #[gpui::test]
