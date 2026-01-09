@@ -40,12 +40,21 @@ fn main() -> anyhow::Result<()> {
 
             app.manage(server);
 
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Luban")
-                .inner_size(1280.0, 800.0)
-                .decorations(false)
-                .build()
-                .context("failed to build window")?;
+                .inner_size(1280.0, 800.0);
+
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                builder = builder.decorations(false);
+            }
+
+            builder.build().context("failed to build window")?;
 
             Ok(())
         })
