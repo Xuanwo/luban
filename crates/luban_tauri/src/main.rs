@@ -43,6 +43,7 @@ fn main() -> anyhow::Result<()> {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Luban")
                 .inner_size(1280.0, 800.0)
+                .decorations(false)
                 .build()
                 .context("failed to build window")?;
 

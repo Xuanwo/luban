@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Sidebar } from "./sidebar"
 import { ChatPanel } from "./chat-panel"
 import { RightSidebar } from "./right-sidebar"
+import { Titlebar } from "./titlebar"
 
 const RIGHT_SIDEBAR_OPEN_KEY = "luban:ui:right_sidebar_open"
 const VIEW_MODE_KEY = "luban:ui:view_mode"
@@ -88,60 +89,64 @@ export function AgentIDE() {
   }
 
   return (
-    <div className="relative flex h-screen bg-background text-foreground overflow-hidden">
-      {/* Left Sidebar */}
-      <Sidebar viewMode={viewMode} onViewModeChange={setViewMode} widthPx={sidebarWidthPx} />
+    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+      <Titlebar />
 
-      <div
-        className="w-1 bg-transparent hover:bg-border/60 active:bg-border cursor-col-resize flex-shrink-0"
-        title="Resize sidebar"
-        onPointerDown={(e) => {
-          if (e.button !== 0) return
-          e.preventDefault()
-          startResize({
-            edge: "left",
-            pointerDownClientX: e.clientX,
-            initialSidebarWidthPx: sidebarWidthPx,
-            initialRightSidebarWidthPx: rightSidebarWidthPx,
-          })
-        }}
-      />
+      <div className="relative flex flex-1 overflow-hidden">
+        {/* Left Sidebar */}
+        <Sidebar viewMode={viewMode} onViewModeChange={setViewMode} widthPx={sidebarWidthPx} />
 
-      {/* Middle - Chat Panel */}
-      <div className="flex-1 min-w-0 flex">
-        <ChatPanel />
-      </div>
+        <div
+          className="w-1 bg-transparent hover:bg-border/60 active:bg-border cursor-col-resize flex-shrink-0"
+          title="Resize sidebar"
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            startResize({
+              edge: "left",
+              pointerDownClientX: e.clientX,
+              initialSidebarWidthPx: sidebarWidthPx,
+              initialRightSidebarWidthPx: rightSidebarWidthPx,
+            })
+          }}
+        />
 
-      {/* Right Sidebar - collapsed state renders as absolute button */}
-      {rightSidebarOpen ? (
-        <>
-          <div
-            className="w-1 bg-transparent hover:bg-border/60 active:bg-border cursor-col-resize flex-shrink-0"
-            title="Resize terminal"
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
-              e.preventDefault()
-              startResize({
-                edge: "right",
-                pointerDownClientX: e.clientX,
-                initialSidebarWidthPx: sidebarWidthPx,
-                initialRightSidebarWidthPx: rightSidebarWidthPx,
-              })
-            }}
-          />
+        {/* Middle - Chat Panel */}
+        <div className="flex-1 min-w-0 flex">
+          <ChatPanel />
+        </div>
+
+        {/* Right Sidebar - collapsed state renders as absolute button */}
+        {rightSidebarOpen ? (
+          <>
+            <div
+              className="w-1 bg-transparent hover:bg-border/60 active:bg-border cursor-col-resize flex-shrink-0"
+              title="Resize terminal"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return
+                e.preventDefault()
+                startResize({
+                  edge: "right",
+                  pointerDownClientX: e.clientX,
+                  initialSidebarWidthPx: sidebarWidthPx,
+                  initialRightSidebarWidthPx: rightSidebarWidthPx,
+                })
+              }}
+            />
+            <RightSidebar
+              isOpen={rightSidebarOpen}
+              onToggle={() => setRightSidebarOpen(!rightSidebarOpen)}
+              widthPx={rightSidebarWidthPx}
+            />
+          </>
+        ) : (
           <RightSidebar
             isOpen={rightSidebarOpen}
             onToggle={() => setRightSidebarOpen(!rightSidebarOpen)}
             widthPx={rightSidebarWidthPx}
           />
-        </>
-      ) : (
-        <RightSidebar
-          isOpen={rightSidebarOpen}
-          onToggle={() => setRightSidebarOpen(!rightSidebarOpen)}
-          widthPx={rightSidebarWidthPx}
-        />
-      )}
+        )}
+      </div>
     </div>
   )
 }
