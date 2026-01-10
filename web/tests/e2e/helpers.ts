@@ -47,12 +47,25 @@ export async function ensureWorkspace(page: Page) {
 
   await page.getByText("e2e-project", { exact: true }).waitFor({ timeout: 15_000 })
 
-  await page.getByText("e2e-project", { exact: true }).click()
-  await page.getByTitle("Add worktree").click()
+  const projectToggle = page.getByRole("button", { name: "e2e-project" })
+  const projectContainer = projectToggle.locator("..").locator("..")
 
-  const branch = page.getByTestId("worktree-branch-name").first()
-  await branch.waitFor({ timeout: 90_000 })
-  await branch.click()
+  // Ensure the project is expanded. Avoid toggling it closed if a parallel test already expanded it.
+  if ((await projectContainer.getByTestId("worktree-branch-name").count()) === 0) {
+    await projectToggle.click()
+  }
 
-  await page.getByText(/^Thread 1$/).waitFor({ timeout: 20_000 })
+  const branches = projectContainer.getByTestId("worktree-branch-name")
+  if ((await branches.count()) === 0) {
+    const addWorktree = projectContainer.getByTitle("Add worktree")
+    if (!(await addWorktree.isDisabled())) {
+      await addWorktree.click()
+    }
+    await branches.first().waitFor({ timeout: 90_000 })
+  }
+  await branches.first().click()
+
+  const firstTab = page.getByTestId("thread-tab-title").first()
+  await firstTab.waitFor({ timeout: 60_000 })
+  await firstTab.click()
 }

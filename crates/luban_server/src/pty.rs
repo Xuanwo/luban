@@ -41,6 +41,12 @@ impl PtyManager {
     }
 }
 
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct PtySession {
     output: broadcast::Sender<Vec<u8>>,
     history: Arc<Mutex<OutputHistory>>,

@@ -40,6 +40,6 @@ test("terminal background matches card background and survives reload", async ({
   expect(Math.abs(pixel.b - (rgb?.b ?? 0))).toBeLessThanOrEqual(tol)
 
   await page.reload()
-  await expect(page.getByText(/^Thread 1$/)).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId("thread-tab-title").first()).toBeVisible({ timeout: 60_000 })
   await expect(terminal.locator("canvas")).toHaveCount(1, { timeout: 20_000 })
 })

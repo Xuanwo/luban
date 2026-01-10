@@ -23,7 +23,8 @@ fn resolve_web_dist(app: &tauri::AppHandle) -> PathBuf {
 fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
         .setup(|app| {
-            let web_dist = resolve_web_dist(&app.handle());
+            let handle = app.handle();
+            let web_dist = resolve_web_dist(handle);
             unsafe {
                 std::env::set_var("LUBAN_WEB_DIST_DIR", &web_dist);
             }
@@ -43,30 +44,11 @@ fn main() -> anyhow::Result<()> {
 
             app.manage(server);
 
-            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("")
-                .inner_size(1280.0, 800.0);
-
-            #[cfg(target_os = "macos")]
-            {
-                builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                builder = builder.decorations(false);
-            }
-
-            let window = builder.build().context("failed to build window")?;
-
-            #[cfg(target_os = "macos")]
-            {
-                let w = window.clone();
-                // Best-effort re-apply at runtime to avoid platform defaults winning during creation.
-                tauri::async_runtime::spawn(async move {
-                    let _ = w.set_title_bar_style(tauri::TitleBarStyle::Overlay);
-                });
-            }
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                .title("Luban")
+                .inner_size(1280.0, 800.0)
+                .build()
+                .context("failed to build window")?;
 
             Ok(())
         })

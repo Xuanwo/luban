@@ -14,10 +14,7 @@ pub struct StartedServer {
 impl StartedServer {
     pub async fn wait(self) -> anyhow::Result<()> {
         let mut this = self;
-        let handle = this
-            .handle
-            .take()
-            .context("server task already consumed")?;
+        let handle = this.handle.take().context("server task already consumed")?;
 
         handle
             .await
