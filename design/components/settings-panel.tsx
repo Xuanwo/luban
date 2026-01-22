@@ -47,6 +47,7 @@ import {
   ClipboardType,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { AgentIcon, agentConfigs } from "./shared/agent-selector"
 
 
 interface SettingsPanelProps {
@@ -665,6 +666,70 @@ function ConfigFileTree({
 }
 
 type SaveStatus = "idle" | "unsaved" | "saving" | "saved"
+
+function DefaultAgentSelector() {
+  const [selectedAgentId, setSelectedAgentId] = useState("claude-code")
+  const [isOpen, setIsOpen] = useState(false)
+
+  const selectedAgent = agentConfigs.find((a) => a.id === selectedAgentId) ?? agentConfigs[0]
+
+  return (
+    <div className="flex items-center justify-between py-2">
+      <div>
+        <div className="text-sm">Default Agent</div>
+        <div className="text-xs text-muted-foreground">
+          Agent selected by default when starting a new chat
+        </div>
+      </div>
+
+      <div className="relative">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all",
+            "bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30",
+            "shadow-sm hover:shadow",
+            isOpen && "ring-2 ring-primary/40 bg-primary/25"
+          )}
+        >
+          <AgentIcon agentId={selectedAgentId} className="w-3.5 h-3.5" />
+          <span>{selectedAgent.name}</span>
+          <ChevronDown className={cn("w-3 h-3 transition-transform", isOpen && "rotate-180")} />
+        </button>
+
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+            <div className="absolute right-0 top-full mt-1.5 z-50 bg-popover border border-border rounded-lg shadow-xl w-44 overflow-hidden">
+              <div className="p-1">
+                {agentConfigs.map((agent) => {
+                  const isSelected = agent.id === selectedAgentId
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => {
+                        setSelectedAgentId(agent.id)
+                        setIsOpen(false)
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors text-xs rounded-md",
+                        isSelected ? "bg-primary/10 text-primary" : "hover:bg-accent"
+                      )}
+                    >
+                      <AgentIcon agentId={agent.id} className="w-3.5 h-3.5" />
+                      <span className="flex-1">{agent.name}</span>
+                      {isSelected && <Check className="w-3 h-3" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function CodexSettings() {
   const [enabled, setEnabled] = useState(true)
@@ -1526,6 +1591,7 @@ function AllSettings() {
           Agent
         </h3>
         <div className="space-y-4">
+          <DefaultAgentSelector />
           <CodexSettings />
         </div>
       </section>
