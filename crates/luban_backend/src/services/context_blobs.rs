@@ -76,7 +76,7 @@ impl GitWorkspaceService {
 
         match std::fs::rename(&tmp, &dest) {
             Ok(()) => Ok((hash, dest)),
-            Err(err) if dest.exists() => {
+            Err(_err) if dest.exists() => {
                 let _ = std::fs::remove_file(&tmp);
                 Ok((hash, dest))
             }
@@ -125,7 +125,7 @@ impl GitWorkspaceService {
 
         match std::fs::rename(&tmp, &thumbnail_path) {
             Ok(()) => Ok(Some(thumbnail_path)),
-            Err(err) if thumbnail_path.exists() => {
+            Err(_err) if thumbnail_path.exists() => {
                 let _ = std::fs::remove_file(&tmp);
                 Ok(Some(thumbnail_path))
             }
@@ -201,7 +201,7 @@ impl GitWorkspaceService {
 
         match std::fs::rename(&tmp, &dest) {
             Ok(()) => Ok((hash, extension, byte_len, dest)),
-            Err(err) if dest.exists() => {
+            Err(_err) if dest.exists() => {
                 let _ = std::fs::remove_file(&tmp);
                 Ok((hash, extension, byte_len, dest))
             }
