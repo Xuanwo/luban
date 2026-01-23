@@ -36,6 +36,8 @@ export function ChatComposer({
   onChangeAmpModeOverride,
   onSend,
   canSend,
+  codexEnabled = true,
+  ampEnabled = true,
 }: {
   value: string
   onChange: (value: string) => void
@@ -64,6 +66,8 @@ export function ChatComposer({
   onChangeAmpModeOverride: (mode: AmpModeOverride) => void
   onSend: () => void
   canSend: boolean
+  codexEnabled?: boolean
+  ampEnabled?: boolean
 }) {
   return (
     <div className="px-4 pb-4">
@@ -100,6 +104,8 @@ export function ChatComposer({
               ampModeOverride={ampModeOverride}
               onChangeRunnerOverride={onChangeRunnerOverride}
               onChangeAmpModeOverride={onChangeAmpModeOverride}
+              codexEnabled={codexEnabled}
+              ampEnabled={ampEnabled}
             />
           }
           primaryAction={{

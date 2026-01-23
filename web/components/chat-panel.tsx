@@ -1248,6 +1248,8 @@ export function ChatPanel({
                   }}
                   onSend={handleSend}
                   canSend={canSend}
+                  codexEnabled={app?.agent.codex_enabled ?? true}
+                  ampEnabled={app?.agent.amp_enabled ?? true}
                 />
               )}
             </div>

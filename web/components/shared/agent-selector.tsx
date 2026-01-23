@@ -234,6 +234,8 @@ export function AgentSelector({
   onChangeRunnerOverride,
   ampModeOverride,
   onChangeAmpModeOverride,
+  codexEnabled = true,
+  ampEnabled = true,
 }: {
   testId?: string
   modelId: string | null | undefined
@@ -252,6 +254,8 @@ export function AgentSelector({
   onChangeRunnerOverride: (runner: AgentRunnerOverride) => void
   ampModeOverride: AmpModeOverride
   onChangeAmpModeOverride: (mode: AmpModeOverride) => void
+  codexEnabled?: boolean
+  ampEnabled?: boolean
 }) {
   const resolvedDefaultRunner: AgentRunnerKind = defaultRunner ?? "codex"
   const resolvedRunner: AgentRunnerKind = runnerOverride ?? resolvedDefaultRunner
@@ -309,6 +313,28 @@ export function AgentSelector({
     }
   }
 
+  const noAgentsEnabled = !codexEnabled && !ampEnabled
+
+  if (noAgentsEnabled) {
+    return (
+      <div className={cn("relative", className)}>
+        <button
+          data-testid={testId}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onOpenAgentSettings?.("codex")}
+          className={cn(
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
+            "text-muted-foreground hover:text-foreground hover:bg-muted",
+          )}
+          title="Enable agents in Settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+          <span className="whitespace-nowrap">No agent enabled</span>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className={cn("relative", className)}>
       <button
@@ -352,9 +378,9 @@ export function AgentSelector({
                 </div>
 
                 {([
-                  { id: "codex" as const, label: "Codex", icon: <OpenAIIcon className="w-3.5 h-3.5 flex-shrink-0" /> },
-                  { id: "amp" as const, label: "Amp", icon: <Zap className="w-3.5 h-3.5 flex-shrink-0" /> },
-                ] as const).map((opt) => {
+                  { id: "codex" as const, label: "Codex", icon: <OpenAIIcon className="w-3.5 h-3.5 flex-shrink-0" />, enabled: codexEnabled },
+                  { id: "amp" as const, label: "Amp", icon: <Zap className="w-3.5 h-3.5 flex-shrink-0" />, enabled: ampEnabled },
+                ] as const).filter((opt) => opt.enabled).map((opt) => {
                   const selected = opt.id === tempRunner
                   const isDefault = opt.id === resolvedDefaultRunner
                   return (
