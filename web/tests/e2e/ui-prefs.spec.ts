@@ -35,13 +35,13 @@ test("remembers the last used open button selection", async ({ page }) => {
   await ensureWorkspace(page)
 
   await page.getByTestId("open-button-menu").click()
-  await page.getByTestId("open-button-item-cursor").click()
-  await expect(page.getByTestId("open-button-primary")).toHaveText(/Cursor/, { timeout: 10_000 })
+  await page.getByTestId("open-button-item-copy-path").click()
+  await expect(page.getByTestId("open-button-primary")).toHaveText(/Copy Path/, { timeout: 10_000 })
   await expect
     .poll(async () => String((await fetchAppSnapshot(page))?.ui?.open_button_selection ?? ""), { timeout: 10_000 })
-    .toContain("cursor")
+    .toContain("copy-path")
 
   await page.reload()
   await page.getByTestId("open-button-primary").waitFor({ timeout: 30_000 })
-  await expect(page.getByTestId("open-button-primary")).toHaveText(/Cursor/)
+  await expect(page.getByTestId("open-button-primary")).toHaveText(/Copy Path/)
 })
