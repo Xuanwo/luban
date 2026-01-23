@@ -15,6 +15,7 @@ export type SidebarWorktreeVm = {
   prNumber?: number
   prTitle?: string
   workspaceId: number
+  pinned: boolean
 }
 
 export type SidebarProjectVm = {
@@ -25,32 +26,31 @@ export type SidebarProjectVm = {
   expanded: boolean
   createWorkspaceStatus: OperationStatus
   worktrees: SidebarWorktreeVm[]
+  pinned: boolean
 }
 
 export function buildSidebarProjects(
   app: AppSnapshot | null,
   args?: {
     optimisticArchivingWorkspaceIds?: Set<number>
+    pinnedProjectIds?: Set<ProjectId>
+    pinnedWorktreeIds?: Set<number>
   },
 ): SidebarProjectVm[] {
   if (!app) return []
   const optimisticArchiving = args?.optimisticArchivingWorkspaceIds ?? null
+  const pinnedProjectIds = args?.pinnedProjectIds ?? new Set<ProjectId>()
+  const pinnedWorktreeIds = args?.pinnedWorktreeIds ?? new Set<number>()
 
   const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
 
-  return app.projects.map((p) => ({
-    id: p.id,
-    displayName: displayNames.get(p.path) ?? p.slug,
-    path: p.path,
-    isGit: p.is_git,
-    expanded: p.expanded,
-    createWorkspaceStatus: p.create_workspace_status,
-    worktrees: p.workspaces
+  const projects = app.projects.map((p, projectIndex) => {
+    const worktrees = p.workspaces
       .filter((w) => w.status === "active")
-      .map((w) => {
+      .map((w, worktreeIndex) => {
         const agentStatus = agentStatusFromWorkspace(w)
         const pr = prStatusFromWorkspace(w)
-        return {
+        const vm: SidebarWorktreeVm = {
           id: w.short_id,
           name: w.branch_name,
           worktreeName: w.workspace_name,
@@ -61,7 +61,37 @@ export function buildSidebarProjects(
           prNumber: pr.prNumber,
           prTitle: pr.prState === "merged" ? "Merged" : undefined,
           workspaceId: w.id,
+          pinned: pinnedWorktreeIds.has(w.id),
         }
-      }),
-  }))
+        return { vm, index: worktreeIndex }
+      })
+      // Sort worktrees: pinned first, then preserve original order.
+      .sort((a, b) => {
+        if (a.vm.pinned && !b.vm.pinned) return -1
+        if (!a.vm.pinned && b.vm.pinned) return 1
+        return a.index - b.index
+      })
+      .map((x) => x.vm)
+
+    const vm: SidebarProjectVm = {
+      id: p.id,
+      displayName: displayNames.get(p.path) ?? p.slug,
+      path: p.path,
+      isGit: p.is_git,
+      expanded: p.expanded,
+      createWorkspaceStatus: p.create_workspace_status,
+      pinned: pinnedProjectIds.has(p.id),
+      worktrees,
+    }
+    return { vm, index: projectIndex }
+  })
+
+  // Sort projects: pinned first, then preserve original order.
+  return projects
+    .sort((a, b) => {
+      if (a.vm.pinned && !b.vm.pinned) return -1
+      if (!a.vm.pinned && b.vm.pinned) return 1
+      return a.index - b.index
+    })
+    .map((x) => x.vm)
 }

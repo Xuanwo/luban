@@ -7,6 +7,8 @@ export const VIEW_MODE_KEY = "luban:ui:view_mode"
 export const SIDEBAR_WIDTH_KEY = "luban:ui:sidebar_width_px"
 export const RIGHT_SIDEBAR_WIDTH_KEY = "luban:ui:right_sidebar_width_px"
 export const GLOBAL_ZOOM_KEY = "luban:ui:global_zoom"
+export const PINNED_PROJECTS_KEY = "luban:ui:pinned_projects"
+export const PINNED_WORKTREES_KEY = "luban:ui:pinned_worktrees"
 
 export function activeThreadKey(workspaceId: number): string {
   return `luban:active_thread_id:${workspaceId}`
