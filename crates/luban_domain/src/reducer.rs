@@ -34,6 +34,7 @@ impl AppState {
             global_zoom_percent: 100,
             appearance_theme: crate::AppearanceTheme::default(),
             appearance_fonts: crate::AppearanceFonts::default(),
+            color_scheme: crate::ColorSchemeSettings::new(),
             agent_default_model_id: default_agent_model_id().to_owned(),
             agent_default_thinking_effort: default_thinking_effort(),
             agent_default_runner: crate::default_agent_runner_kind(),
@@ -1283,6 +1284,37 @@ impl AppState {
                 self.appearance_theme = theme;
                 vec![Effect::SaveAppState]
             }
+            Action::AppearanceColorSchemeChanged {
+                light_scheme_id,
+                dark_scheme_id,
+            } => {
+                let mut changed = false;
+                if let Some(id) = light_scheme_id {
+                    let normalized = id.trim();
+                    if !normalized.is_empty()
+                        && normalized.len() <= 64
+                        && self.color_scheme.light_scheme_id != normalized
+                    {
+                        self.color_scheme.light_scheme_id = normalized.to_owned();
+                        changed = true;
+                    }
+                }
+                if let Some(id) = dark_scheme_id {
+                    let normalized = id.trim();
+                    if !normalized.is_empty()
+                        && normalized.len() <= 64
+                        && self.color_scheme.dark_scheme_id != normalized
+                    {
+                        self.color_scheme.dark_scheme_id = normalized.to_owned();
+                        changed = true;
+                    }
+                }
+                if changed {
+                    vec![Effect::SaveAppState]
+                } else {
+                    Vec::new()
+                }
+            }
             Action::AppearanceFontsChanged {
                 ui_font,
                 chat_font,
@@ -2517,6 +2549,8 @@ mod tests {
                 terminal_pane_width: Some(480),
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2561,6 +2595,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: Some(135),
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2605,6 +2641,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2651,6 +2689,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: Some("light".to_owned()),
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,

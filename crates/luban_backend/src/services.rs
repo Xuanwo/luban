@@ -4744,6 +4744,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,

@@ -98,6 +98,21 @@ impl AppearanceTheme {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ColorSchemeSettings {
+    pub light_scheme_id: String,
+    pub dark_scheme_id: String,
+}
+
+impl ColorSchemeSettings {
+    pub fn new() -> Self {
+        Self {
+            light_scheme_id: "default".to_owned(),
+            dark_scheme_id: "default".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppearanceFonts {
     pub ui_font: String,
@@ -569,6 +584,7 @@ pub struct AppState {
     pub global_zoom_percent: u16,
     pub appearance_theme: AppearanceTheme,
     pub appearance_fonts: AppearanceFonts,
+    pub color_scheme: ColorSchemeSettings,
     pub(crate) agent_default_model_id: String,
     pub(crate) agent_default_thinking_effort: ThinkingEffort,
     pub(crate) agent_default_runner: crate::AgentRunnerKind,
@@ -621,6 +637,8 @@ pub struct PersistedAppState {
     pub terminal_pane_width: Option<u16>,
     pub global_zoom_percent: Option<u16>,
     pub appearance_theme: Option<String>,
+    pub appearance_light_scheme_id: Option<String>,
+    pub appearance_dark_scheme_id: Option<String>,
     pub appearance_ui_font: Option<String>,
     pub appearance_chat_font: Option<String>,
     pub appearance_code_font: Option<String>,

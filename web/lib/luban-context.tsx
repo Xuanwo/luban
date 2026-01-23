@@ -129,6 +129,8 @@ type LubanContextValue = {
   setThinkingEffort: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, effort: ThinkingEffort) => void
   setAppearanceTheme: (theme: AppearanceTheme) => void
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
+  setLightColorScheme: (schemeId: string) => void
+  setDarkColorScheme: (schemeId: string) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
 
@@ -313,6 +315,8 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setThinkingEffort: actions.setThinkingEffort,
     setAppearanceTheme: actions.setAppearanceTheme,
     setAppearanceFonts: actions.setAppearanceFonts,
+    setLightColorScheme: actions.setLightColorScheme,
+    setDarkColorScheme: actions.setDarkColorScheme,
     setGlobalZoom: actions.setGlobalZoom,
     setOpenButtonSelection: actions.setOpenButtonSelection,
     setCodexEnabled: actions.setCodexEnabled,

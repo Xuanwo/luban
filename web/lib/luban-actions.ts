@@ -127,6 +127,8 @@ export type LubanActions = {
   setThinkingEffort: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, effort: ThinkingEffort) => void
   setAppearanceTheme: (theme: AppearanceTheme) => void
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
+  setLightColorScheme: (schemeId: string) => void
+  setDarkColorScheme: (schemeId: string) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
 }
@@ -747,6 +749,14 @@ export function createLubanActions(args: {
     args.sendAction({ type: "appearance_fonts_changed", fonts })
   }
 
+  function setLightColorScheme(schemeId: string) {
+    args.sendAction({ type: "appearance_color_scheme_changed", light_scheme_id: schemeId })
+  }
+
+  function setDarkColorScheme(schemeId: string) {
+    args.sendAction({ type: "appearance_color_scheme_changed", dark_scheme_id: schemeId })
+  }
+
   function setGlobalZoom(zoom: number) {
     args.sendAction({ type: "appearance_global_zoom_changed", zoom })
   }
@@ -813,6 +823,8 @@ export function createLubanActions(args: {
     setThinkingEffort,
     setAppearanceTheme,
     setAppearanceFonts,
+    setLightColorScheme,
+    setDarkColorScheme,
     setGlobalZoom,
     setOpenButtonSelection,
   }

@@ -43,10 +43,24 @@ pub struct AppearanceSnapshot {
     pub fonts: AppearanceFontsSnapshot,
     #[serde(default = "default_global_zoom")]
     pub global_zoom: f64,
+    #[serde(default)]
+    pub color_scheme: ColorSchemeSnapshot,
 }
 
 fn default_global_zoom() -> f64 {
     1.0
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ColorSchemeSnapshot {
+    #[serde(default = "default_scheme_id")]
+    pub light_scheme_id: String,
+    #[serde(default = "default_scheme_id")]
+    pub dark_scheme_id: String,
+}
+
+fn default_scheme_id() -> String {
+    "default".to_owned()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -769,6 +783,10 @@ pub enum ClientAction {
     },
     AppearanceThemeChanged {
         theme: AppearanceTheme,
+    },
+    AppearanceColorSchemeChanged {
+        light_scheme_id: Option<String>,
+        dark_scheme_id: Option<String>,
     },
     AppearanceFontsChanged {
         fonts: AppearanceFontsSnapshot,

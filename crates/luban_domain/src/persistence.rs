@@ -90,6 +90,22 @@ pub(crate) fn apply_persisted_app_state(
         .as_deref()
         .and_then(AppearanceTheme::parse)
         .unwrap_or_default();
+    state.color_scheme = crate::ColorSchemeSettings {
+        light_scheme_id: persisted
+            .appearance_light_scheme_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| "default".to_owned()),
+        dark_scheme_id: persisted
+            .appearance_dark_scheme_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| "default".to_owned()),
+    };
     let defaults = AppearanceFonts::default();
     state.appearance_fonts = AppearanceFonts {
         ui_font: normalize_font(persisted.appearance_ui_font.as_deref(), &defaults.ui_font),
@@ -287,6 +303,8 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         terminal_pane_width: state.terminal_pane_width,
         global_zoom_percent: Some(state.global_zoom_percent),
         appearance_theme: Some(state.appearance_theme.as_str().to_owned()),
+        appearance_light_scheme_id: Some(state.color_scheme.light_scheme_id.clone()),
+        appearance_dark_scheme_id: Some(state.color_scheme.dark_scheme_id.clone()),
         appearance_ui_font: Some(state.appearance_fonts.ui_font.clone()),
         appearance_chat_font: Some(state.appearance_fonts.chat_font.clone()),
         appearance_code_font: Some(state.appearance_fonts.code_font.clone()),

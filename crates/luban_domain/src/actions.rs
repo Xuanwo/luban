@@ -267,6 +267,10 @@ pub enum Action {
     AppearanceThemeChanged {
         theme: AppearanceTheme,
     },
+    AppearanceColorSchemeChanged {
+        light_scheme_id: Option<String>,
+        dark_scheme_id: Option<String>,
+    },
     AppearanceFontsChanged {
         ui_font: String,
         chat_font: String,

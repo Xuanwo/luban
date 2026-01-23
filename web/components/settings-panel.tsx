@@ -44,6 +44,7 @@ import { createHighlighter } from "shiki"
 import { toast } from "sonner"
 
 import { useAppearance } from "@/components/appearance-provider"
+import { ColorSchemeSettings, getSchemeOrDefault } from "@/components/color-scheme"
 import { useLuban } from "@/lib/luban-context"
 import { cn } from "@/lib/utils"
 import type {
@@ -78,6 +79,7 @@ const tocItems: TocItem[] = [
     icon: Palette,
     children: [
       { id: "theme", label: "Theme", icon: Sun },
+      { id: "color-scheme", label: "Color Scheme", icon: Palette },
       { id: "fonts", label: "Fonts", icon: Type },
     ],
   },
@@ -624,6 +626,8 @@ function ThemePreviewCard({
   isSelected,
   onClick,
   testId,
+  lightSchemeId = "default",
+  darkSchemeId = "default",
 }: {
   themeId: string
   label: string
@@ -631,9 +635,22 @@ function ThemePreviewCard({
   isSelected: boolean
   onClick: () => void
   testId?: string
+  lightSchemeId?: string
+  darkSchemeId?: string
 }) {
   const isSystem = themeId === "system"
-  const colors = themeColors[themeId as keyof typeof themeColors] || themeColors.light
+
+  // Get the actual scheme palettes for dynamic colors
+  const lightScheme = getSchemeOrDefault(lightSchemeId, "light")
+  const darkScheme = getSchemeOrDefault(darkSchemeId, "dark")
+
+  // Use the appropriate scheme based on themeId
+  const scheme = themeId === "dark" ? darkScheme : lightScheme
+  const palette = scheme.palette
+
+  // Get palettes for system preview (shows both light and dark)
+  const lightPalette = lightScheme.palette
+  const darkPalette = darkScheme.palette
 
   return (
     <button
@@ -644,67 +661,67 @@ function ThemePreviewCard({
         isSelected ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/50",
       )}
     >
-      <div className={cn("h-24 flex", isSystem ? "" : colors.bg)}>
+      <div className="h-24 flex" style={isSystem ? undefined : { backgroundColor: palette.background }}>
         {isSystem ? (
           <>
-            <div className="flex-1 flex bg-gray-50">
-              <div className={cn("w-12 border-r", themeColors.light.sidebar, themeColors.light.border)}>
-                <div className={cn("h-5 border-b flex items-center px-1.5", themeColors.light.border)}>
-                  <div className="w-3 h-3 rounded bg-gray-300" />
+            <div className="flex-1 flex" style={{ backgroundColor: lightPalette.background }}>
+              <div className="w-12 border-r" style={{ backgroundColor: lightPalette.sidebar, borderColor: lightPalette.border }}>
+                <div className="h-5 border-b flex items-center px-1.5" style={{ borderColor: lightPalette.border }}>
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: lightPalette.secondary }} />
                 </div>
                 <div className="p-1.5 space-y-1">
-                  <div className="h-2 w-8 rounded bg-gray-300" />
-                  <div className="h-2 w-6 rounded bg-blue-100" />
-                  <div className="h-2 w-7 rounded bg-gray-200" />
+                  <div className="h-2 w-8 rounded" style={{ backgroundColor: lightPalette.secondary }} />
+                  <div className="h-2 w-6 rounded" style={{ backgroundColor: lightPalette.accent }} />
+                  <div className="h-2 w-7 rounded" style={{ backgroundColor: lightPalette.muted }} />
                 </div>
               </div>
               <div className="flex-1 flex flex-col">
-                <div className={cn("h-5 border-b", themeColors.light.border)} />
+                <div className="h-5 border-b" style={{ borderColor: lightPalette.border }} />
                 <div className="flex-1 p-2 space-y-1.5">
-                  <div className="h-5 rounded bg-gray-200/60" />
-                  <div className="h-8 rounded bg-gray-200/60" />
+                  <div className="h-5 rounded" style={{ backgroundColor: lightPalette.secondary }} />
+                  <div className="h-8 rounded" style={{ backgroundColor: lightPalette.secondary }} />
                 </div>
               </div>
             </div>
-            <div className="flex-1 flex bg-zinc-900">
+            <div className="flex-1 flex" style={{ backgroundColor: darkPalette.background }}>
               <div className="flex-1 flex flex-col">
-                <div className={cn("h-5 border-b", themeColors.dark.border)} />
+                <div className="h-5 border-b" style={{ borderColor: darkPalette.border }} />
                 <div className="flex-1 p-2 space-y-1.5">
-                  <div className="h-5 rounded bg-zinc-700/60" />
-                  <div className="h-8 rounded bg-zinc-700/60" />
+                  <div className="h-5 rounded" style={{ backgroundColor: darkPalette.secondary }} />
+                  <div className="h-8 rounded" style={{ backgroundColor: darkPalette.secondary }} />
                 </div>
               </div>
-              <div className={cn("w-10 border-l", themeColors.dark.border)}>
-                <div className={cn("h-5 border-b", themeColors.dark.border)} />
-                <div className="flex-1 p-1 bg-zinc-700/60">
-                  <div className="h-1.5 w-6 rounded bg-green-500/40" />
+              <div className="w-10 border-l" style={{ borderColor: darkPalette.border }}>
+                <div className="h-5 border-b" style={{ borderColor: darkPalette.border }} />
+                <div className="flex-1 p-1" style={{ backgroundColor: darkPalette.secondary }}>
+                  <div className="h-1.5 w-6 rounded" style={{ backgroundColor: darkPalette.primary, opacity: 0.6 }} />
                 </div>
               </div>
             </div>
           </>
         ) : (
           <>
-            <div className={cn("w-12 border-r", colors.sidebar, colors.border)}>
-              <div className={cn("h-5 border-b flex items-center px-1.5", colors.border)}>
-                <div className={cn("w-3 h-3 rounded", colors.secondary)} />
+            <div className="w-12 border-r" style={{ backgroundColor: palette.sidebar, borderColor: palette.border }}>
+              <div className="h-5 border-b flex items-center px-1.5" style={{ borderColor: palette.border }}>
+                <div className="w-3 h-3 rounded" style={{ backgroundColor: palette.secondary }} />
               </div>
               <div className="p-1.5 space-y-1">
-                <div className={cn("h-2 w-8 rounded", colors.secondary)} />
-                <div className={cn("h-2 w-6 rounded", colors.accent)} />
-                <div className={cn("h-2 w-7 rounded", colors.secondary)} />
+                <div className="h-2 w-8 rounded" style={{ backgroundColor: palette.secondary }} />
+                <div className="h-2 w-6 rounded" style={{ backgroundColor: palette.accent }} />
+                <div className="h-2 w-7 rounded" style={{ backgroundColor: palette.muted }} />
               </div>
             </div>
             <div className="flex-1 flex flex-col">
-              <div className={cn("h-5 border-b", colors.border)} />
+              <div className="h-5 border-b" style={{ borderColor: palette.border }} />
               <div className="flex-1 p-2 space-y-1.5">
-                <div className={cn("h-5 rounded", colors.secondary)} />
-                <div className={cn("h-8 rounded", colors.secondary)} />
+                <div className="h-5 rounded" style={{ backgroundColor: palette.secondary }} />
+                <div className="h-8 rounded" style={{ backgroundColor: palette.secondary }} />
               </div>
             </div>
-            <div className={cn("w-10 border-l", colors.border)}>
-              <div className={cn("h-5 border-b", colors.border)} />
-              <div className={cn("flex-1 p-1", colors.secondary)}>
-                <div className={cn("h-1.5 w-6 rounded", themeId === "dark" ? "bg-green-500/40" : "bg-green-600/30")} />
+            <div className="w-10 border-l" style={{ borderColor: palette.border }}>
+              <div className="h-5 border-b" style={{ borderColor: palette.border }} />
+              <div className="flex-1 p-1" style={{ backgroundColor: palette.secondary }}>
+                <div className="h-1.5 w-6 rounded" style={{ backgroundColor: palette.primary, opacity: 0.6 }} />
               </div>
             </div>
           </>
@@ -2418,8 +2435,10 @@ function AllSettings({
 }) {
   const { theme, setTheme } = useTheme()
   const { fonts, setFonts } = useAppearance()
-  const { app, setAppearanceTheme, setAppearanceFonts, setTaskPromptTemplate, setSystemPromptTemplate } = useLuban()
+  const { app, setAppearanceTheme, setAppearanceFonts, setLightColorScheme, setDarkColorScheme, setTaskPromptTemplate, setSystemPromptTemplate } = useLuban()
   const resolvedTheme = theme ?? "system"
+  const lightSchemeId = app?.appearance?.color_scheme?.light_scheme_id ?? "default"
+  const darkSchemeId = app?.appearance?.color_scheme?.dark_scheme_id ?? "default"
 
   return (
     <div className="space-y-12">
@@ -2441,9 +2460,24 @@ function AllSettings({
                 setAppearanceTheme(option.id)
               }}
               testId={`settings-theme-${option.id}`}
+              lightSchemeId={lightSchemeId}
+              darkSchemeId={darkSchemeId}
             />
           ))}
         </div>
+      </section>
+
+      <section id="color-scheme" className="scroll-mt-8">
+        <h3 className="text-sm font-medium mb-4 flex items-center gap-2">
+          <Palette className="w-4 h-4 text-muted-foreground" />
+          Color Scheme
+        </h3>
+        <ColorSchemeSettings
+          lightSchemeId={lightSchemeId}
+          darkSchemeId={darkSchemeId}
+          onLightSchemeChange={setLightColorScheme}
+          onDarkSchemeChange={setDarkColorScheme}
+        />
       </section>
 
       <section id="fonts" className="scroll-mt-8">

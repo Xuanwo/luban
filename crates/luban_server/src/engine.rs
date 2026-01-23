@@ -3162,6 +3162,10 @@ impl Engine {
                     terminal_font: self.state.appearance_fonts.terminal_font.clone(),
                 },
                 global_zoom: (self.state.global_zoom_percent as f64) / 100.0,
+                color_scheme: luban_api::ColorSchemeSnapshot {
+                    light_scheme_id: self.state.color_scheme.light_scheme_id.clone(),
+                    dark_scheme_id: self.state.color_scheme.dark_scheme_id.clone(),
+                },
             },
             agent: luban_api::AgentSettingsSnapshot {
                 codex_enabled: self.state.agent_codex_enabled(),
@@ -4160,6 +4164,13 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
                 },
             })
         }
+        luban_api::ClientAction::AppearanceColorSchemeChanged {
+            light_scheme_id,
+            dark_scheme_id,
+        } => Some(Action::AppearanceColorSchemeChanged {
+            light_scheme_id,
+            dark_scheme_id,
+        }),
         luban_api::ClientAction::AppearanceFontsChanged { fonts } => {
             Some(Action::AppearanceFontsChanged {
                 ui_font: fonts.ui_font,
@@ -4480,6 +4491,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -4956,6 +4969,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -5121,6 +5136,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -5398,6 +5415,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -5720,6 +5739,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -5931,6 +5952,8 @@ mod tests {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,

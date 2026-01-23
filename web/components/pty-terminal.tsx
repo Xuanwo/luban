@@ -140,6 +140,48 @@ function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: n
   return { r: to255(rp), g: to255(gp), b: to255(bp) }
 }
 
+function parseOklchTriple(raw: string): { l: number; c: number; h: number } | null {
+  const trimmed = raw.trim()
+  // Match oklch(L C H) format - L is 0-1 or %, C is usually 0-0.4, H is degrees
+  const m = /^oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+)\s*\)$/i.exec(trimmed)
+  if (!m) return null
+  let l = Number.parseFloat(m[1] ?? "")
+  if ((m[1] ?? "").endsWith("%")) l = l / 100
+  const c = Number.parseFloat(m[2] ?? "")
+  const h = Number.parseFloat(m[3] ?? "")
+  if (![l, c, h].every((v) => Number.isFinite(v))) return null
+  return { l, c, h }
+}
+
+function oklchToRgb(l: number, c: number, h: number): { r: number; g: number; b: number } {
+  // Convert oklch to oklab
+  const hRad = (h * Math.PI) / 180
+  const a = c * Math.cos(hRad)
+  const b = c * Math.sin(hRad)
+
+  // Convert oklab to linear sRGB
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * b
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * b
+  const s_ = l - 0.0894841775 * a - 1.291485548 * b
+
+  const l3 = l_ * l_ * l_
+  const m3 = m_ * m_ * m_
+  const s3 = s_ * s_ * s_
+
+  const rLinear = 4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3
+  const gLinear = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3
+  const bLinear = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3
+
+  // Convert linear sRGB to sRGB (gamma correction)
+  const toSrgb = (v: number) => {
+    if (v <= 0.0031308) return v * 12.92
+    return 1.055 * Math.pow(v, 1 / 2.4) - 0.055
+  }
+
+  const to255 = (v: number) => Math.round(Math.max(0, Math.min(1, toSrgb(v))) * 255)
+  return { r: to255(rLinear), g: to255(gLinear), b: to255(bLinear) }
+}
+
 function toHexColor(raw: string): string | null {
   const hex = normalizeHexColor(raw)
   if (hex) return hex
@@ -179,6 +221,9 @@ function resolveCssColor(scope: Element, name: string, fallback: { r: number; g:
 
   const hsl = parseHslTriple(raw)
   if (hsl) return hslToRgb(hsl.h, hsl.s, hsl.l)
+
+  const oklch = parseOklchTriple(raw)
+  if (oklch) return oklchToRgb(oklch.l, oklch.c, oklch.h)
 
   return fallback
 }
@@ -226,9 +271,10 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
 }
 
 export function PtyTerminal() {
-  const { activeWorkspaceId, activeWorkspace } = useLuban()
+  const { activeWorkspaceId, activeWorkspace, app } = useLuban()
   const { fonts } = useAppearance()
   const { resolvedTheme } = useTheme()
+  const colorScheme = app?.appearance?.color_scheme
   const outerRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -265,7 +311,7 @@ export function PtyTerminal() {
     return () => {
       cancelled = true
     }
-  }, [resolvedTheme])
+  }, [resolvedTheme, colorScheme])
 
   useEffect(() => {
     const outer = outerRef.current

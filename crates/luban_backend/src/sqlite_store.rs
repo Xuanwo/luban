@@ -28,6 +28,8 @@ const AGENT_CODEX_ENABLED_KEY: &str = "agent_codex_enabled";
 const AGENT_AMP_ENABLED_KEY: &str = "agent_amp_enabled";
 const TASK_PROMPT_TEMPLATE_PREFIX: &str = "task_prompt_template_";
 const APPEARANCE_THEME_KEY: &str = "appearance_theme";
+const APPEARANCE_LIGHT_SCHEME_ID_KEY: &str = "appearance_light_scheme_id";
+const APPEARANCE_DARK_SCHEME_ID_KEY: &str = "appearance_dark_scheme_id";
 const APPEARANCE_UI_FONT_KEY: &str = "appearance_ui_font";
 const APPEARANCE_CHAT_FONT_KEY: &str = "appearance_chat_font";
 const APPEARANCE_CODE_FONT_KEY: &str = "appearance_code_font";
@@ -1042,6 +1044,8 @@ impl SqliteDatabase {
                 terminal_pane_width: None,
                 global_zoom_percent: None,
                 appearance_theme: None,
+                appearance_light_scheme_id: None,
+                appearance_dark_scheme_id: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -1107,6 +1111,26 @@ impl SqliteDatabase {
             )
             .optional()
             .context("failed to load appearance theme")?;
+
+        let appearance_light_scheme_id = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![APPEARANCE_LIGHT_SCHEME_ID_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load appearance light scheme id")?;
+
+        let appearance_dark_scheme_id = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![APPEARANCE_DARK_SCHEME_ID_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load appearance dark scheme id")?;
 
         let appearance_ui_font = self
             .conn
@@ -1398,6 +1422,8 @@ impl SqliteDatabase {
             terminal_pane_width,
             global_zoom_percent,
             appearance_theme,
+            appearance_light_scheme_id,
+            appearance_dark_scheme_id,
             appearance_ui_font,
             appearance_chat_font,
             appearance_code_font,
@@ -1651,6 +1677,16 @@ impl SqliteDatabase {
                 &tx,
                 APPEARANCE_THEME_KEY,
                 snapshot.appearance_theme.as_deref(),
+            )?;
+            upsert_text(
+                &tx,
+                APPEARANCE_LIGHT_SCHEME_ID_KEY,
+                snapshot.appearance_light_scheme_id.as_deref(),
+            )?;
+            upsert_text(
+                &tx,
+                APPEARANCE_DARK_SCHEME_ID_KEY,
+                snapshot.appearance_dark_scheme_id.as_deref(),
             )?;
             upsert_text(
                 &tx,
@@ -2887,6 +2923,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -2940,6 +2978,8 @@ mod tests {
             terminal_pane_width: Some(360),
             global_zoom_percent: Some(110),
             appearance_theme: Some("dark".to_owned()),
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: Some("Inter".to_owned()),
             appearance_chat_font: Some("Inter".to_owned()),
             appearance_code_font: Some("Geist Mono".to_owned()),
@@ -3003,6 +3043,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3196,6 +3238,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3303,6 +3347,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3366,6 +3412,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3428,6 +3476,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3475,6 +3525,8 @@ mod tests {
             terminal_pane_width: None,
             global_zoom_percent: None,
             appearance_theme: None,
+            appearance_light_scheme_id: None,
+            appearance_dark_scheme_id: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,

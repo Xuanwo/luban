@@ -735,6 +735,20 @@ export function mockDispatchAction(args: {
     return
   }
 
+  if (a.type === "appearance_color_scheme_changed") {
+    if (!state.app.appearance.color_scheme) {
+      state.app.appearance.color_scheme = { light_scheme_id: "default", dark_scheme_id: "default" }
+    }
+    if (a.light_scheme_id) {
+      state.app.appearance.color_scheme.light_scheme_id = a.light_scheme_id
+    }
+    if (a.dark_scheme_id) {
+      state.app.appearance.color_scheme.dark_scheme_id = a.dark_scheme_id
+    }
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "appearance_fonts_changed") {
     state.app.appearance.fonts = a.fonts
     emitAppChanged({ state, onEvent: args.onEvent })

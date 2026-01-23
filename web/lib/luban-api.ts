@@ -13,10 +13,16 @@ export type AppearanceFontsSnapshot = {
   terminal_font: string
 }
 
+export type ColorSchemeSnapshot = {
+  light_scheme_id: string
+  dark_scheme_id: string
+}
+
 export type AppearanceSnapshot = {
   theme: AppearanceTheme
   fonts: AppearanceFontsSnapshot
   global_zoom: number
+  color_scheme?: ColorSchemeSnapshot
 }
 
 export type AgentRunnerKind = "codex" | "amp" | "claude"
@@ -417,6 +423,7 @@ export type ClientAction =
     }
   | { type: "open_button_selection_changed"; selection: string }
   | { type: "appearance_theme_changed"; theme: AppearanceTheme }
+  | { type: "appearance_color_scheme_changed"; light_scheme_id?: string; dark_scheme_id?: string }
   | { type: "appearance_fonts_changed"; fonts: AppearanceFontsSnapshot }
   | { type: "appearance_global_zoom_changed"; zoom: number }
   | { type: "codex_enabled_changed"; enabled: boolean }
