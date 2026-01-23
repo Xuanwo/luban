@@ -634,6 +634,7 @@ pub(super) fn run_claude_turn_streamed_via_cli(
         "--print",
         "--output-format",
         "stream-json",
+        "--verbose",
         "--include-partial-messages",
         "--permission-mode",
         "bypassPermissions",
