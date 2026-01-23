@@ -337,7 +337,8 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     }
                   }}
                   className={cn(
-                    "flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left",
+                    "flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left transition-[padding] duration-150",
+                    "group-hover/project:pr-16",
                     canExpand || standaloneMainWorktree || project.worktrees.length === 0
                       ? "cursor-pointer"
                       : "cursor-default",
@@ -380,13 +381,14 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                 <div
                   aria-hidden="true"
                   className={cn(
-                    "absolute right-0 top-0 bottom-0 w-16 opacity-0 pointer-events-none transition-opacity z-10",
-                    "bg-gradient-to-l to-transparent",
-                    isStandaloneMainActive ? "from-primary/10 via-primary/10" : "from-sidebar-accent/80 via-sidebar-accent/80",
+                    "absolute right-0 top-0 bottom-0 w-24 opacity-0 pointer-events-none transition-opacity duration-150 z-10",
+                    "bg-gradient-to-l from-sidebar via-sidebar/90 to-transparent",
+                    isStandaloneMainActive && "from-[hsl(var(--primary)/0.06)] via-[hsl(var(--primary)/0.04)]",
+                    !isStandaloneMainActive && "group-hover/project:from-sidebar-accent group-hover/project:via-sidebar-accent/80",
                     "group-hover/project:opacity-100",
                   )}
                 />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex items-center gap-0.5 opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto transition-opacity">
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex items-center gap-0.5 opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto transition-opacity duration-150">
                   {project.isGit && (
                     <button
                       className="p-1 text-muted-foreground hover:text-foreground transition-colors"
