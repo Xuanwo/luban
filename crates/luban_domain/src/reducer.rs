@@ -39,6 +39,7 @@ impl AppState {
             agent_default_runner: crate::default_agent_runner_kind(),
             agent_amp_mode: crate::default_amp_mode().to_owned(),
             agent_codex_enabled: true,
+            agent_amp_enabled: true,
             conversations: HashMap::new(),
             workspace_tabs: HashMap::new(),
             dashboard_preview_workspace_id: None,
@@ -1322,6 +1323,13 @@ impl AppState {
                 self.agent_codex_enabled = enabled;
                 vec![Effect::SaveAppState]
             }
+            Action::AgentAmpEnabledChanged { enabled } => {
+                if self.agent_amp_enabled == enabled {
+                    return Vec::new();
+                }
+                self.agent_amp_enabled = enabled;
+                vec![Effect::SaveAppState]
+            }
             Action::AgentRunnerChanged { runner } => {
                 if self.agent_default_runner == runner {
                     return Vec::new();
@@ -2511,6 +2519,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -2554,6 +2563,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -2597,6 +2607,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -2642,6 +2653,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),

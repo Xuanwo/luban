@@ -276,6 +276,9 @@ pub enum Action {
     AgentCodexEnabledChanged {
         enabled: bool,
     },
+    AgentAmpEnabledChanged {
+        enabled: bool,
+    },
     AgentRunnerChanged {
         runner: AgentRunnerKind,
     },

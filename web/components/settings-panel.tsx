@@ -1561,8 +1561,13 @@ function AmpSettings({
   initialSelectedFilePath?: string | null
   autoFocusEditor?: boolean
 }) {
-  const { checkAmp, listAmpConfigDir, readAmpConfigFile, writeAmpConfigFile } = useLuban()
+  const { app, setAmpEnabled, checkAmp, listAmpConfigDir, readAmpConfigFile, writeAmpConfigFile } = useLuban()
   const [enabled, setEnabled] = useState(true)
+
+  useEffect(() => {
+    const next = app?.agent?.amp_enabled ?? true
+    setEnabled(next)
+  }, [app?.rev])
   const [checkStatus, setCheckStatus] = useState<CheckStatus>("idle")
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
   const [selectedFile, setSelectedFile] = useState<AmpSelectedFile | null>(null)
@@ -1705,6 +1710,7 @@ function AmpSettings({
     e.stopPropagation()
     const next = !enabled
     setEnabled(next)
+    setAmpEnabled(next)
   }
 
   const handleEditInLuban = (e: MouseEvent) => {

@@ -4149,6 +4149,7 @@ mod tests {
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
+            agent_amp_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             workspace_active_thread_id: std::collections::HashMap::new(),

@@ -574,6 +574,7 @@ pub struct AppState {
     pub(crate) agent_default_runner: crate::AgentRunnerKind,
     pub(crate) agent_amp_mode: String,
     pub(crate) agent_codex_enabled: bool,
+    pub(crate) agent_amp_enabled: bool,
     pub conversations: HashMap<(WorkspaceId, WorkspaceThreadId), WorkspaceConversation>,
     pub workspace_tabs: HashMap<WorkspaceId, WorkspaceTabs>,
     pub dashboard_preview_workspace_id: Option<WorkspaceId>,
@@ -590,6 +591,10 @@ pub struct AppState {
 impl AppState {
     pub fn agent_codex_enabled(&self) -> bool {
         self.agent_codex_enabled
+    }
+
+    pub fn agent_amp_enabled(&self) -> bool {
+        self.agent_amp_enabled
     }
 
     pub fn agent_default_model_id(&self) -> &str {
@@ -625,6 +630,7 @@ pub struct PersistedAppState {
     pub agent_default_runner: Option<String>,
     pub agent_amp_mode: Option<String>,
     pub agent_codex_enabled: Option<bool>,
+    pub agent_amp_enabled: Option<bool>,
     pub last_open_workspace_id: Option<u64>,
     pub open_button_selection: Option<String>,
     pub workspace_active_thread_id: HashMap<u64, u64>,

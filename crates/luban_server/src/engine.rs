@@ -2914,6 +2914,7 @@ impl Engine {
             },
             agent: luban_api::AgentSettingsSnapshot {
                 codex_enabled: self.state.agent_codex_enabled(),
+                amp_enabled: self.state.agent_amp_enabled(),
                 default_model_id: Some(self.state.agent_default_model_id().to_owned()),
                 default_thinking_effort: Some(match self.state.agent_default_thinking_effort() {
                     ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
@@ -3921,6 +3922,9 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         luban_api::ClientAction::CodexEnabledChanged { enabled } => {
             Some(Action::AgentCodexEnabledChanged { enabled })
         }
+        luban_api::ClientAction::AmpEnabledChanged { enabled } => {
+            Some(Action::AgentAmpEnabledChanged { enabled })
+        }
         luban_api::ClientAction::AgentRunnerChanged { runner } => {
             Some(Action::AgentRunnerChanged {
                 runner: match runner {
@@ -4226,6 +4230,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -4701,6 +4706,7 @@ mod tests {
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
+            agent_amp_enabled: Some(true),
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             workspace_active_thread_id: HashMap::from([(10, 2)]),
@@ -4865,6 +4871,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -5141,6 +5148,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -5462,6 +5470,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),
@@ -5672,6 +5681,7 @@ mod tests {
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
+                agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 workspace_active_thread_id: HashMap::new(),

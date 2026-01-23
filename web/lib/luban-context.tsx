@@ -132,6 +132,7 @@ type LubanContextValue = {
   setOpenButtonSelection: (selection: string) => void
 
   setCodexEnabled: (enabled: boolean) => void
+  setAmpEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
   setTaskPromptTemplate: (intentKind: TaskIntentKind, template: string) => void
@@ -309,6 +310,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setGlobalZoom: actions.setGlobalZoom,
     setOpenButtonSelection: actions.setOpenButtonSelection,
     setCodexEnabled: actions.setCodexEnabled,
+    setAmpEnabled: actions.setAmpEnabled,
     setAgentRunner: actions.setAgentRunner,
     setAgentAmpMode: actions.setAgentAmpMode,
     setTaskPromptTemplate: actions.setTaskPromptTemplate,

@@ -75,6 +75,7 @@ pub(crate) fn apply_persisted_app_state(
     state.agent_default_runner = agent_default_runner;
     state.agent_amp_mode = agent_amp_mode;
     state.agent_codex_enabled = persisted.agent_codex_enabled.unwrap_or(true);
+    state.agent_amp_enabled = persisted.agent_amp_enabled.unwrap_or(true);
 
     state.task_prompt_templates = default_task_prompt_templates();
     state.system_prompt_templates = default_system_prompt_templates();
@@ -297,6 +298,7 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         agent_default_runner: Some(state.agent_default_runner.as_str().to_owned()),
         agent_amp_mode: Some(state.agent_amp_mode.clone()),
         agent_codex_enabled: Some(state.agent_codex_enabled),
+        agent_amp_enabled: Some(state.agent_amp_enabled),
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         open_button_selection: state.open_button_selection.clone(),
         workspace_active_thread_id: state

@@ -746,6 +746,12 @@ export function mockDispatchAction(args: {
     return
   }
 
+  if (a.type === "amp_enabled_changed") {
+    state.app.agent.amp_enabled = a.enabled
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "agent_runner_changed") {
     state.app.agent.default_runner = a.runner
     emitAppChanged({ state, onEvent: args.onEvent })
