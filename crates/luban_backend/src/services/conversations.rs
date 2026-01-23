@@ -379,6 +379,7 @@ mod tests {
             conversations_root: conversations_root.clone(),
             task_prompts_root: root.join("task-prompts"),
             sqlite,
+            claude_processes: std::sync::Mutex::new(std::collections::HashMap::new()),
         };
 
         let legacy_entries = vec![
@@ -426,6 +427,7 @@ mod tests {
             conversations_root: conversations_root.clone(),
             task_prompts_root: root.join("task-prompts"),
             sqlite: sqlite.clone(),
+            claude_processes: std::sync::Mutex::new(std::collections::HashMap::new()),
         };
 
         let legacy_entries = vec![

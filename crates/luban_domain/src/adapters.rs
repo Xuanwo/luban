@@ -339,6 +339,20 @@ pub trait ProjectWorkspaceService: Send + Sync {
         on_event: Arc<dyn Fn(AgentThreadEvent) + Send + Sync>,
     ) -> Result<(), String>;
 
+    /// Clean up any persistent Claude process for the given thread.
+    ///
+    /// This should be called when a thread/tab is closed to free resources.
+    /// The default implementation is a no-op; implementations that support
+    /// persistent processes should override this.
+    fn cleanup_claude_process(
+        &self,
+        _project_slug: &str,
+        _workspace_name: &str,
+        _thread_local_id: u64,
+    ) {
+        // Default: no-op
+    }
+
     fn gh_is_authorized(&self) -> Result<bool, String>;
 
     fn gh_pull_request_info(

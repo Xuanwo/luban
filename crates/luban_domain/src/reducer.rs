@@ -1135,7 +1135,14 @@ impl AppState {
                 }
                 let previous_active = tabs.active_tab;
                 tabs.archive_tab(thread_id);
-                let mut effects = vec![Effect::SaveAppState];
+                let mut effects = vec![
+                    Effect::SaveAppState,
+                    // Clean up any persistent Claude process associated with this thread
+                    Effect::CleanupClaudeProcess {
+                        workspace_id,
+                        thread_id,
+                    },
+                ];
                 if tabs.active_tab != previous_active {
                     effects.push(Effect::LoadConversation {
                         workspace_id,

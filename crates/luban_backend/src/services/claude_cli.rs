@@ -51,8 +51,9 @@ fn resolve_claude_exec() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("claude"))
 }
 
+/// State for parsing Claude's stream-json output
 #[derive(Default)]
-struct ClaudeStreamState {
+pub struct ClaudeStreamState {
     agent_message_id: String,
     reasoning_id: String,
     agent_message: String,
@@ -62,7 +63,8 @@ struct ClaudeStreamState {
 }
 
 impl ClaudeStreamState {
-    fn new() -> Self {
+    /// Create a new stream parsing state
+    pub fn new() -> Self {
         Self {
             agent_message_id: "agent_message".to_owned(),
             reasoning_id: "reasoning".to_owned(),
@@ -71,6 +73,21 @@ impl ClaudeStreamState {
             tools: HashMap::new(),
             saw_turn_completed: false,
         }
+    }
+
+    /// Check if a turn completed event has been seen
+    #[allow(dead_code)]
+    pub fn saw_turn_completed(&self) -> bool {
+        self.saw_turn_completed
+    }
+
+    /// Reset the state for a new turn
+    #[allow(dead_code)]
+    pub fn reset_for_new_turn(&mut self) {
+        self.agent_message.clear();
+        self.reasoning.clear();
+        self.tools.clear();
+        self.saw_turn_completed = false;
     }
 }
 
@@ -188,6 +205,16 @@ fn summarize_tool_use(name: &str, input: &Value) -> (ClaudeToolKind, ClaudeToolS
     }
 
     (ClaudeToolKind::McpToolCall, ClaudeToolSummary::None)
+}
+
+/// Parse a single line of Claude's stream-json output
+///
+/// This is a public wrapper for use by other modules.
+pub fn parse_claude_stream_json_line_public(
+    state: &mut ClaudeStreamState,
+    line: &str,
+) -> anyhow::Result<Vec<AgentThreadEvent>> {
+    parse_claude_stream_json_line(state, line)
 }
 
 fn parse_claude_stream_json_line(
@@ -639,6 +666,7 @@ pub(super) fn run_claude_turn_streamed_via_cli(
         "--permission-mode",
         "bypassPermissions",
     ]);
+
     for dir in add_dirs {
         command.arg("--add-dir").arg(dir);
     }

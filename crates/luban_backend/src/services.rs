@@ -10,18 +10,21 @@ use luban_domain::{
 };
 use rand::{Rng as _, rngs::OsRng};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+
+use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
 
 mod amp_cli;
 mod claude_cli;
+pub mod claude_process;
 mod codex_cli;
 mod context_blobs;
 mod conversations;
@@ -422,12 +425,19 @@ fn detect_amp_mode_from_config_root(root: &Path) -> Option<String> {
     None
 }
 
-#[derive(Clone)]
+/// Git workspace service with persistent Claude process management.
+///
+/// Each thread/tab can have its own Claude process that maintains MCP connections
+/// across multiple turns, avoiding the overhead of reconnecting MCP for each turn.
 pub struct GitWorkspaceService {
     worktrees_root: PathBuf,
     conversations_root: PathBuf,
     task_prompts_root: PathBuf,
     sqlite: SqliteStore,
+
+    /// Persistent Claude processes mapped by (project_slug, workspace_name, thread_local_id).
+    /// Each thread can have at most one active Claude process.
+    claude_processes: Mutex<HashMap<ClaudeProcessKey, ClaudeThreadProcess>>,
 }
 
 impl GitWorkspaceService {
@@ -459,6 +469,7 @@ impl GitWorkspaceService {
             conversations_root,
             task_prompts_root,
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -499,6 +510,89 @@ impl GitWorkspaceService {
         PathBuf::from("codex")
     }
 
+    // ========================================================================
+    // Claude Process Management
+    // ========================================================================
+
+    /// Get an existing Claude process for the given thread, or create a new one.
+    ///
+    /// If the existing process is not alive, it will be cleaned up and a new one created.
+    fn get_or_create_claude_process(
+        &self,
+        key: ClaudeProcessKey,
+        worktree_path: &Path,
+        thread_id: Option<&str>,
+        add_dirs: &[PathBuf],
+    ) -> anyhow::Result<()> {
+        let mut processes = self
+            .claude_processes
+            .lock()
+            .map_err(|_| anyhow!("failed to lock claude_processes"))?;
+
+        // Check if we have an existing process
+        if let Some(process) = processes.get(&key) {
+            if process.is_alive() {
+                // Existing process is alive, nothing to do
+                return Ok(());
+            }
+            // Process is dead, remove it
+            processes.remove(&key);
+        }
+
+        // Create a new process
+        let process = ClaudeThreadProcess::spawn_and_warmup(worktree_path, thread_id, add_dirs)?;
+        processes.insert(key, process);
+
+        Ok(())
+    }
+
+    /// Clean up the Claude process for the given thread.
+    ///
+    /// This should be called when a thread/tab is closed to free resources.
+    pub fn cleanup_claude_process(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+    ) {
+        let key = ClaudeProcessKey::new(project_slug, workspace_name, thread_local_id);
+
+        if let Ok(mut processes) = self.claude_processes.lock()
+            && let Some(mut process) = processes.remove(&key)
+        {
+            process.shutdown();
+        }
+    }
+
+    /// Clean up all Claude processes for a given workspace.
+    ///
+    /// This should be called when a workspace is closed.
+    pub fn cleanup_workspace_claude_processes(&self, project_slug: &str, workspace_name: &str) {
+        if let Ok(mut processes) = self.claude_processes.lock() {
+            let keys_to_remove: Vec<_> = processes
+                .keys()
+                .filter(|k| k.project_slug == project_slug && k.workspace_name == workspace_name)
+                .cloned()
+                .collect();
+
+            for key in keys_to_remove {
+                if let Some(mut process) = processes.remove(&key) {
+                    process.shutdown();
+                }
+            }
+        }
+    }
+
+    /// Check if a Claude process exists and is alive for the given thread.
+    #[allow(dead_code)]
+    fn has_alive_claude_process(&self, key: &ClaudeProcessKey) -> bool {
+        if let Ok(processes) = self.claude_processes.lock() {
+            processes.get(key).is_some_and(|p| p.is_alive())
+        } else {
+            false
+        }
+    }
+
     fn run_codex_turn_streamed_via_cli(
         &self,
         params: CodexTurnParams,
@@ -518,6 +612,7 @@ impl GitWorkspaceService {
         amp_cli::run_amp_turn_streamed_via_cli(params, cancel, on_event)
     }
 
+    #[allow(dead_code)]
     fn run_claude_turn_streamed_via_cli(
         &self,
         params: ClaudeTurnParams,
@@ -525,6 +620,119 @@ impl GitWorkspaceService {
         on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         claude_cli::run_claude_turn_streamed_via_cli(params, cancel, on_event)
+    }
+
+    /// Run a Claude turn with process reuse.
+    ///
+    /// This uses persistent processes that stay alive across turns, avoiding
+    /// MCP reconnection overhead. The process uses `--input-format stream-json`
+    /// to accept prompts from stdin.
+    fn run_claude_turn_with_process_reuse(
+        &self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        params: ClaudeTurnParams,
+        cancel: Arc<AtomicBool>,
+        mut on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let key = ClaudeProcessKey::new(project_slug, workspace_name, thread_local_id);
+
+        // Get or create the persistent process
+        // This will create a new process if none exists or if the existing one died
+        self.get_or_create_claude_process(
+            key.clone(),
+            &params.worktree_path,
+            params.thread_id.as_deref(),
+            &params.add_dirs,
+        )?;
+
+        // Send the prompt via stdin
+        {
+            let processes = self
+                .claude_processes
+                .lock()
+                .map_err(|_| anyhow!("failed to lock claude_processes"))?;
+
+            let process = processes
+                .get(&key)
+                .ok_or_else(|| anyhow!("process not found after creation"))?;
+
+            if !process.is_alive() {
+                // Process died unexpectedly after creation - this shouldn't happen
+                // but if it does, recreate it
+                drop(processes);
+                self.get_or_create_claude_process(
+                    key.clone(),
+                    &params.worktree_path,
+                    params.thread_id.as_deref(),
+                    &params.add_dirs,
+                )?;
+
+                // Try again with the new process
+                let processes = self
+                    .claude_processes
+                    .lock()
+                    .map_err(|_| anyhow!("failed to lock claude_processes"))?;
+                let process = processes
+                    .get(&key)
+                    .ok_or_else(|| anyhow!("process not found after recreation"))?;
+
+                on_event(CodexThreadEvent::TurnStarted)?;
+                process.send_prompt(&params.prompt)?;
+            } else {
+                // Emit TurnStarted
+                on_event(CodexThreadEvent::TurnStarted)?;
+
+                // Send the prompt
+                process.send_prompt(&params.prompt)?;
+            }
+        }
+
+        // Poll for events until turn completes or cancelled
+        let timeout = std::time::Duration::from_secs(600); // 10 minute timeout
+        let start = std::time::Instant::now();
+
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                break;
+            }
+
+            if start.elapsed() > timeout {
+                return Err(anyhow!("claude turn timed out"));
+            }
+
+            // Poll events from the process
+            let (events, is_turn_completed, is_alive) = {
+                let processes = self
+                    .claude_processes
+                    .lock()
+                    .map_err(|_| anyhow!("failed to lock claude_processes"))?;
+
+                if let Some(process) = processes.get(&key) {
+                    let events = process.poll_events();
+                    let completed = process.is_turn_completed();
+                    let alive = process.is_alive();
+                    (events, completed, alive)
+                } else {
+                    (Vec::new(), true, false)
+                }
+            };
+
+            // Forward events to the callback
+            for event in events {
+                on_event(event)?;
+            }
+
+            if is_turn_completed || !is_alive {
+                break;
+            }
+
+            // Small sleep to avoid busy-waiting
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        Ok(())
     }
 }
 
@@ -1508,7 +1716,10 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     },
                 )
             } else if runner == luban_domain::AgentRunnerKind::Claude {
-                self.run_claude_turn_streamed_via_cli(
+                self.run_claude_turn_with_process_reuse(
+                    &project_slug,
+                    &workspace_name,
+                    thread_local_id,
                     ClaudeTurnParams {
                         thread_id: resolved_thread_id,
                         worktree_path: worktree_path.clone(),
@@ -3556,6 +3767,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::codex_config_tree(&service)
@@ -3642,6 +3854,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::codex_config_tree(&service)
@@ -3722,6 +3935,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::amp_config_tree(&service)
@@ -3828,6 +4042,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::amp_config_tree(&service)
@@ -3909,7 +4124,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
-            codex_executable_cache: Arc::new(OnceLock::new()),
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::claude_config_tree(&service)
@@ -3994,7 +4209,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
-            codex_executable_cache: Arc::new(OnceLock::new()),
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let tree = ProjectWorkspaceService::claude_config_tree(&service)
@@ -4142,6 +4357,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let err = service
@@ -4221,6 +4437,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let err = service
@@ -4415,6 +4632,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         ProjectWorkspaceService::archive_workspace(
@@ -4502,6 +4720,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let snapshot = PersistedAppState {
@@ -4648,6 +4867,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let created = ProjectWorkspaceService::create_workspace(
@@ -4713,6 +4933,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let source = base_dir.join("abc.png");
@@ -4760,6 +4981,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let stored = ProjectWorkspaceService::store_context_image(
@@ -4809,6 +5031,7 @@ mod tests {
             conversations_root: paths::conversations_root(&base_dir),
             task_prompts_root: paths::task_prompts_root(&base_dir),
             sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
         };
 
         let img = image::RgbImage::from_fn(1200, 800, |x, y| {

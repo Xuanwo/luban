@@ -73,6 +73,13 @@ pub enum Effect {
         run_id: u64,
     },
 
+    /// Cleanup Claude process associated with a thread.
+    /// This is emitted when a thread tab is closed to free resources.
+    CleanupClaudeProcess {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+    },
+
     RenameWorkspaceBranch {
         workspace_id: WorkspaceId,
         requested_branch_name: String,

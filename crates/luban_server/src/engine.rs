@@ -2845,6 +2845,20 @@ impl Engine {
                     finished_at_unix_ms,
                 }]))
             }
+            Effect::CleanupClaudeProcess {
+                workspace_id,
+                thread_id,
+            } => {
+                // Clean up any persistent Claude process for this thread
+                if let Some(scope) = workspace_scope(&self.state, workspace_id) {
+                    self.services.cleanup_claude_process(
+                        &scope.project_slug,
+                        &scope.workspace_name,
+                        thread_id.as_u64(),
+                    );
+                }
+                Ok(VecDeque::new())
+            }
             Effect::OpenWorkspacePullRequest { workspace_id } => {
                 let Some(workspace) = self.state.workspace(workspace_id) else {
                     return Ok(VecDeque::new());
