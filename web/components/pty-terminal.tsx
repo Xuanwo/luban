@@ -20,6 +20,26 @@ function encodeBinaryString(value: string): Uint8Array {
   return out
 }
 
+function encodePtyInputText(encoder: TextEncoder, text: string): Uint8Array {
+  if (text.length === 0) return new Uint8Array()
+
+  if (!/[\u0080-\u009f]/.test(text)) {
+    return encoder.encode(text)
+  }
+
+  const bytes: number[] = []
+  for (const ch of text) {
+    const codePoint = ch.codePointAt(0)
+    if (codePoint != null && codePoint >= 0x80 && codePoint <= 0x9f) {
+      bytes.push(codePoint)
+      continue
+    }
+    const encoded = encoder.encode(ch)
+    for (let i = 0; i < encoded.length; i++) bytes.push(encoded[i] ?? 0)
+  }
+  return Uint8Array.from(bytes)
+}
+
 function terminalFontFamily(fontName: string): string {
   const escaped = escapeCssFontName(fontName.trim() || "Geist Mono")
   return `"${escaped}", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace`
@@ -309,7 +329,7 @@ export function PtyTerminal() {
       }
       const socket = ws
       if (!socket) return
-      const bytes = encoder.encode(text)
+      const bytes = encodePtyInputText(encoder, text)
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(bytes)
       } else {

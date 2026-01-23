@@ -327,6 +327,32 @@ test("terminal does not leak OSC color query replies as visible text", async ({ 
     .toBe(false)
 })
 
+test("terminal does not leak 8-bit OSC color query replies as visible text", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const terminal = page.getByTestId("pty-terminal")
+  await expect
+    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
+    .toBeGreaterThan(0)
+
+  await terminal.click({ force: true })
+
+  // Same invariant as the 7-bit OSC test, but using the single-byte C1 OSC prefix (0x9d).
+  // Encoding this as UTF-8 would corrupt the byte stream and can cause visible `rgb:` leaks.
+  await page.keyboard.type("printf '\\x9d10;?\\a'\n")
+
+  await expect
+    .poll(async () => {
+      return await terminal.evaluate((outer) => {
+        const lines = Array.from(outer.querySelectorAll(".xterm-rows > div"))
+          .map((el) => (el as HTMLElement).innerText)
+          .join("\n")
+        return lines.includes("rgb:")
+      })
+    })
+    .toBe(false)
+})
+
 test("terminal theme follows app theme changes", async ({ page }) => {
   await ensureWorkspace(page)
 
