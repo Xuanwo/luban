@@ -1287,6 +1287,8 @@ impl AppState {
             Action::AppearanceColorSchemeChanged {
                 light_scheme_id,
                 dark_scheme_id,
+                light_custom_colors,
+                dark_custom_colors,
             } => {
                 let mut changed = false;
                 if let Some(id) = light_scheme_id {
@@ -1307,6 +1309,64 @@ impl AppState {
                     {
                         self.color_scheme.dark_scheme_id = normalized.to_owned();
                         changed = true;
+                    }
+                }
+                // Handle custom color overrides (now keyed by scheme_id)
+                if let Some((scheme_id, colors)) = light_custom_colors {
+                    let scheme_id = scheme_id.trim();
+                    if !scheme_id.is_empty() && scheme_id.len() <= 64 {
+                        let map = self.color_scheme.light_custom_colors.get_or_insert_with(HashMap::new);
+                        match colors {
+                            Some(colors) => {
+                                // Validate color entries (max 10 entries, each key/value max 64 chars)
+                                let valid_colors: std::collections::HashMap<String, String> = colors
+                                    .into_iter()
+                                    .filter(|(k, v)| k.len() <= 64 && v.len() <= 64)
+                                    .take(10)
+                                    .collect();
+                                if !valid_colors.is_empty() {
+                                    map.insert(scheme_id.to_owned(), valid_colors);
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                // Clear custom colors for this scheme
+                                if map.remove(scheme_id).is_some() {
+                                    changed = true;
+                                }
+                            }
+                        }
+                        // Clean up empty map
+                        if self.color_scheme.light_custom_colors.as_ref().is_some_and(|m| m.is_empty()) {
+                            self.color_scheme.light_custom_colors = None;
+                        }
+                    }
+                }
+                if let Some((scheme_id, colors)) = dark_custom_colors {
+                    let scheme_id = scheme_id.trim();
+                    if !scheme_id.is_empty() && scheme_id.len() <= 64 {
+                        let map = self.color_scheme.dark_custom_colors.get_or_insert_with(HashMap::new);
+                        match colors {
+                            Some(colors) => {
+                                let valid_colors: std::collections::HashMap<String, String> = colors
+                                    .into_iter()
+                                    .filter(|(k, v)| k.len() <= 64 && v.len() <= 64)
+                                    .take(10)
+                                    .collect();
+                                if !valid_colors.is_empty() {
+                                    map.insert(scheme_id.to_owned(), valid_colors);
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                if map.remove(scheme_id).is_some() {
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if self.color_scheme.dark_custom_colors.as_ref().is_some_and(|m| m.is_empty()) {
+                            self.color_scheme.dark_custom_colors = None;
+                        }
                     }
                 }
                 if changed {
@@ -2551,6 +2611,8 @@ mod tests {
                 appearance_theme: None,
                 appearance_light_scheme_id: None,
                 appearance_dark_scheme_id: None,
+                appearance_light_custom_colors: None,
+                appearance_dark_custom_colors: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2597,6 +2659,8 @@ mod tests {
                 appearance_theme: None,
                 appearance_light_scheme_id: None,
                 appearance_dark_scheme_id: None,
+                appearance_light_custom_colors: None,
+                appearance_dark_custom_colors: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2643,6 +2707,8 @@ mod tests {
                 appearance_theme: None,
                 appearance_light_scheme_id: None,
                 appearance_dark_scheme_id: None,
+                appearance_light_custom_colors: None,
+                appearance_dark_custom_colors: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -2691,6 +2757,8 @@ mod tests {
                 appearance_theme: Some("light".to_owned()),
                 appearance_light_scheme_id: None,
                 appearance_dark_scheme_id: None,
+                appearance_light_custom_colors: None,
+                appearance_dark_custom_colors: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,

@@ -46,14 +46,27 @@ export interface ColorScheme {
   previewColors: string[]
 }
 
+// Custom color overrides (hex values)
+export interface ColorOverrides {
+  primary?: string
+  success?: string
+  error?: string
+  accent?: string
+}
+
 export interface ColorSchemeSettings {
   lightSchemeId: ColorSchemeId
   darkSchemeId: ColorSchemeId
   customSchemes: ColorScheme[]
+  // Custom color overrides per mode
+  lightCustomColors?: ColorOverrides
+  darkCustomColors?: ColorOverrides
 }
 
 export const defaultColorSchemeSettings: ColorSchemeSettings = {
   lightSchemeId: "default",
   darkSchemeId: "default",
   customSchemes: [],
+  lightCustomColors: undefined,
+  darkCustomColors: undefined,
 }

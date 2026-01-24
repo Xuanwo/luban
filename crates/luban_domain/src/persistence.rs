@@ -105,6 +105,14 @@ pub(crate) fn apply_persisted_app_state(
             .filter(|s| !s.is_empty() && s.len() <= 64)
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| "default".to_owned()),
+        light_custom_colors: persisted
+            .appearance_light_custom_colors
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok()),
+        dark_custom_colors: persisted
+            .appearance_dark_custom_colors
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok()),
     };
     let defaults = AppearanceFonts::default();
     state.appearance_fonts = AppearanceFonts {
@@ -305,6 +313,16 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         appearance_theme: Some(state.appearance_theme.as_str().to_owned()),
         appearance_light_scheme_id: Some(state.color_scheme.light_scheme_id.clone()),
         appearance_dark_scheme_id: Some(state.color_scheme.dark_scheme_id.clone()),
+        appearance_light_custom_colors: state
+            .color_scheme
+            .light_custom_colors
+            .as_ref()
+            .and_then(|c| serde_json::to_string(c).ok()),
+        appearance_dark_custom_colors: state
+            .color_scheme
+            .dark_custom_colors
+            .as_ref()
+            .and_then(|c| serde_json::to_string(c).ok()),
         appearance_ui_font: Some(state.appearance_fonts.ui_font.clone()),
         appearance_chat_font: Some(state.appearance_fonts.chat_font.clone()),
         appearance_code_font: Some(state.appearance_fonts.code_font.clone()),

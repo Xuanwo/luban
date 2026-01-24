@@ -129,6 +129,7 @@ export type LubanActions = {
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setLightColorScheme: (schemeId: string) => void
   setDarkColorScheme: (schemeId: string) => void
+  setCustomColors: (mode: "light" | "dark", schemeId: string, colors: Record<string, string> | null) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
 }
@@ -750,11 +751,31 @@ export function createLubanActions(args: {
   }
 
   function setLightColorScheme(schemeId: string) {
-    args.sendAction({ type: "appearance_color_scheme_changed", light_scheme_id: schemeId })
+    args.sendAction({
+      type: "appearance_color_scheme_changed",
+      light_scheme_id: schemeId,
+    })
   }
 
   function setDarkColorScheme(schemeId: string) {
-    args.sendAction({ type: "appearance_color_scheme_changed", dark_scheme_id: schemeId })
+    args.sendAction({
+      type: "appearance_color_scheme_changed",
+      dark_scheme_id: schemeId,
+    })
+  }
+
+  function setCustomColors(mode: "light" | "dark", schemeId: string, colors: Record<string, string> | null) {
+    if (mode === "light") {
+      args.sendAction({
+        type: "appearance_color_scheme_changed",
+        light_custom_colors: { scheme_id: schemeId, colors: colors ?? undefined },
+      })
+    } else {
+      args.sendAction({
+        type: "appearance_color_scheme_changed",
+        dark_custom_colors: { scheme_id: schemeId, colors: colors ?? undefined },
+      })
+    }
   }
 
   function setGlobalZoom(zoom: number) {
@@ -825,6 +846,7 @@ export function createLubanActions(args: {
     setAppearanceFonts,
     setLightColorScheme,
     setDarkColorScheme,
+    setCustomColors,
     setGlobalZoom,
     setOpenButtonSelection,
   }

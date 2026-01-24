@@ -51,16 +51,35 @@ fn default_global_zoom() -> f64 {
     1.0
 }
 
+/// Custom colors map: scheme_id -> (role -> hex color)
+pub type CustomColorsMap = std::collections::HashMap<String, std::collections::HashMap<String, String>>;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ColorSchemeSnapshot {
     #[serde(default = "default_scheme_id")]
     pub light_scheme_id: String,
     #[serde(default = "default_scheme_id")]
     pub dark_scheme_id: String,
+    /// Custom colors for light schemes, keyed by scheme_id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_custom_colors: Option<CustomColorsMap>,
+    /// Custom colors for dark schemes, keyed by scheme_id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dark_custom_colors: Option<CustomColorsMap>,
 }
 
 fn default_scheme_id() -> String {
     "default".to_owned()
+}
+
+/// Update custom colors for a specific scheme
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CustomColorsUpdate {
+    /// The scheme ID to update custom colors for
+    pub scheme_id: String,
+    /// The custom colors (role -> hex color), or None to clear
+    #[serde(default)]
+    pub colors: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -787,6 +806,12 @@ pub enum ClientAction {
     AppearanceColorSchemeChanged {
         light_scheme_id: Option<String>,
         dark_scheme_id: Option<String>,
+        /// Custom colors update for light mode: (scheme_id, colors or null to clear)
+        #[serde(default)]
+        light_custom_colors: Option<CustomColorsUpdate>,
+        /// Custom colors update for dark mode: (scheme_id, colors or null to clear)
+        #[serde(default)]
+        dark_custom_colors: Option<CustomColorsUpdate>,
     },
     AppearanceFontsChanged {
         fonts: AppearanceFontsSnapshot,

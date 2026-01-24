@@ -270,6 +270,12 @@ pub enum Action {
     AppearanceColorSchemeChanged {
         light_scheme_id: Option<String>,
         dark_scheme_id: Option<String>,
+        /// Custom colors for a specific light scheme: (scheme_id, colors)
+        /// Colors is None to clear custom colors for that scheme
+        light_custom_colors: Option<(String, Option<std::collections::HashMap<String, String>>)>,
+        /// Custom colors for a specific dark scheme: (scheme_id, colors)
+        /// Colors is None to clear custom colors for that scheme
+        dark_custom_colors: Option<(String, Option<std::collections::HashMap<String, String>>)>,
     },
     AppearanceFontsChanged {
         ui_font: String,

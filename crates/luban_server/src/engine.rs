@@ -3165,6 +3165,8 @@ impl Engine {
                 color_scheme: luban_api::ColorSchemeSnapshot {
                     light_scheme_id: self.state.color_scheme.light_scheme_id.clone(),
                     dark_scheme_id: self.state.color_scheme.dark_scheme_id.clone(),
+                    light_custom_colors: self.state.color_scheme.light_custom_colors.clone(),
+                    dark_custom_colors: self.state.color_scheme.dark_custom_colors.clone(),
                 },
             },
             agent: luban_api::AgentSettingsSnapshot {
@@ -4167,9 +4169,13 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         luban_api::ClientAction::AppearanceColorSchemeChanged {
             light_scheme_id,
             dark_scheme_id,
+            light_custom_colors,
+            dark_custom_colors,
         } => Some(Action::AppearanceColorSchemeChanged {
             light_scheme_id,
             dark_scheme_id,
+            light_custom_colors: light_custom_colors.map(|u| (u.scheme_id, u.colors)),
+            dark_custom_colors: dark_custom_colors.map(|u| (u.scheme_id, u.colors)),
         }),
         luban_api::ClientAction::AppearanceFontsChanged { fonts } => {
             Some(Action::AppearanceFontsChanged {

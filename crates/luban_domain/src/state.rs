@@ -98,10 +98,17 @@ impl AppearanceTheme {
     }
 }
 
+/// Custom colors map: scheme_id -> (role -> hex color)
+pub type CustomColorsMap = std::collections::HashMap<String, std::collections::HashMap<String, String>>;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ColorSchemeSettings {
     pub light_scheme_id: String,
     pub dark_scheme_id: String,
+    /// Custom color overrides for light mode, keyed by scheme_id (scheme_id -> role -> hex color)
+    pub light_custom_colors: Option<CustomColorsMap>,
+    /// Custom color overrides for dark mode, keyed by scheme_id (scheme_id -> role -> hex color)
+    pub dark_custom_colors: Option<CustomColorsMap>,
 }
 
 impl ColorSchemeSettings {
@@ -109,7 +116,19 @@ impl ColorSchemeSettings {
         Self {
             light_scheme_id: "default".to_owned(),
             dark_scheme_id: "default".to_owned(),
+            light_custom_colors: None,
+            dark_custom_colors: None,
         }
+    }
+
+    /// Get custom colors for a specific scheme in light mode
+    pub fn get_light_custom_colors(&self, scheme_id: &str) -> Option<&std::collections::HashMap<String, String>> {
+        self.light_custom_colors.as_ref()?.get(scheme_id)
+    }
+
+    /// Get custom colors for a specific scheme in dark mode
+    pub fn get_dark_custom_colors(&self, scheme_id: &str) -> Option<&std::collections::HashMap<String, String>> {
+        self.dark_custom_colors.as_ref()?.get(scheme_id)
     }
 }
 
@@ -639,6 +658,10 @@ pub struct PersistedAppState {
     pub appearance_theme: Option<String>,
     pub appearance_light_scheme_id: Option<String>,
     pub appearance_dark_scheme_id: Option<String>,
+    /// Custom color overrides for light mode, stored as JSON string
+    pub appearance_light_custom_colors: Option<String>,
+    /// Custom color overrides for dark mode, stored as JSON string
+    pub appearance_dark_custom_colors: Option<String>,
     pub appearance_ui_font: Option<String>,
     pub appearance_chat_font: Option<String>,
     pub appearance_code_font: Option<String>,

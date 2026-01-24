@@ -6,6 +6,7 @@ import { useTheme } from "next-themes"
 import { useAppearance } from "@/components/appearance-provider"
 import { useLuban } from "@/lib/luban-context"
 import { getSchemeOrDefault } from "@/components/color-scheme/presets"
+import { applyCustomColors } from "@/components/color-scheme/color-scheme-provider"
 import type { ColorPalette } from "@/components/color-scheme/types"
 
 function normalizeFont(raw: string, fallback: string): string {
@@ -137,21 +138,36 @@ export function AppearanceSync() {
     const colorScheme = app.appearance.color_scheme
     const lightSchemeId = colorScheme?.light_scheme_id ?? "default"
     const darkSchemeId = colorScheme?.dark_scheme_id ?? "default"
+    const lightCustomColorsMap = colorScheme?.light_custom_colors
+    const darkCustomColorsMap = colorScheme?.dark_custom_colors
 
     const activeMode = resolvedTheme === "dark" ? "dark" : "light"
     const activeSchemeId = activeMode === "dark" ? darkSchemeId : lightSchemeId
+    const activeCustomColorsMap = activeMode === "dark" ? darkCustomColorsMap : lightCustomColorsMap
 
-    const schemeDigest = JSON.stringify({ activeSchemeId, activeMode })
+    // Extract custom colors for the active scheme from the map
+    const activeCustomColors = activeCustomColorsMap?.[activeSchemeId]
+
+    const schemeDigest = JSON.stringify({ activeSchemeId, activeMode, activeCustomColors })
     if (lastColorSchemeRef.current === schemeDigest) return
     lastColorSchemeRef.current = schemeDigest
 
     if (activeSchemeId === "default") {
       clearPalette()
+      // Apply custom colors for this specific scheme if they exist
+      if (activeCustomColors && Object.keys(activeCustomColors).length > 0) {
+        applyCustomColors(activeCustomColors)
+      }
       return
     }
 
     const scheme = getSchemeOrDefault(activeSchemeId, activeMode)
     applyPalette(scheme.palette)
+
+    // Apply custom color overrides for this specific scheme if they exist
+    if (activeCustomColors && Object.keys(activeCustomColors).length > 0) {
+      applyCustomColors(activeCustomColors)
+    }
   }, [app?.rev, app?.appearance?.color_scheme, resolvedTheme])
 
   return null

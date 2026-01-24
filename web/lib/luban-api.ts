@@ -13,9 +13,22 @@ export type AppearanceFontsSnapshot = {
   terminal_font: string
 }
 
+/** Custom colors map: scheme_id -> (role -> hex color) */
+export type CustomColorsMap = Record<string, Record<string, string>>
+
 export type ColorSchemeSnapshot = {
   light_scheme_id: string
   dark_scheme_id: string
+  /** Custom colors for light schemes, keyed by scheme_id */
+  light_custom_colors?: CustomColorsMap
+  /** Custom colors for dark schemes, keyed by scheme_id */
+  dark_custom_colors?: CustomColorsMap
+}
+
+/** Update custom colors for a specific scheme */
+export type CustomColorsUpdate = {
+  scheme_id: string
+  colors?: Record<string, string>
 }
 
 export type AppearanceSnapshot = {
@@ -423,7 +436,13 @@ export type ClientAction =
     }
   | { type: "open_button_selection_changed"; selection: string }
   | { type: "appearance_theme_changed"; theme: AppearanceTheme }
-  | { type: "appearance_color_scheme_changed"; light_scheme_id?: string; dark_scheme_id?: string }
+  | {
+      type: "appearance_color_scheme_changed"
+      light_scheme_id?: string
+      dark_scheme_id?: string
+      light_custom_colors?: CustomColorsUpdate
+      dark_custom_colors?: CustomColorsUpdate
+    }
   | { type: "appearance_fonts_changed"; fonts: AppearanceFontsSnapshot }
   | { type: "appearance_global_zoom_changed"; zoom: number }
   | { type: "codex_enabled_changed"; enabled: boolean }

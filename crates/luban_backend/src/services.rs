@@ -4746,6 +4746,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,

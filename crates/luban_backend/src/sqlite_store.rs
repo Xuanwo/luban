@@ -30,6 +30,8 @@ const TASK_PROMPT_TEMPLATE_PREFIX: &str = "task_prompt_template_";
 const APPEARANCE_THEME_KEY: &str = "appearance_theme";
 const APPEARANCE_LIGHT_SCHEME_ID_KEY: &str = "appearance_light_scheme_id";
 const APPEARANCE_DARK_SCHEME_ID_KEY: &str = "appearance_dark_scheme_id";
+const APPEARANCE_LIGHT_CUSTOM_COLORS_KEY: &str = "appearance_light_custom_colors";
+const APPEARANCE_DARK_CUSTOM_COLORS_KEY: &str = "appearance_dark_custom_colors";
 const APPEARANCE_UI_FONT_KEY: &str = "appearance_ui_font";
 const APPEARANCE_CHAT_FONT_KEY: &str = "appearance_chat_font";
 const APPEARANCE_CODE_FONT_KEY: &str = "appearance_code_font";
@@ -1046,6 +1048,8 @@ impl SqliteDatabase {
                 appearance_theme: None,
                 appearance_light_scheme_id: None,
                 appearance_dark_scheme_id: None,
+                appearance_light_custom_colors: None,
+                appearance_dark_custom_colors: None,
                 appearance_ui_font: None,
                 appearance_chat_font: None,
                 appearance_code_font: None,
@@ -1131,6 +1135,26 @@ impl SqliteDatabase {
             )
             .optional()
             .context("failed to load appearance dark scheme id")?;
+
+        let appearance_light_custom_colors = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![APPEARANCE_LIGHT_CUSTOM_COLORS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load appearance light custom colors")?;
+
+        let appearance_dark_custom_colors = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![APPEARANCE_DARK_CUSTOM_COLORS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load appearance dark custom colors")?;
 
         let appearance_ui_font = self
             .conn
@@ -1424,6 +1448,8 @@ impl SqliteDatabase {
             appearance_theme,
             appearance_light_scheme_id,
             appearance_dark_scheme_id,
+            appearance_light_custom_colors,
+            appearance_dark_custom_colors,
             appearance_ui_font,
             appearance_chat_font,
             appearance_code_font,
@@ -1687,6 +1713,16 @@ impl SqliteDatabase {
                 &tx,
                 APPEARANCE_DARK_SCHEME_ID_KEY,
                 snapshot.appearance_dark_scheme_id.as_deref(),
+            )?;
+            upsert_text(
+                &tx,
+                APPEARANCE_LIGHT_CUSTOM_COLORS_KEY,
+                snapshot.appearance_light_custom_colors.as_deref(),
+            )?;
+            upsert_text(
+                &tx,
+                APPEARANCE_DARK_CUSTOM_COLORS_KEY,
+                snapshot.appearance_dark_custom_colors.as_deref(),
             )?;
             upsert_text(
                 &tx,
@@ -2925,6 +2961,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -2980,6 +3018,8 @@ mod tests {
             appearance_theme: Some("dark".to_owned()),
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: Some("Inter".to_owned()),
             appearance_chat_font: Some("Inter".to_owned()),
             appearance_code_font: Some("Geist Mono".to_owned()),
@@ -3045,6 +3085,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3240,6 +3282,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3349,6 +3393,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3414,6 +3460,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3478,6 +3526,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,
@@ -3527,6 +3577,8 @@ mod tests {
             appearance_theme: None,
             appearance_light_scheme_id: None,
             appearance_dark_scheme_id: None,
+            appearance_light_custom_colors: None,
+            appearance_dark_custom_colors: None,
             appearance_ui_font: None,
             appearance_chat_font: None,
             appearance_code_font: None,

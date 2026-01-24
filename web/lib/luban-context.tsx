@@ -131,6 +131,7 @@ type LubanContextValue = {
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setLightColorScheme: (schemeId: string) => void
   setDarkColorScheme: (schemeId: string) => void
+  setCustomColors: (mode: "light" | "dark", schemeId: string, colors: Record<string, string> | null) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
 
@@ -317,6 +318,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setAppearanceFonts: actions.setAppearanceFonts,
     setLightColorScheme: actions.setLightColorScheme,
     setDarkColorScheme: actions.setDarkColorScheme,
+    setCustomColors: actions.setCustomColors,
     setGlobalZoom: actions.setGlobalZoom,
     setOpenButtonSelection: actions.setOpenButtonSelection,
     setCodexEnabled: actions.setCodexEnabled,
