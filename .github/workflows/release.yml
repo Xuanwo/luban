@@ -91,7 +91,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup just
+        if: runner.os != 'Windows' || runner.arch != 'ARM64'
         uses: extractions/setup-just@v2
+
+      - name: Setup just (Windows ARM64)
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: bash
+        run: cargo install just --locked
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -154,7 +160,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install 1Password CLI
-        uses: 1password/install-cli-action@v1
+        uses: 1password/install-cli-action@v2
 
       - name: Install Tauri CLI
         shell: bash
@@ -166,6 +172,36 @@ jobs:
           set -euo pipefail
           : "${LUBAN_VAULT:?LUBAN_VAULT is required}"
           op inject -i .env.example -o .env
+
+      - name: Setup macOS code signing keychain
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${APPLE_CERTIFICATE:?APPLE_CERTIFICATE is required}"
+          : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY is required}"
+
+          keychain_password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+          echo "CI_KEYCHAIN_PASSWORD=${keychain_password}" >> "${GITHUB_ENV}"
+
+          security create-keychain -p "${keychain_password}" ci.keychain
+          security set-keychain-settings -lut 21600 ci.keychain
+          security unlock-keychain -p "${keychain_password}" ci.keychain
+          security list-keychains -d user -s ci.keychain
+          security default-keychain -s ci.keychain
+
+          mkdir -p dist/.ci
+          cert_path="dist/.ci/apple-certificate.p12"
+          if echo "${APPLE_CERTIFICATE}" | base64 --decode > "${cert_path}" 2>/dev/null; then
+            :
+          else
+            printf '%s' "${APPLE_CERTIFICATE}" > "${cert_path}"
+          fi
+
+          security import "${cert_path}" -k ci.keychain -P "" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" ci.keychain
+
+          security find-identity -v -p codesigning ci.keychain || true
 
       - name: Package
         shell: bash
@@ -232,7 +268,7 @@ jobs:
         uses: extractions/setup-just@v2
 
       - name: Install 1Password CLI
-        uses: 1password/install-cli-action@v1
+        uses: 1password/install-cli-action@v2
 
       - name: Inject secrets into .env
         shell: bash
