@@ -14,7 +14,7 @@ import {
 } from "@/lib/ui-prefs"
 
 function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
+  return Math.round(Math.max(min, Math.min(max, n)))
 }
 
 export function AgentIDE() {

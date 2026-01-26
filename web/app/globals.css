@@ -60,6 +60,33 @@
   --luban-font-chat: "Inter";
   --luban-font-code: "Geist Mono";
   --luban-font-terminal: "Geist Mono";
+
+  --terminal-font-size: 12;
+  --terminal-line-height: 1.25;
+  --terminal-letter-spacing: 0;
+  --terminal-use-webgl: 1;
+  --terminal-allow-transparency: 0;
+  --terminal-background: var(--card);
+  --terminal-foreground: var(--card-foreground);
+  --terminal-cursor: var(--foreground);
+
+  --terminal-ansi-black: #111827;
+  --terminal-ansi-red: var(--destructive);
+  --terminal-ansi-green: var(--status-success);
+  --terminal-ansi-yellow: var(--status-warning);
+  --terminal-ansi-blue: var(--primary);
+  --terminal-ansi-magenta: var(--status-info);
+  --terminal-ansi-cyan: #06b6d4;
+  --terminal-ansi-white: #d1d5db;
+
+  --terminal-ansi-bright-black: var(--muted-foreground);
+  --terminal-ansi-bright-red: #f87171;
+  --terminal-ansi-bright-green: #4ade80;
+  --terminal-ansi-bright-yellow: #fbbf24;
+  --terminal-ansi-bright-blue: #60a5fa;
+  --terminal-ansi-bright-magenta: #a78bfa;
+  --terminal-ansi-bright-cyan: #22d3ee;
+  --terminal-ansi-bright-white: #f9fafb;
 }
 
 .dark {
@@ -111,6 +138,12 @@
   --status-warning: #fbbf24;
   --status-error: #f87171;
   --status-info: #a78bfa;
+
+  --terminal-ansi-black: #0a0a0a;
+  --terminal-ansi-cyan: #22d3ee;
+  --terminal-ansi-white: #d4d4d4;
+  --terminal-ansi-bright-black: #737373;
+  --terminal-ansi-bright-white: #fafafa;
 }
 
 @theme inline {

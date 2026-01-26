@@ -1,6 +1,12 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Locator, type Page } from "@playwright/test"
 import { PNG } from "pngjs"
 import { ensureWorkspace, sendWsAction } from "./helpers"
+
+async function waitForTerminalReady(terminal: Locator, timeoutMs = 20_000): Promise<void> {
+  await expect
+    .poll(async () => await terminal.locator(".xterm").count(), { timeout: timeoutMs })
+    .toBeGreaterThan(0)
+}
 
 function decodeWsPayload(payload: unknown): { kind: "text" | "binary"; text: string } {
   if (typeof payload === "string") return { kind: "text", text: payload }
@@ -90,9 +96,7 @@ test("terminal background matches card background and survives reload", async ({
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const expected = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
   const rgb = parseRgb(expected)
@@ -109,9 +113,7 @@ test("terminal background matches card background and survives reload", async ({
 
   await page.reload()
   await ensureWorkspace(page)
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const expectedAfter = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
   const rgbAfter = parseRgb(expectedAfter)
@@ -126,13 +128,56 @@ test("terminal background matches card background and survives reload", async ({
   expect(Math.abs(pixelAfter.b - (rgbAfter?.b ?? 0))).toBeLessThanOrEqual(tol)
 })
 
+test("terminal ANSI black background is distinct from card background", async ({ page }) => {
+  const token = `ANSI_BG_DONE_${Math.random().toString(16).slice(2)}`
+  const reversed = token.split("").reverse().join("")
+  const output = waitForPtyOutput(page, new RegExp(escapeRegExp(reversed)), 20_000)
+
+  await ensureWorkspace(page)
+
+  const terminal = page.getByTestId("pty-terminal")
+  await waitForTerminalReady(terminal)
+
+  await terminal.click({ force: true })
+  await page.keyboard.type(
+    `printf '\\033[2J\\033[H\\033[40m%*s\\n%*s\\n%*s\\033[0m\\n' 200 '' 200 '' 200 '' ; printf '%s\\n' '${token}' | rev`,
+  )
+  await page.keyboard.press("Enter")
+  await output
+
+  const expected = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
+  const background = parseRgb(expected)
+  expect(background, `unexpected terminal background: ${expected}`).not.toBeNull()
+
+  const samplePoint = await terminal.evaluate((outer) => {
+    const target = (outer.querySelector("canvas") ?? outer.querySelector(".xterm")) as HTMLElement | null
+    if (!target) return null
+    const outerRect = (outer as HTMLElement).getBoundingClientRect()
+    const rect = target.getBoundingClientRect()
+    const x = Math.floor(rect.left - outerRect.left + rect.width / 2)
+    const y = Math.floor(rect.top - outerRect.top + Math.min(24, rect.height / 4))
+    return { x, y }
+  })
+  expect(samplePoint, "terminal render target not found for pixel sampling").not.toBeNull()
+
+  const shot = await terminal.screenshot()
+  const png = PNG.sync.read(shot)
+  const pixel = samplePixel(png, samplePoint?.x ?? Math.floor(png.width / 2), samplePoint?.y ?? 20)
+
+  const minDelta = 20
+  const delta = Math.max(
+    Math.abs(pixel.r - (background?.r ?? 0)),
+    Math.abs(pixel.g - (background?.g ?? 0)),
+    Math.abs(pixel.b - (background?.b ?? 0)),
+  )
+  expect(delta).toBeGreaterThanOrEqual(minDelta)
+})
+
 test("terminal scrollbar is thin like chat scrollbar", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const widths = await terminal.evaluate((outer) => {
     const scrollbar = outer.querySelector(".xterm-scrollable-element > .scrollbar.vertical") as HTMLElement | null
@@ -173,9 +218,7 @@ test("terminal paste sends input frames", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.evaluate(
     (el, payload) => {
@@ -219,9 +262,7 @@ test("terminal ctrl+arrow sends word navigation input frames", async ({ page }) 
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
   await page.keyboard.down("Control")
@@ -251,9 +292,7 @@ test("terminal backspace sends DEL input frame", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
   await page.keyboard.press("Backspace")
@@ -269,9 +308,7 @@ test("terminal enter executes commands", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
   await page.keyboard.type(`printf '%s\\n' ${token} | rev`)
@@ -289,9 +326,7 @@ test("terminal backspace edits the current command line", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
   await page.keyboard.type(`printf '%s\\n' ${token} | catX`)
@@ -305,9 +340,7 @@ test("terminal does not leak OSC color query replies as visible text", async ({ 
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
 
@@ -331,9 +364,7 @@ test("terminal does not leak 8-bit OSC color query replies as visible text", asy
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await terminal.click({ force: true })
 
@@ -357,9 +388,7 @@ test("terminal theme follows app theme changes", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await sendWsAction(page, { type: "appearance_theme_changed", theme: "light" })
   await expect
@@ -396,17 +425,15 @@ test("terminal canvas stays within container bounds", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await expect
     .poll(async () => {
       return await terminal.evaluate((outer) => {
-        const canvas = outer.querySelector("canvas")
-        if (!canvas) return null
+        const target = outer.querySelector("canvas") ?? outer.querySelector(".xterm")
+        if (!target) return null
         const outerRect = (outer as HTMLElement).getBoundingClientRect()
-        const canvasRect = canvas.getBoundingClientRect()
+        const canvasRect = (target as HTMLElement).getBoundingClientRect()
         return {
           outer: { top: outerRect.top, bottom: outerRect.bottom, left: outerRect.left, right: outerRect.right },
           canvas: { top: canvasRect.top, bottom: canvasRect.bottom, left: canvasRect.left, right: canvasRect.right },
@@ -416,7 +443,8 @@ test("terminal canvas stays within container bounds", async ({ page }) => {
     .not.toBeNull()
 
   const rects = await terminal.evaluate((outer) => {
-    const canvas = outer.querySelector("canvas")!
+    const canvas = (outer.querySelector("canvas") ?? outer.querySelector(".xterm")) as HTMLElement | null
+    if (!canvas) return null
     const outerRect = (outer as HTMLElement).getBoundingClientRect()
     const canvasRect = canvas.getBoundingClientRect()
     return {
@@ -426,19 +454,18 @@ test("terminal canvas stays within container bounds", async ({ page }) => {
   })
 
   const tol = 1
-  expect(rects.canvasRect.top).toBeGreaterThanOrEqual(rects.outerRect.top - tol)
-  expect(rects.canvasRect.left).toBeGreaterThanOrEqual(rects.outerRect.left - tol)
-  expect(rects.canvasRect.right).toBeLessThanOrEqual(rects.outerRect.right + tol)
-  expect(rects.canvasRect.bottom).toBeLessThanOrEqual(rects.outerRect.bottom + tol)
+  expect(rects).not.toBeNull()
+  expect(rects?.canvasRect.top ?? 0).toBeGreaterThanOrEqual((rects?.outerRect.top ?? 0) - tol)
+  expect(rects?.canvasRect.left ?? 0).toBeGreaterThanOrEqual((rects?.outerRect.left ?? 0) - tol)
+  expect(rects?.canvasRect.right ?? 0).toBeLessThanOrEqual((rects?.outerRect.right ?? 0) + tol)
+  expect(rects?.canvasRect.bottom ?? 0).toBeLessThanOrEqual((rects?.outerRect.bottom ?? 0) + tol)
 })
 
 test("terminal does not add extra padding above the viewport", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const padding = await terminal.evaluate((el) => {
     const style = getComputedStyle(el as HTMLElement)
@@ -460,9 +487,7 @@ test("terminal content has horizontal padding", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const insets = await terminal.evaluate((outer) => {
     const xterm = outer.querySelector(".xterm") as HTMLElement | null
@@ -484,9 +509,7 @@ test("terminal viewport uses auto scrollbar behavior", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const snapshot = await terminal.evaluate((outer) => {
     const viewport = outer.querySelector(".xterm-viewport") as HTMLElement | null
@@ -517,9 +540,7 @@ test("terminal scrollbar is styled via app CSS", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   const hasStyle = await terminal.evaluate((outer) => {
     if (!(outer instanceof HTMLElement)) return false
@@ -593,9 +614,7 @@ test("terminal restarts after the shell exits", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
-  await expect
-    .poll(async () => await terminal.locator("canvas").count(), { timeout: 20_000 })
-    .toBeGreaterThan(0)
+  await waitForTerminalReady(terminal)
 
   await expect.poll(async () => ptySocketCount, { timeout: 20_000 }).toBeGreaterThan(0)
   await expect.poll(async () => receivedInitialOutput, { timeout: 20_000 }).toBe(true)

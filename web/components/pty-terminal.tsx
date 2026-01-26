@@ -68,6 +68,26 @@ function cssVar(scope: Element, name: string): string | null {
   return raw.length > 0 ? raw : null
 }
 
+function resolveCssVar(scope: Element, name: string): string | null {
+  let current = cssVar(scope, name)
+  for (let depth = 0; depth < 8; depth++) {
+    if (!current) return null
+    const m = /^var\(\s*(--[\w-]+)\s*(?:,[^)]+)?\)$/.exec(current)
+    if (!m) return current
+    current = cssVar(scope, m[1] ?? "")
+  }
+  return current
+}
+
+function cssVarNumber(scope: Element, name: string): number | null {
+  const raw = resolveCssVar(scope, name)
+  if (!raw) return null
+  const trimmed = raw.trim()
+  const normalized = trimmed.endsWith("px") ? trimmed.slice(0, -2) : trimmed
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function parseHexColor(raw: string): { r: number; g: number; b: number } | null {
   const normalized = normalizeHexColor(raw)
   if (!normalized) return null
@@ -169,7 +189,7 @@ function hexToRgba(hex: string, alpha: number): string | null {
 }
 
 function resolveCssColor(scope: Element, name: string, fallback: { r: number; g: number; b: number }): { r: number; g: number; b: number } {
-  const raw = cssVar(scope, name)
+  const raw = resolveCssVar(scope, name)
   if (!raw) return fallback
 
   const hex = parseHexColor(raw)
@@ -197,27 +217,95 @@ function rgbToRgbaCss(rgb: { r: number; g: number; b: number }, alpha: number): 
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`
 }
 
+type TerminalLook = {
+  fontSize: number
+  lineHeight: number
+  letterSpacing: number
+  useWebgl: boolean
+  allowTransparency: boolean
+}
+
+function terminalLookFromCss(scope: Element): TerminalLook {
+  const fontSize = cssVarNumber(scope, "--terminal-font-size") ?? 12
+  const lineHeight = cssVarNumber(scope, "--terminal-line-height") ?? 1.25
+  const letterSpacing = cssVarNumber(scope, "--terminal-letter-spacing") ?? 0
+  const useWebgl = (cssVarNumber(scope, "--terminal-use-webgl") ?? 0) > 0
+  const allowTransparency = (cssVarNumber(scope, "--terminal-allow-transparency") ?? 0) > 0
+  return { fontSize, lineHeight, letterSpacing, useWebgl, allowTransparency }
+}
+
+function isOscColorReply(bytes: Uint8Array): boolean {
+  if (bytes.length < 9) return false
+  // ESC ] 10;rgb:... or ESC ] 11;rgb:...
+  if (
+    bytes[0] === 0x1b &&
+    bytes[1] === 0x5d &&
+    bytes[2] === 0x31 &&
+    (bytes[3] === 0x30 || bytes[3] === 0x31) &&
+    bytes[4] === 0x3b
+  ) {
+    return bytes[5] === 0x72 && bytes[6] === 0x67 && bytes[7] === 0x62 && bytes[8] === 0x3a
+  }
+  // C1 OSC 10;rgb:... or 11;rgb:...
+  if (bytes[0] === 0x9d && bytes[1] === 0x31 && (bytes[2] === 0x30 || bytes[2] === 0x31) && bytes[3] === 0x3b) {
+    return bytes[4] === 0x72 && bytes[5] === 0x67 && bytes[6] === 0x62 && bytes[7] === 0x3a
+  }
+  return false
+}
+
 function terminalThemeFromCss(scope: Element): ITheme {
-  const backgroundRgb = resolveCssColor(scope, "--card", { r: 255, g: 255, b: 255 })
-  const foregroundRgb = resolveCssColor(scope, "--card-foreground", { r: 51, g: 51, b: 51 })
-  const cursorRgb = resolveCssColor(scope, "--foreground", foregroundRgb)
+  const cardRgb = resolveCssColor(scope, "--card", { r: 255, g: 255, b: 255 })
+  const cardForegroundRgb = resolveCssColor(scope, "--card-foreground", { r: 51, g: 51, b: 51 })
+  const backgroundRgb = resolveCssColor(scope, "--terminal-background", cardRgb)
+  const foregroundRgb = resolveCssColor(scope, "--terminal-foreground", cardForegroundRgb)
+  const cursorRgb = resolveCssColor(scope, "--terminal-cursor", resolveCssColor(scope, "--foreground", foregroundRgb))
   const primaryRgb = resolveCssColor(scope, "--primary", { r: 59, g: 130, b: 246 })
-  const mutedForegroundRgb = resolveCssColor(scope, "--muted-foreground", { r: 107, g: 114, b: 128 })
 
   const background = rgbToHex(backgroundRgb)
   const foreground = rgbToHex(foregroundRgb)
   const cursor = rgbToHex(cursorRgb)
-  const mutedForeground = rgbToHex(mutedForegroundRgb)
-  const selectionBackground = rgbToRgbaCss(primaryRgb, 0.25)
+  const selectionBackground = rgbToRgbaCss(primaryRgb, 0.22)
+
+  const black = rgbToHex(resolveCssColor(scope, "--terminal-ansi-black", { r: 17, g: 24, b: 39 }))
+  const red = rgbToHex(resolveCssColor(scope, "--terminal-ansi-red", { r: 239, g: 68, b: 68 }))
+  const green = rgbToHex(resolveCssColor(scope, "--terminal-ansi-green", { r: 34, g: 197, b: 94 }))
+  const yellow = rgbToHex(resolveCssColor(scope, "--terminal-ansi-yellow", { r: 245, g: 158, b: 11 }))
+  const blue = rgbToHex(resolveCssColor(scope, "--terminal-ansi-blue", { r: 59, g: 130, b: 246 }))
+  const magenta = rgbToHex(resolveCssColor(scope, "--terminal-ansi-magenta", { r: 139, g: 92, b: 246 }))
+  const cyan = rgbToHex(resolveCssColor(scope, "--terminal-ansi-cyan", { r: 6, g: 182, b: 212 }))
+  const white = rgbToHex(resolveCssColor(scope, "--terminal-ansi-white", { r: 209, g: 213, b: 219 }))
+
+  const brightBlack = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-black", { r: 107, g: 114, b: 128 }))
+  const brightRed = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-red", { r: 248, g: 113, b: 113 }))
+  const brightGreen = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-green", { r: 74, g: 222, b: 128 }))
+  const brightYellow = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-yellow", { r: 251, g: 191, b: 36 }))
+  const brightBlue = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-blue", { r: 96, g: 165, b: 250 }))
+  const brightMagenta = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-magenta", { r: 167, g: 139, b: 250 }))
+  const brightCyan = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-cyan", { r: 34, g: 211, b: 238 }))
+  const brightWhite = rgbToHex(resolveCssColor(scope, "--terminal-ansi-bright-white", { r: 249, g: 250, b: 251 }))
+
   return {
     background,
     foreground,
     cursor,
+    cursorAccent: background,
     selectionBackground,
-    black: background,
-    brightBlack: mutedForeground,
-    white: foreground,
-    brightWhite: foreground,
+    black,
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white,
+    brightBlack,
+    brightRed,
+    brightGreen,
+    brightYellow,
+    brightBlue,
+    brightMagenta,
+    brightCyan,
+    brightWhite,
   }
 }
 
@@ -241,6 +329,13 @@ export function PtyTerminal() {
     if (!term) return
     term.options.fontFamily = terminalFontFamily(fonts.terminalFont)
     fitAddonRef.current?.fit()
+    if (webglAddonRef.current) {
+      try {
+        term.clearTextureAtlas()
+      } catch {
+        // ignore
+      }
+    }
   }, [fonts.terminalFont])
 
   useEffect(() => {
@@ -254,11 +349,23 @@ export function PtyTerminal() {
       if (cancelled) return
 
       const theme = terminalThemeFromCss(scope)
-      const digest = JSON.stringify(theme)
+      const look = terminalLookFromCss(scope)
+      const digest = JSON.stringify({ theme, look })
       if (lastThemeDigestRef.current === digest) return
       lastThemeDigestRef.current = digest
 
       term.options.theme = theme
+      term.options.fontSize = look.fontSize
+      term.options.lineHeight = look.lineHeight
+      term.options.letterSpacing = look.letterSpacing
+      fitAddonRef.current?.fit()
+      if (webglAddonRef.current) {
+        try {
+          term.clearTextureAtlas()
+        } catch {
+          // ignore
+        }
+      }
       term.refresh(0, Math.max(0, term.rows - 1))
     })
 
@@ -287,25 +394,30 @@ export function PtyTerminal() {
 
     let disposed = false
     const fitAddon = new FitAddon()
-    const webglAddon = new WebglAddon()
     fitAddonRef.current = fitAddon
+    const look = terminalLookFromCss(outer)
+    const webglAddon = look.useWebgl ? new WebglAddon() : null
     webglAddonRef.current = webglAddon
 
     const term = new Terminal({
       fontFamily: terminalFontFamily(fonts.terminalFont),
-      fontSize: 12,
+      fontSize: look.fontSize,
+      lineHeight: look.lineHeight,
+      letterSpacing: look.letterSpacing,
       cursorBlink: true,
-      allowTransparency: true,
+      allowTransparency: look.allowTransparency,
       theme: terminalThemeFromCss(outer),
       scrollback: 5000,
     })
     termRef.current = term
 
     term.loadAddon(fitAddon)
-    try {
-      term.loadAddon(webglAddon)
-    } catch {
-      // Ignore WebGL initialization failures (unsupported GPU context).
+    if (webglAddon) {
+      try {
+        term.loadAddon(webglAddon)
+      } catch {
+        // Ignore WebGL initialization failures (unsupported GPU context).
+      }
     }
 
     const encoder = new TextEncoder()
@@ -321,6 +433,22 @@ export function PtyTerminal() {
     let pasteHandled = false
     let pendingInput: Uint8Array[] = []
     let pendingReconnectTimer: number | null = null
+    let pendingAtlasRefresh: number | null = null
+
+    function scheduleWebglAtlasRefresh() {
+      if (!webglAddon) return
+      if (pendingAtlasRefresh != null) return
+      pendingAtlasRefresh = window.requestAnimationFrame(() => {
+        pendingAtlasRefresh = null
+        if (disposed) return
+        try {
+          term.clearTextureAtlas()
+        } catch {
+          // ignore
+        }
+        term.refresh(0, Math.max(0, term.rows - 1))
+      })
+    }
 
     function sendInput(text: string) {
       if (isMock) {
@@ -330,6 +458,7 @@ export function PtyTerminal() {
       const socket = ws
       if (!socket) return
       const bytes = encodePtyInputText(encoder, text)
+      if (isOscColorReply(bytes)) return
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(bytes)
       } else {
@@ -345,6 +474,7 @@ export function PtyTerminal() {
       const socket = ws
       if (!socket) return
       const bytes = encodeBinaryString(value)
+      if (isOscColorReply(bytes)) return
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(bytes)
       } else {
@@ -368,6 +498,7 @@ export function PtyTerminal() {
         } catch {
           // ignore
         }
+        scheduleWebglAtlasRefresh()
         sendResizeIfReady(term.cols, term.rows)
         attempts += 1
         if (!isValidTerminalSize(term.cols, term.rows) && attempts < maxAttempts) {
@@ -516,6 +647,7 @@ export function PtyTerminal() {
       const digest = JSON.stringify(theme)
       lastThemeDigestRef.current = digest
       term.options.theme = theme
+      scheduleWebglAtlasRefresh()
       term.refresh(0, Math.max(0, term.rows - 1))
     })
 
@@ -691,8 +823,9 @@ export function PtyTerminal() {
       binaryDisposable?.dispose()
       resizeDisposable?.dispose()
       if (pendingReconnectTimer != null) window.clearTimeout(pendingReconnectTimer)
+      if (pendingAtlasRefresh != null) window.cancelAnimationFrame(pendingAtlasRefresh)
       ws?.close()
-      webglAddon.dispose()
+      webglAddon?.dispose()
       term.dispose()
     }
   }, [activeWorkspaceId, activeWorkspace?.workspace_name, activeWorkspace?.worktree_path])
