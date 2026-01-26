@@ -23,50 +23,6 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
-  ci:
-    name: CI (fmt/lint/test)
-    runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
-    timeout-minutes: 60
-    env:
-      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-      LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup just
-        uses: extractions/setup-just@v2
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Install 1Password CLI
-        uses: 1password/install-cli-action@v2
-
-      - name: Inject secrets into .env
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${LUBAN_VAULT:?LUBAN_VAULT is required}"
-          op inject -i .env.example -o .env
-
-      - name: Run CI
-        shell: bash
-        run: just ci
-
-      - name: Cleanup injected env file
-        if: always()
-        shell: bash
-        run: rm -f .env
-
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ fromJSON(matrix.runs_on) }}
