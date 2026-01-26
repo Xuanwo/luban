@@ -1,14 +1,14 @@
 # Release CI
 
-This repository ships release artifacts via GitHub Actions when a tag is created.
+This repository ships release artifacts via GitHub Actions when a tag is pushed.
 
 ## What the workflow does
 
 Workflow file: `.github/workflows/release.yml`
 
 - Trigger
-  - `create` tag events matching `v*` (packages + uploads)
-  - `push` to `main` will run only when `justfile` or `.github/workflows/release.yml` changes (package test; no uploads)
+  - `push` to tags matching `v*` (packages + uploads)
+  - `pull_request` to `main` will run only when `justfile` or `.github/workflows/release.yml` changes (package test; no uploads)
 - Outputs
   - Builds and uploads artifacts to Cloudflare R2 (used by `releases.luban.dev`)
   - Publishes a merged `latest.json` after all platform uploads succeed
