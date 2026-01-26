@@ -23,9 +23,54 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
+  ci:
+    name: CI (fmt/lint/test)
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    timeout-minutes: 60
+    env:
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup just
+        uses: extractions/setup-just@v2
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v2
+
+      - name: Inject secrets into .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LUBAN_VAULT:?LUBAN_VAULT is required}"
+          op inject -i .env.example -o .env
+
+      - name: Run CI
+        shell: bash
+        run: just ci
+
+      - name: Cleanup injected env file
+        if: always()
+        shell: bash
+        run: rm -f .env
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ fromJSON(matrix.runs_on) }}
+    needs: ci
     if: >-
       github.event_name == 'pull_request' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
@@ -160,7 +205,39 @@ jobs:
           cache-on-failure: true
 
       - name: Install 1Password CLI
+        if: runner.os != 'Windows' || runner.arch != 'ARM64'
         uses: 1password/install-cli-action@v2
+
+      - name: Install 1Password CLI (Windows ARM64)
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: pwsh
+        env:
+          OP_VERSION: "2.32.0"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = $env:OP_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "OP_VERSION is required"
+          }
+
+          $zipUrl = "https://cache.agilebits.com/dist/1P/op2/pkg/v$version/op_windows_amd64_v$version.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP "op.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "op"
+
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractDir, $true)
+
+          $opExe = (Get-ChildItem -Path $extractDir -Recurse -Filter "op.exe" | Select-Object -First 1).FullName
+          if (-not $opExe) {
+            throw "op.exe not found after extraction"
+          }
+
+          $opBinDir = Split-Path $opExe -Parent
+          $opBinDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & $opExe --version
 
       - name: Install Tauri CLI
         shell: bash
@@ -178,6 +255,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -a
+          source .env
+          set +a
           : "${APPLE_CERTIFICATE:?APPLE_CERTIFICATE is required}"
           : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY is required}"
 
