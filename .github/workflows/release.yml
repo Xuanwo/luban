@@ -50,10 +50,6 @@ jobs:
             target: windows-x86_64
             platform: windows
             runs_on: '["windows-latest"]'
-          - name: Windows (aarch64)
-            target: windows-aarch64
-            platform: windows
-            runs_on: '["windows-11-arm"]'
     env:
       OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
       LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
@@ -91,13 +87,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup just
-        if: runner.os != 'Windows' || runner.arch != 'ARM64'
         uses: extractions/setup-just@v2
-
-      - name: Setup just (Windows ARM64)
-        if: runner.os == 'Windows' && runner.arch == 'ARM64'
-        shell: bash
-        run: cargo install just --locked
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -160,39 +150,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install 1Password CLI
-        if: runner.os != 'Windows' || runner.arch != 'ARM64'
         uses: 1password/install-cli-action@v2
-
-      - name: Install 1Password CLI (Windows ARM64)
-        if: runner.os == 'Windows' && runner.arch == 'ARM64'
-        shell: pwsh
-        env:
-          OP_VERSION: "2.32.0"
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $version = $env:OP_VERSION
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            throw "OP_VERSION is required"
-          }
-
-          $zipUrl = "https://cache.agilebits.com/dist/1P/op2/pkg/v$version/op_windows_amd64_v$version.zip"
-          $zipPath = Join-Path $env:RUNNER_TEMP "op.zip"
-          $extractDir = Join-Path $env:RUNNER_TEMP "op"
-
-          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
-          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractDir, $true)
-
-          $opExe = (Get-ChildItem -Path $extractDir -Recurse -Filter "op.exe" | Select-Object -First 1).FullName
-          if (-not $opExe) {
-            throw "op.exe not found after extraction"
-          }
-
-          $opBinDir = Split-Path $opExe -Parent
-          $opBinDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          & $opExe --version
 
       - name: Install Tauri CLI
         shell: bash
