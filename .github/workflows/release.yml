@@ -198,7 +198,11 @@ jobs:
             printf '%s' "${APPLE_CERTIFICATE}" > "${cert_path}"
           fi
 
-          security import "${cert_path}" -k ci.keychain -P "" -T /usr/bin/codesign -T /usr/bin/security
+          if security import "${cert_path}" -k ci.keychain -P "" -T /usr/bin/codesign -T /usr/bin/security; then
+            :
+          else
+            security import "${cert_path}" -k ci.keychain -P "${APPLE_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security
+          fi
           security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" ci.keychain
 
           security find-identity -v -p codesigning ci.keychain || true
