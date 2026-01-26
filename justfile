@@ -145,12 +145,18 @@ build-server profile="debug":
 
 ci: fmt lint test
 
-package target profile="release":
-  cargo run --quiet --manifest-path=dev/Cargo.toml -- package "{{target}}" --profile "{{profile}}"
+package target profile="release" out_dir="dist":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- package "{{target}}" --profile "{{profile}}" --out-dir "{{out_dir}}"
 
-upload:
-  if [ ! -f .context/package/package.env ]; then \
-    echo "missing .context/package/package.env; run: just package darwin-aarch64"; \
+upload package_env="dist/package.env" latest="true":
+  if [ ! -f "{{package_env}}" ]; then \
+    echo "missing {{package_env}}; run: just package <target> [out_dir=...]"; \
     exit 1; \
   fi; \
-  cargo run --quiet --manifest-path=dev/Cargo.toml -- upload
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- upload --package-env "{{package_env}}" --latest "{{latest}}"
+
+manifest packages_dir="dist" out="dist/latest.json":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- manifest --packages-dir "{{packages_dir}}" --out "{{out}}"
+
+upload-manifest manifest="dist/latest.json":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- upload-manifest --manifest "{{manifest}}"
