@@ -367,19 +367,24 @@ mod tests {
         let menu = build_app_menu(app.handle()).expect("app menu must build");
 
         let edit = find_submenu(&menu, "Edit");
-        let predefined_texts: Vec<String> = edit
+        let item_texts: Vec<String> = edit
             .items()
             .expect("edit submenu items must be available")
             .into_iter()
             .filter_map(|item| match item {
+                // Depending on platform/runtime, `cut/copy/paste/select_all` may be surfaced as
+                // predefined menu items or regular menu items. Normalize the label to keep this
+                // assertion stable across targets.
                 tauri::menu::MenuItemKind::Predefined(predefined) => predefined.text().ok(),
+                tauri::menu::MenuItemKind::MenuItem(menu_item) => menu_item.text().ok(),
                 _ => None,
             })
+            .map(|text| text.split('\t').next().unwrap_or(&text).trim().to_owned())
             .collect();
 
         for text in ["Cut", "Copy", "Paste", "Select All"] {
             assert!(
-                predefined_texts.iter().any(|t| t == text),
+                item_texts.iter().any(|t| t == text),
                 "edit submenu must include {text}"
             );
         }
