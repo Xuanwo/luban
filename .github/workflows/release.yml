@@ -130,11 +130,14 @@ jobs:
           node-version: 22
 
       - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Resolve pnpm store path
         shell: bash
-        run: |
-          corepack enable
-          corepack prepare pnpm@9 --activate
-          echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "${GITHUB_ENV}"
+        run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "${GITHUB_ENV}"
 
       - name: pnpm cache
         uses: actions/cache@v4
@@ -174,7 +177,7 @@ jobs:
           : "${APPLE_CERTIFICATE:?APPLE_CERTIFICATE is required}"
           : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY is required}"
 
-          keychain_password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+          keychain_password="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
           echo "CI_KEYCHAIN_PASSWORD=${keychain_password}" >> "${GITHUB_ENV}"
 
           security create-keychain -p "${keychain_password}" ci.keychain
