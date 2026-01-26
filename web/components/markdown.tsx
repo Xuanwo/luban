@@ -1,6 +1,6 @@
 "use client"
 
-import { isValidElement } from "react"
+import { isValidElement, memo } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -15,20 +15,21 @@ function normalizeMarkdown(input: string): string {
     .join("\n")
 }
 
-export function Markdown({
-  content,
-  className,
-  enableMermaid,
-}: {
-  content: string
-  className?: string
-  enableMermaid?: boolean
-}) {
-  return (
-    <div className={cn("text-[13px] leading-relaxed text-foreground/90 break-words overflow-hidden", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
+export const Markdown = memo(
+  function Markdown({
+    content,
+    className,
+    enableMermaid,
+  }: {
+    content: string
+    className?: string
+    enableMermaid?: boolean
+  }) {
+    return (
+      <div className={cn("text-[13px] leading-relaxed text-foreground/90 break-words overflow-hidden", className)}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
           p: (props) => <p className="my-2 first:mt-0 last:mb-0" {...props} />,
           h1: (props) => <h1 className="mt-4 mb-2 text-base font-semibold text-foreground" {...props} />,
           h2: (props) => <h2 className="mt-4 mb-2 text-[15px] font-semibold text-foreground" {...props} />,
@@ -109,10 +110,13 @@ export function Markdown({
               </pre>
             )
           },
-        }}
-      >
-        {normalizeMarkdown(content)}
-      </ReactMarkdown>
-    </div>
-  )
-}
+          }}
+        >
+          {normalizeMarkdown(content)}
+        </ReactMarkdown>
+      </div>
+    )
+  },
+  (prev, next) =>
+    prev.content === next.content && prev.className === next.className && prev.enableMermaid === next.enableMermaid,
+)

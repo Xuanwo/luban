@@ -2397,7 +2397,9 @@ impl Engine {
                         .is_some_and(|bin| bin == "/usr/bin/false");
                 let fake_agent_delay = if use_fake_agent {
                     let prompt = text.as_str();
-                    if prompt.contains("e2e-running-card") {
+                    if prompt.contains("e2e-running-card")
+                        || prompt.contains("e2e-streaming-message")
+                    {
                         Duration::from_millis(3500)
                     } else if prompt.contains("e2e-cancel") {
                         Duration::from_millis(2500)
@@ -2459,6 +2461,7 @@ impl Engine {
                         let emit_pagination_steps = prompt.contains("e2e-pagination-steps");
                         let emit_markdown_reasoning = prompt.contains("e2e-thinking-markdown");
                         let emit_file_change = prompt.contains("e2e-file-change");
+                        let emit_streaming_message = prompt.contains("e2e-streaming-message");
 
                         if emit_many_steps || emit_pagination_steps {
                             let count = if emit_pagination_steps {
@@ -2521,9 +2524,80 @@ impl Engine {
                         let mut sent_2_start = false;
                         let mut sent_2_done = false;
                         let mut sent_3_start = false;
+                        let mut streaming_started = false;
+                        let mut streaming_completed = false;
+                        let streaming_id = "e2e_stream_msg_1".to_owned();
+                        let streaming_needle = "e2e-selection-needle";
+                        let mut streaming_text = String::new();
+                        let mut streaming_chunks_sent: u32 = 0;
 
                         while start.elapsed() < deadline && !cancel.load(Ordering::SeqCst) {
                             let elapsed = start.elapsed();
+
+                            if emit_streaming_message && !streaming_completed {
+                                if !streaming_started && elapsed >= Duration::from_millis(50) {
+                                    streaming_started = true;
+                                    streaming_text =
+                                        format!("Streaming...\n\n{streaming_needle}\n\n");
+                                    let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                                        action: Box::new(Action::AgentEventReceived {
+                                            workspace_id,
+                                            thread_id,
+                                            run_id,
+                                            event: luban_domain::CodexThreadEvent::ItemStarted {
+                                                item: luban_domain::CodexThreadItem::AgentMessage {
+                                                    id: streaming_id.clone(),
+                                                    text: streaming_text.clone(),
+                                                },
+                                            },
+                                        }),
+                                    });
+                                }
+
+                                if streaming_started {
+                                    let chunk_every_ms = 120u64;
+                                    let elapsed_ms = elapsed.as_millis() as u64;
+                                    let expected_chunks =
+                                        (elapsed_ms / chunk_every_ms).min(25) as u32;
+                                    while streaming_chunks_sent < expected_chunks {
+                                        streaming_chunks_sent += 1;
+                                        streaming_text.push_str(&format!(
+                                            "chunk-{:02}\n",
+                                            streaming_chunks_sent
+                                        ));
+                                        let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                                            action: Box::new(Action::AgentEventReceived {
+                                                workspace_id,
+                                                thread_id,
+                                                run_id,
+                                                event: luban_domain::CodexThreadEvent::ItemUpdated {
+                                                    item: luban_domain::CodexThreadItem::AgentMessage {
+                                                        id: streaming_id.clone(),
+                                                        text: streaming_text.clone(),
+                                                    },
+                                                },
+                                            }),
+                                        });
+                                    }
+                                }
+
+                                if elapsed >= Duration::from_millis(3000) {
+                                    streaming_completed = true;
+                                    let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                                        action: Box::new(Action::AgentEventReceived {
+                                            workspace_id,
+                                            thread_id,
+                                            run_id,
+                                            event: luban_domain::CodexThreadEvent::ItemCompleted {
+                                                item: luban_domain::CodexThreadItem::AgentMessage {
+                                                    id: streaming_id.clone(),
+                                                    text: streaming_text.clone(),
+                                                },
+                                            },
+                                        }),
+                                    });
+                                }
+                            }
 
                             if prompt.contains("e2e-running-card") {
                                 if !sent_1_start && elapsed >= Duration::from_millis(50) {
