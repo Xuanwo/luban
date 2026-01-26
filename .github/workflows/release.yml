@@ -1,0 +1,260 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - justfile
+      - .github/workflows/release.yml
+  create:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (universal)
+            target: darwin-universal
+            platform: macos
+            runs_on: '["macos-15"]'
+          - name: Linux (x86_64)
+            target: linux-x86_64
+            platform: linux
+            runs_on: '["ubuntu-latest"]'
+          - name: Linux (aarch64)
+            target: linux-aarch64
+            platform: linux
+            runs_on: '["ubuntu-24.04-arm"]'
+          - name: Windows (x86_64)
+            target: windows-x86_64
+            platform: windows
+            runs_on: '["windows-latest"]'
+          - name: Windows (aarch64)
+            target: windows-aarch64
+            platform: windows
+            runs_on: '["windows-11-arm"]'
+    env:
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: >-
+            ${{ github.event_name == 'create' && github.event.ref_type == 'tag' &&
+            format('refs/tags/{0}', github.event.ref) || github.ref }}
+
+      - name: Validate tag
+        if: github.event_name == 'create' && github.event.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.ref }}"
+          if [[ -z "${tag}" ]]; then
+            echo "tag is required" >&2
+            exit 2
+          fi
+          if [[ "${tag}" != v* ]]; then
+            echo "tag must start with 'v': ${tag}" >&2
+            exit 2
+          fi
+          if [[ "${tag}" == *-* ]]; then
+            echo "pre-release tags are not supported: ${tag}" >&2
+            exit 2
+          fi
+
+      - name: Setup Rust (macOS)
+        if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Setup Rust
+        if: runner.os != 'macOS'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup just
+        uses: extractions/setup-just@v2
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            libclang-dev \
+            curl \
+            pkg-config \
+            libssl-dev \
+            xz-utils \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libxcb1-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev
+
+      - name: Install system dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install -y nsis wixtoolset
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "${GITHUB_ENV}"
+
+      - name: pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Install Tauri CLI
+        shell: bash
+        run: cargo install tauri-cli --locked --version 2.9.5
+
+      - name: Inject secrets into .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LUBAN_VAULT:?LUBAN_VAULT is required}"
+          op inject -i .env.example -o .env
+
+      - name: Package
+        shell: bash
+        run: just package "${{ matrix.target }}" profile=release out_dir="dist/${{ matrix.target }}"
+
+      - name: Upload artifacts to R2
+        if: github.event_name == 'create' && github.event.ref_type == 'tag'
+        shell: bash
+        run: just upload package_env="dist/${{ matrix.target }}/package.env" latest=false
+
+      - name: Export package env
+        if: github.event_name == 'create' && github.event.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-env-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/package.env
+
+      - name: Cleanup injected env file
+        if: always()
+        shell: bash
+        run: rm -f .env
+
+  publish_latest:
+    name: Publish latest.json
+    runs-on: ubuntu-latest
+    needs: build
+    if: >-
+      github.event_name == 'create' && github.event.ref_type == 'tag' &&
+      startsWith(github.event.ref, 'v')
+    timeout-minutes: 30
+    env:
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ format('refs/tags/{0}', github.event.ref) }}
+
+      - name: Validate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.ref }}"
+          if [[ -z "${tag}" ]]; then
+            echo "tag is required" >&2
+            exit 2
+          fi
+          if [[ "${tag}" != v* ]]; then
+            echo "tag must start with 'v': ${tag}" >&2
+            exit 2
+          fi
+          if [[ "${tag}" == *-* ]]; then
+            echo "pre-release tags are not supported: ${tag}" >&2
+            exit 2
+          fi
+
+      - name: Download package envs
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/.ci/release-packages
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup just
+        uses: extractions/setup-just@v2
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Inject secrets into .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LUBAN_VAULT:?LUBAN_VAULT is required}"
+          op inject -i .env.example -o .env
+
+      - name: Build latest.json
+        shell: bash
+        run: just manifest packages_dir="dist/.ci/release-packages" out="dist/.ci/release-packages/latest.json"
+
+      - name: Upload latest.json to R2
+        shell: bash
+        run: just upload-manifest manifest="dist/.ci/release-packages/latest.json"
+
+      - name: Cleanup injected env file
+        if: always()
+        shell: bash
+        run: rm -f .env
