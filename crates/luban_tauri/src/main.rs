@@ -363,6 +363,13 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn app_menu_includes_edit_submenu_with_clipboard_items() {
+        fn normalize_menu_label(text: &str) -> String {
+            let text = text.split('\t').next().unwrap_or(text).trim();
+            text.chars()
+                .filter(|c| *c != '_' && *c != '&')
+                .collect::<String>()
+        }
+
         let app = tauri::test::mock_app();
         let menu = build_app_menu(app.handle()).expect("app menu must build");
 
@@ -379,13 +386,13 @@ mod tests {
                 tauri::menu::MenuItemKind::MenuItem(menu_item) => menu_item.text().ok(),
                 _ => None,
             })
-            .map(|text| text.split('\t').next().unwrap_or(&text).trim().to_owned())
+            .map(|text| normalize_menu_label(&text))
             .collect();
 
         for text in ["Cut", "Copy", "Paste", "Select All"] {
             assert!(
                 item_texts.iter().any(|t| t == text),
-                "edit submenu must include {text}"
+                "edit submenu must include {text}; got: {item_texts:?}"
             );
         }
     }
