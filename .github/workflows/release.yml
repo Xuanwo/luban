@@ -169,12 +169,12 @@ jobs:
 
       - name: Package
         shell: bash
-        run: just package "${{ matrix.target }}" profile=release out_dir="dist/${{ matrix.target }}"
+        run: just package "${{ matrix.target }}" release "dist/${{ matrix.target }}"
 
       - name: Upload artifacts to R2
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: just upload package_env="dist/${{ matrix.target }}/package.env" latest=false
+        run: just upload "dist/${{ matrix.target }}/package.env" false
 
       - name: Export package env
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -243,11 +243,11 @@ jobs:
 
       - name: Build latest.json
         shell: bash
-        run: just manifest packages_dir="dist/.ci/release-packages" out="dist/.ci/release-packages/latest.json"
+        run: just manifest "dist/.ci/release-packages" "dist/.ci/release-packages/latest.json"
 
       - name: Upload latest.json to R2
         shell: bash
-        run: just upload-manifest manifest="dist/.ci/release-packages/latest.json"
+        run: just upload-manifest "dist/.ci/release-packages/latest.json"
 
       - name: Cleanup injected env file
         if: always()
