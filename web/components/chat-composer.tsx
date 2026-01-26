@@ -88,7 +88,7 @@ export function ChatComposer({
           disabled={disabled}
           agentSelector={
             <AgentSelector
-              testId="codex-agent-selector"
+              testId="agent-selector"
               dropdownPosition="top"
               disabled={disabled}
               modelId={agentModelId}

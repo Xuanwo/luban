@@ -10,7 +10,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
-import { buildMessages } from "@/lib/conversation-ui"
+import { buildMessages, type Message } from "@/lib/conversation-ui"
 import { ConversationView } from "@/components/conversation-view"
 import { VirtualizedConversationView } from "@/components/virtualized-conversation-view"
 import { fetchCodexCustomPrompts, fetchWorkspaceDiff, uploadAttachment } from "@/lib/luban-http"
@@ -98,12 +98,16 @@ export function ChatPanel({
   const [runnerOverride, setRunnerOverride] = useState<AgentRunnerOverride>(null)
   const [ampModeOverride, setAmpModeOverride] = useState<AmpModeOverride>(null)
   const [followTail, setFollowTail] = useState(true)
+  const [freezeConversationRender, setFreezeConversationRender] = useState(false)
   const programmaticScrollRef = useRef(false)
   const pinToBottomRef = useRef<{ epoch: number; until: number; raf: number | null } | null>(null)
   const pinToBottomEpochRef = useRef(0)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const loadingOlderRef = useRef(false)
   const lastScrollTopRef = useRef(0)
+  const freezeConversationRenderRef = useRef(false)
+  const latestMessagesRef = useRef<Message[]>([])
+  const frozenMessagesRef = useRef<Message[] | null>(null)
 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const attachmentScopeRef = useRef<string>("")
@@ -175,14 +179,87 @@ export function ChatPanel({
   }, [activeWorkspaceId, activeThreadId])
 
   const messages = useMemo(() => buildMessages(conversation), [conversation])
+  useEffect(() => {
+    latestMessagesRef.current = messages
+  }, [messages])
+
+  useEffect(() => {
+    freezeConversationRenderRef.current = freezeConversationRender
+  }, [freezeConversationRender])
+
+  const selectionActiveInConversation = (() => {
+    const root = scrollContainerRef.current
+    if (!root) return false
+
+    const sel = document.getSelection()
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false
+
+    const range = sel.getRangeAt(0)
+    let node: Node | null = range.commonAncestorContainer
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode
+    if (!(node instanceof Element)) return false
+    if (!root.contains(node)) return false
+    if (node.closest("input, textarea, [contenteditable='true']")) return false
+    return true
+  })()
+
+  if (selectionActiveInConversation) {
+    if (!frozenMessagesRef.current) {
+      frozenMessagesRef.current = latestMessagesRef.current
+    }
+  } else if (frozenMessagesRef.current) {
+    frozenMessagesRef.current = null
+  }
+
+  useEffect(() => {
+    const computeFrozen = (): boolean => {
+      const root = scrollContainerRef.current
+      if (!root) return false
+
+      const sel = document.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false
+
+      const range = sel.getRangeAt(0)
+      let node: Node | null = range.commonAncestorContainer
+      if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode
+      if (!(node instanceof Element)) return false
+      if (!root.contains(node)) return false
+      if (node.closest("input, textarea, [contenteditable='true']")) return false
+      return true
+    }
+
+    const onSelectionChange = () => {
+      const next = computeFrozen()
+      const prev = freezeConversationRenderRef.current
+      if (next === prev) return
+
+      if (next) {
+        frozenMessagesRef.current = latestMessagesRef.current
+      } else {
+        frozenMessagesRef.current = null
+      }
+      setFreezeConversationRender(next)
+    }
+
+    document.addEventListener("selectionchange", onSelectionChange)
+    window.addEventListener("mouseup", onSelectionChange)
+    window.addEventListener("keyup", onSelectionChange)
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange)
+      window.removeEventListener("mouseup", onSelectionChange)
+      window.removeEventListener("keyup", onSelectionChange)
+    }
+  }, [])
+
+  const displayMessages = frozenMessagesRef.current ?? messages
   const agentCardMessageId = useMemo(() => {
-    for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
-      const msg = messages[idx]
+    for (let idx = displayMessages.length - 1; idx >= 0; idx -= 1) {
+      const msg = displayMessages[idx]
       if (!msg) continue
       if (msg.type === "assistant" && msg.activities && msg.activities.length > 0) return msg.id
     }
     return null
-  }, [messages])
+  }, [displayMessages])
   const messageHistory = useMemo(() => {
     const entries = conversation?.entries ?? []
     const isUserMessage = (
@@ -480,10 +557,11 @@ export function ChatPanel({
   }
 
   useEffect(() => {
+    if (freezeConversationRender) return
     if (!followTail) return
-    if (messages.length === 0) return
+    if (displayMessages.length === 0) return
     scheduleScrollToBottom()
-  }, [messages.length, followTail, activeWorkspaceId, activeThreadId])
+  }, [displayMessages.length, followTail, activeWorkspaceId, activeThreadId, freezeConversationRender])
 
   function persistDraft(nextText: string) {
     if (activeWorkspaceId == null || activeThreadId == null) return
@@ -1088,9 +1166,9 @@ export function ChatPanel({
                   Loading…
                 </div>
               )}
-              {messages.length > 200 ? (
+              {displayMessages.length > 200 ? (
                 <VirtualizedConversationView
-                  messages={messages}
+                  messages={displayMessages}
                   workspaceId={activeWorkspaceId ?? undefined}
                   listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
                   scrollElement={scrollContainerEl}
@@ -1105,7 +1183,7 @@ export function ChatPanel({
                 />
               ) : (
                 <ConversationView
-                  messages={messages}
+                  messages={displayMessages}
                   workspaceId={activeWorkspaceId ?? undefined}
                   className=""
                   renderAgentRunningCard={renderAgentRunningCardForMessage}
@@ -1175,7 +1253,7 @@ export function ChatPanel({
             <div className="pointer-events-auto">
               <EscCancelHint visible={escHintVisible} timeoutMs={ESC_TIMEOUT_MS} />
 
-              {!followTail && messages.length > 0 && editingQueuedPromptId == null ? (
+              {!followTail && displayMessages.length > 0 && editingQueuedPromptId == null ? (
                 <div className="flex justify-center pb-2">
                   <button
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-full text-xs text-muted-foreground hover:text-foreground hover:border-primary/50 transition-all shadow-sm hover:shadow-md"

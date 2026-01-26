@@ -39,7 +39,7 @@ export function ConversationMessage({
   return (
     <div className="group">
       {message.type === "assistant" ? (
-        <div className="space-y-1">
+        <div className="space-y-1" data-testid="assistant-message">
           {message.activities &&
             (renderAgentRunningCard?.(message) ?? (
               <ActivityStream

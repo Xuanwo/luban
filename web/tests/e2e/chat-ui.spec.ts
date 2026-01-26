@@ -94,6 +94,217 @@ test("user messages can be copied", async ({ page }) => {
     .toBe(marker)
 })
 
+test("selected text can be copied while an agent turn is running", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await ensureWorkspace(page)
+
+  const runId = Math.random().toString(16).slice(2)
+  const marker = `e2e-select-copy-${runId}`
+  const selection = `sel-${runId}`
+  const prompt = `${marker} e2e-running-card ${selection}`
+
+  const workspaceId = await activeWorkspaceId(page)
+  const threadId = await createThreadViaUi(page, workspaceId)
+
+  await page.getByTestId("chat-input").fill(prompt)
+  await page.getByTestId("chat-input").press("Enter")
+
+  const bubble = page.getByTestId("user-message-bubble").filter({ hasText: marker }).first()
+  await expect(bubble).toBeVisible({ timeout: 20_000 })
+
+  await expect(page.getByText("echo 1")).toBeVisible({ timeout: 20_000 })
+
+  await bubble.evaluate(
+    (el, needle) => {
+      const root = el as HTMLElement
+      const text = root.textContent ?? ""
+      const startIndex = text.indexOf(needle)
+      if (startIndex < 0) throw new Error(`missing selection text: ${needle}`)
+
+      const endIndex = startIndex + needle.length
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      let cursor = 0
+      let startNode: Text | null = null
+      let startOffset = 0
+      let endNode: Text | null = null
+      let endOffset = 0
+
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text
+        const len = node.nodeValue?.length ?? 0
+        const nextCursor = cursor + len
+
+        if (!startNode && startIndex >= cursor && startIndex <= nextCursor) {
+          startNode = node
+          startOffset = startIndex - cursor
+        }
+        if (!endNode && endIndex >= cursor && endIndex <= nextCursor) {
+          endNode = node
+          endOffset = endIndex - cursor
+        }
+
+        if (startNode && endNode) break
+        cursor = nextCursor
+      }
+
+      if (!startNode || !endNode) throw new Error("failed to locate selection range nodes")
+
+      const range = document.createRange()
+      range.setStart(startNode, startOffset)
+      range.setEnd(endNode, endOffset)
+
+      const sel = window.getSelection()
+      if (!sel) throw new Error("missing selection")
+      sel.removeAllRanges()
+      sel.addRange(range)
+      document.dispatchEvent(new Event("selectionchange"))
+    },
+    selection,
+  )
+
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/api/workspaces/${workspaceId}/conversations/${threadId}`)
+        if (!res.ok()) return false
+        const snapshot = (await res.json()) as any
+        const inProgress = Array.isArray(snapshot?.in_progress_items) ? snapshot.in_progress_items : []
+        const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : []
+
+        const hasCommand = (items: any[]): boolean =>
+          items.some(
+            (item: any) =>
+              item?.kind === "command_execution" && String(item?.payload?.command ?? "").includes("echo 2"),
+          )
+
+        const hasEntry =
+          entries.some(
+            (entry: any) =>
+              entry?.type === "agent_item" &&
+              entry?.kind === "command_execution" &&
+              String(entry?.payload?.command ?? "").includes("echo 2"),
+          ) || hasCommand(inProgress)
+
+        return Boolean(hasEntry)
+      },
+      { timeout: 20_000 },
+    )
+    .toBeTruthy()
+
+  await expect
+    .poll(async () => await page.evaluate(() => window.getSelection()?.toString() ?? ""), { timeout: 5_000 })
+    .toBe(selection)
+
+  const copyCombo = process.platform === "darwin" ? "Meta+C" : "Control+C"
+  await page.keyboard.press(copyCombo)
+
+  await expect
+    .poll(async () => await page.evaluate(() => navigator.clipboard.readText()), { timeout: 5_000 })
+    .toBe(selection)
+
+  await page.evaluate(() => {
+    window.getSelection()?.removeAllRanges()
+    document.dispatchEvent(new Event("selectionchange"))
+  })
+})
+
+test("selected text can be copied from a streaming assistant message", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await ensureWorkspace(page)
+
+  const needle = "e2e-selection-needle"
+  const runId = Math.random().toString(16).slice(2)
+  const prompt = `e2e-streaming-message e2e-streaming-${runId}`
+
+  const workspaceId = await activeWorkspaceId(page)
+  const threadId = await createThreadViaUi(page, workspaceId)
+
+  await page.getByTestId("chat-input").fill(prompt)
+  await page.getByTestId("chat-input").press("Enter")
+
+  const assistant = page.getByTestId("assistant-message").filter({ hasText: needle }).first()
+  await expect(assistant).toBeVisible({ timeout: 20_000 })
+
+  await assistant.evaluate(
+    (el, needle) => {
+      const root = el as HTMLElement
+      const text = root.textContent ?? ""
+      const startIndex = text.indexOf(needle)
+      if (startIndex < 0) throw new Error(`missing selection text: ${needle}`)
+      const endIndex = startIndex + needle.length
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      let cursor = 0
+      let startNode: Text | null = null
+      let startOffset = 0
+      let endNode: Text | null = null
+      let endOffset = 0
+
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text
+        const len = node.nodeValue?.length ?? 0
+        const nextCursor = cursor + len
+
+        if (!startNode && startIndex >= cursor && startIndex <= nextCursor) {
+          startNode = node
+          startOffset = startIndex - cursor
+        }
+        if (!endNode && endIndex >= cursor && endIndex <= nextCursor) {
+          endNode = node
+          endOffset = endIndex - cursor
+        }
+
+        if (startNode && endNode) break
+        cursor = nextCursor
+      }
+
+      if (!startNode || !endNode) throw new Error("failed to locate selection range nodes")
+
+      const range = document.createRange()
+      range.setStart(startNode, startOffset)
+      range.setEnd(endNode, endOffset)
+
+      const sel = window.getSelection()
+      if (!sel) throw new Error("missing selection")
+      sel.removeAllRanges()
+      sel.addRange(range)
+      document.dispatchEvent(new Event("selectionchange"))
+    },
+    needle,
+  )
+
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/api/workspaces/${workspaceId}/conversations/${threadId}`)
+        if (!res.ok()) return ""
+        const snapshot = (await res.json()) as any
+        const items = Array.isArray(snapshot?.in_progress_items) ? snapshot.in_progress_items : []
+        const agentMessage = items.find((item: any) => item?.kind === "agent_message") ?? null
+        return String(agentMessage?.payload?.text ?? "")
+      },
+      { timeout: 20_000 },
+    )
+    .toContain("chunk-10")
+
+  await expect
+    .poll(async () => await page.evaluate(() => window.getSelection()?.toString() ?? ""), { timeout: 5_000 })
+    .toBe(needle)
+
+  const copyCombo = process.platform === "darwin" ? "Meta+C" : "Control+C"
+  await page.keyboard.press(copyCombo)
+
+  await expect
+    .poll(async () => await page.evaluate(() => navigator.clipboard.readText()), { timeout: 5_000 })
+    .toBe(needle)
+
+  await page.evaluate(() => {
+    window.getSelection()?.removeAllRanges()
+    document.dispatchEvent(new Event("selectionchange"))
+  })
+})
+
 test("chat input scrolls when content exceeds max height", async ({ page }) => {
   await ensureWorkspace(page)
 
