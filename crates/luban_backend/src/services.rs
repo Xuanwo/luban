@@ -4406,9 +4406,12 @@ mod tests {
             &fake_codex,
             [
                 "#!/bin/sh",
+                "cat >/dev/null &",
+                "stdin_pid=$!",
                 "echo '{\"type\":\"turn.started\"}'",
                 "echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"id\":\"item_0\",\"command\":\"echo hi\",\"aggregated_output\":\"\",\"exit_code\":0,\"status\":\"completed\"}}'",
                 "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}'",
+                "wait \"$stdin_pid\"",
                 "exit 0",
                 "",
             ]
