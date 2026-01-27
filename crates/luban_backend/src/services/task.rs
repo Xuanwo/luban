@@ -454,9 +454,15 @@ pub(super) fn task_preview(
     service: &GitWorkspaceService,
     input: String,
 ) -> anyhow::Result<TaskDraft> {
-    ensure_gh_cli()?;
-
     let parsed = parse_task_input(&input)?;
+    if matches!(
+        parsed,
+        ParsedTaskInput::GitHubRepo { .. }
+            | ParsedTaskInput::GitHubIssue { .. }
+            | ParsedTaskInput::GitHubPullRequest { .. }
+    ) {
+        ensure_gh_cli()?;
+    }
 
     let mut repo: Option<TaskRepoInfo> = None;
     let mut issue: Option<TaskIssueInfo> = None;

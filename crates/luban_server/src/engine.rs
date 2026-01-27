@@ -162,11 +162,79 @@ pub enum EngineCommand {
 #[derive(Clone, Debug)]
 struct PullRequestCacheEntry {
     info: Option<PullRequestInfo>,
-    refreshed_at: Instant,
+    next_refresh_at: Instant,
+    consecutive_empty: u32,
 }
 
-const PULL_REQUEST_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(15);
 const PULL_REQUEST_REFRESH_TICK_INTERVAL: Duration = Duration::from_secs(30);
+const PULL_REQUEST_REFRESH_MAX_PER_TICK: usize = 2;
+const PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS: u64 = 10;
+
+const PULL_REQUEST_REFRESH_INTERVAL_CLOSED: Duration = Duration::from_secs(10 * 60);
+const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_PENDING: Duration = Duration::from_secs(30);
+const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_SUCCESS: Duration = Duration::from_secs(3 * 60);
+const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_FAILURE: Duration = Duration::from_secs(60);
+const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_UNKNOWN: Duration = Duration::from_secs(60);
+
+const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_INITIAL: Duration = Duration::from_secs(60);
+const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM: Duration = Duration::from_secs(3 * 60);
+const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX: Duration = Duration::from_secs(10 * 60);
+
+fn pull_request_refresh_jitter(workspace_id: WorkspaceId) -> Duration {
+    let window = PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS.max(1);
+    Duration::from_secs(workspace_id.as_u64() % window)
+}
+
+fn pull_request_next_refresh_at(
+    workspace_id: WorkspaceId,
+    now: Instant,
+    previous: Option<&PullRequestCacheEntry>,
+    info: Option<&PullRequestInfo>,
+) -> (Instant, u32) {
+    let (interval, consecutive_empty) = match info {
+        Some(pr) => {
+            let interval = if pr.state != DomainPullRequestState::Open {
+                PULL_REQUEST_REFRESH_INTERVAL_CLOSED
+            } else {
+                match pr.ci_state {
+                    Some(DomainPullRequestCiState::Pending) => {
+                        PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_PENDING
+                    }
+                    Some(DomainPullRequestCiState::Failure) => {
+                        PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_FAILURE
+                    }
+                    Some(DomainPullRequestCiState::Success) => {
+                        if pr.merge_ready {
+                            PULL_REQUEST_REFRESH_INTERVAL_CLOSED
+                        } else {
+                            PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_SUCCESS
+                        }
+                    }
+                    None => PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_UNKNOWN,
+                }
+            };
+            (interval, 0)
+        }
+        None => {
+            let prev = previous.map(|e| e.consecutive_empty).unwrap_or(0);
+            let consecutive_empty = prev.saturating_add(1);
+            let interval = match consecutive_empty {
+                1 => PULL_REQUEST_REFRESH_INTERVAL_EMPTY_INITIAL,
+                2 => PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM,
+                _ => PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX,
+            };
+            (interval, consecutive_empty)
+        }
+    };
+
+    let next_refresh_at = now
+        .checked_add(interval)
+        .unwrap_or(now)
+        .checked_add(pull_request_refresh_jitter(workspace_id))
+        .unwrap_or(now);
+
+    (next_refresh_at, consecutive_empty)
+}
 
 pub struct Engine {
     state: AppState,
@@ -1647,6 +1715,11 @@ impl Engine {
             EngineCommand::PullRequestInfoUpdated { workspace_id, info } => {
                 self.pull_requests_in_flight.remove(&workspace_id);
 
+                let now = Instant::now();
+                let previous = self.pull_requests.get(&workspace_id);
+                let (next_refresh_at, consecutive_empty) =
+                    pull_request_next_refresh_at(workspace_id, now, previous, info.as_ref());
+
                 let changed = self
                     .pull_requests
                     .get(&workspace_id)
@@ -1657,7 +1730,8 @@ impl Engine {
                     workspace_id,
                     PullRequestCacheEntry {
                         info,
-                        refreshed_at: Instant::now(),
+                        next_refresh_at,
+                        consecutive_empty,
                     },
                 );
 
@@ -1845,6 +1919,7 @@ impl Engine {
     }
 
     fn refresh_pull_requests_for_all_workspaces(&mut self) {
+        let now = Instant::now();
         let workspace_ids = self
             .state
             .projects
@@ -1859,22 +1934,48 @@ impl Engine {
             })
             .collect::<Vec<_>>();
 
-        for workspace_id in workspace_ids {
-            self.maybe_refresh_pull_request(workspace_id);
+        let mut candidates = workspace_ids
+            .into_iter()
+            .filter(|workspace_id| self.should_start_pull_request_refresh(*workspace_id, now))
+            .collect::<Vec<_>>();
+
+        candidates.sort_by_key(|workspace_id| {
+            self.pull_requests
+                .get(workspace_id)
+                .map(|e| e.next_refresh_at)
+                .unwrap_or(now)
+        });
+
+        for workspace_id in candidates
+            .into_iter()
+            .take(PULL_REQUEST_REFRESH_MAX_PER_TICK)
+        {
+            self.start_pull_request_refresh(workspace_id);
         }
     }
 
     fn maybe_refresh_pull_request(&mut self, workspace_id: WorkspaceId) {
+        let now = Instant::now();
+        if !self.should_start_pull_request_refresh(workspace_id, now) {
+            return;
+        }
+        self.start_pull_request_refresh(workspace_id);
+    }
+
+    fn should_start_pull_request_refresh(&self, workspace_id: WorkspaceId, now: Instant) -> bool {
         if self.pull_requests_in_flight.contains(&workspace_id) {
-            return;
+            return false;
         }
-
-        if let Some(entry) = self.pull_requests.get(&workspace_id)
-            && entry.refreshed_at.elapsed() < PULL_REQUEST_REFRESH_MIN_INTERVAL
-        {
-            return;
+        if self.state.workspace(workspace_id).is_none() {
+            return false;
         }
+        if let Some(entry) = self.pull_requests.get(&workspace_id) {
+            return now >= entry.next_refresh_at;
+        }
+        true
+    }
 
+    fn start_pull_request_refresh(&mut self, workspace_id: WorkspaceId) {
         let Some(workspace) = self.state.workspace(workspace_id) else {
             return;
         };
@@ -4794,7 +4895,8 @@ mod tests {
                     ci_state: Some(DomainPullRequestCiState::Pending),
                     merge_ready: false,
                 }),
-                refreshed_at: Instant::now(),
+                next_refresh_at: Instant::now(),
+                consecutive_empty: 0,
             },
         );
 
@@ -4853,7 +4955,8 @@ mod tests {
                     ci_state: Some(DomainPullRequestCiState::Success),
                     merge_ready: false,
                 }),
-                refreshed_at: Instant::now(),
+                next_refresh_at: Instant::now(),
+                consecutive_empty: 0,
             },
         );
 
@@ -4868,6 +4971,60 @@ mod tests {
                 ci_state: Some(PullRequestCiState::Success),
                 merge_ready: false,
             })
+        );
+    }
+
+    #[test]
+    fn pull_request_refresh_backoff_increases_on_empty_results() {
+        let now = Instant::now();
+        let workspace_id = WorkspaceId::from_u64(10);
+        let previous = PullRequestCacheEntry {
+            info: None,
+            next_refresh_at: now,
+            consecutive_empty: 1,
+        };
+
+        let (next, empty_count) =
+            pull_request_next_refresh_at(workspace_id, now, Some(&previous), None);
+        assert_eq!(empty_count, 2);
+        let delta = next.duration_since(now);
+        assert!(
+            delta >= PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM,
+            "expected at least {:?}, got {:?}",
+            PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM,
+            delta
+        );
+    }
+
+    #[test]
+    fn pull_request_refresh_pending_ci_is_frequently_refreshed() {
+        let now = Instant::now();
+        let workspace_id = WorkspaceId::from_u64(10);
+        let info = PullRequestInfo {
+            number: 1,
+            is_draft: false,
+            state: DomainPullRequestState::Open,
+            ci_state: Some(DomainPullRequestCiState::Pending),
+            merge_ready: false,
+        };
+
+        let (next, empty_count) =
+            pull_request_next_refresh_at(workspace_id, now, None, Some(&info));
+        assert_eq!(empty_count, 0);
+        let delta = next.duration_since(now);
+        assert!(
+            delta >= PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_PENDING,
+            "expected at least {:?}, got {:?}",
+            PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_PENDING,
+            delta
+        );
+        assert!(
+            delta
+                < PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_PENDING
+                    + Duration::from_secs(PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS + 1),
+            "expected jitter window <= {:?}, got {:?}",
+            Duration::from_secs(PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS + 1),
+            delta
         );
     }
 

@@ -2183,6 +2183,16 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             _ => PullRequestState::Open,
         };
 
+        if state != PullRequestState::Open {
+            return Ok(Some(PullRequestInfo {
+                number: value.number,
+                is_draft: value.is_draft,
+                state,
+                ci_state: None,
+                merge_ready: false,
+            }));
+        }
+
         fn parse_checks(output: &std::process::Output) -> Option<Vec<GhPullRequestCheck>> {
             serde_json::from_slice::<Vec<GhPullRequestCheck>>(&output.stdout).ok()
         }
