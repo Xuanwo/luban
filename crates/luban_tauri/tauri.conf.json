@@ -17,7 +17,7 @@
     "resources": {
       "../../web/out/": "out/"
     },
-    "icon": ["icons/icon.icns", "icons/icon.png"]
+    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"]
   },
   "plugins": {
     "updater": {
