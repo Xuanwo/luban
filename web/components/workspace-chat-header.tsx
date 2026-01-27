@@ -139,7 +139,7 @@ export function WorkspaceChatHeader({
                     className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
                     title={copySuccess ? "Copied!" : "Copy branch name"}
                   >
-                    {copySuccess ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                    {copySuccess ? <Check className="w-3 h-3 text-status-success" /> : <Copy className="w-3 h-3" />}
                   </button>
                 </div>
               )}

@@ -90,32 +90,6 @@ const themeOptions = [
   { id: "system", label: "System", icon: Monitor },
 ]
 
-// Theme color schemes for previews
-const themeColors = {
-  light: {
-    bg: "bg-gray-50",
-    sidebar: "bg-gray-100",
-    border: "border-gray-200",
-    text: "text-gray-900",
-    textMuted: "text-gray-500",
-    secondary: "bg-gray-200/60",
-    primary: "text-blue-600",
-    primaryBg: "bg-blue-600",
-    accent: "bg-blue-50",
-  },
-  dark: {
-    bg: "bg-zinc-900",
-    sidebar: "bg-zinc-800",
-    border: "border-zinc-700",
-    text: "text-zinc-100",
-    textMuted: "text-zinc-400",
-    secondary: "bg-zinc-700/60",
-    primary: "text-blue-400",
-    primaryBg: "bg-blue-500",
-    accent: "bg-blue-900/30",
-  },
-}
-
 function ThemePreviewCard({
   themeId,
   label,
@@ -130,7 +104,33 @@ function ThemePreviewCard({
   onClick: () => void
 }) {
   const isSystem = themeId === "system"
-  const colors = themeColors[themeId as keyof typeof themeColors] || themeColors.light
+  const preview = (
+    <div className="flex bg-background">
+      <div className="w-12 border-r border-border bg-sidebar">
+        <div className="h-5 border-b border-border flex items-center px-1.5">
+          <div className="w-3 h-3 rounded bg-muted-foreground/25" />
+        </div>
+        <div className="p-1.5 space-y-1">
+          <div className="h-2 w-8 rounded bg-muted-foreground/25" />
+          <div className="h-2 w-6 rounded bg-primary/15" />
+          <div className="h-2 w-7 rounded bg-muted-foreground/20" />
+        </div>
+      </div>
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="h-5 border-b border-border" />
+        <div className="flex-1 p-2 space-y-1.5">
+          <div className="h-5 rounded bg-secondary/60" />
+          <div className="h-8 rounded bg-secondary/60" />
+        </div>
+      </div>
+      <div className="w-10 border-l border-border bg-sidebar">
+        <div className="h-5 border-b border-border" />
+        <div className="flex-1 p-1 bg-secondary/60">
+          <div className="h-1.5 w-6 rounded bg-status-success/35" />
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <button
@@ -142,82 +142,14 @@ function ThemePreviewCard({
           : "border-border hover:border-primary/50"
       )}
     >
-      {/* Mini preview */}
-      <div className={cn("h-24 flex", isSystem ? "" : colors.bg)}>
+      <div className="h-24 flex">
         {isSystem ? (
-          // System: left half light, right half dark - direct split layout
           <>
-            {/* Left half - Light theme (Sidebar + half Main) */}
-            <div className="flex-1 flex bg-gray-50">
-              {/* Sidebar */}
-              <div className={cn("w-12 border-r", themeColors.light.sidebar, themeColors.light.border)}>
-                <div className={cn("h-5 border-b flex items-center px-1.5", themeColors.light.border)}>
-                  <div className="w-3 h-3 rounded bg-gray-300" />
-                </div>
-                <div className="p-1.5 space-y-1">
-                  <div className="h-2 w-8 rounded bg-gray-300" />
-                  <div className="h-2 w-6 rounded bg-blue-100" />
-                  <div className="h-2 w-7 rounded bg-gray-200" />
-                </div>
-              </div>
-              {/* Half main content */}
-              <div className="flex-1 flex flex-col">
-                <div className={cn("h-5 border-b", themeColors.light.border)} />
-                <div className="flex-1 p-2 space-y-1.5">
-                  <div className="h-5 rounded bg-gray-200/60" />
-                  <div className="h-8 rounded bg-gray-200/60" />
-                </div>
-              </div>
-            </div>
-            {/* Right half - Dark theme (half Main + Terminal) */}
-            <div className="flex-1 flex bg-zinc-900">
-              {/* Half main content */}
-              <div className="flex-1 flex flex-col">
-                <div className={cn("h-5 border-b", themeColors.dark.border)} />
-                <div className="flex-1 p-2 space-y-1.5">
-                  <div className="h-5 rounded bg-zinc-700/60" />
-                  <div className="h-8 rounded bg-zinc-700/60" />
-                </div>
-              </div>
-              {/* Terminal */}
-              <div className={cn("w-10 border-l", themeColors.dark.border)}>
-                <div className={cn("h-5 border-b", themeColors.dark.border)} />
-                <div className="flex-1 p-1 bg-zinc-700/60">
-                  <div className="h-1.5 w-6 rounded bg-green-500/40" />
-                </div>
-              </div>
-            </div>
+            <div className="flex-1">{preview}</div>
+            <div className="flex-1 dark">{preview}</div>
           </>
         ) : (
-          // Light or Dark: full preview
-          <>
-            {/* Sidebar */}
-            <div className={cn("w-12 border-r", colors.sidebar, colors.border)}>
-              <div className={cn("h-5 border-b flex items-center px-1.5", colors.border)}>
-                <div className={cn("w-3 h-3 rounded", colors.secondary)} />
-              </div>
-              <div className="p-1.5 space-y-1">
-                <div className={cn("h-2 w-8 rounded", colors.secondary)} />
-                <div className={cn("h-2 w-6 rounded", colors.accent)} />
-                <div className={cn("h-2 w-7 rounded", colors.secondary)} />
-              </div>
-            </div>
-            {/* Main content */}
-            <div className="flex-1 flex flex-col">
-              <div className={cn("h-5 border-b", colors.border)} />
-              <div className="flex-1 p-2 space-y-1.5">
-                <div className={cn("h-5 rounded", colors.secondary)} />
-                <div className={cn("h-8 rounded", colors.secondary)} />
-              </div>
-            </div>
-            {/* Terminal */}
-            <div className={cn("w-10 border-l", colors.border)}>
-              <div className={cn("h-5 border-b", colors.border)} />
-              <div className={cn("flex-1 p-1", colors.secondary)}>
-                <div className={cn("h-1.5 w-6 rounded", themeId === "dark" ? "bg-green-500/40" : "bg-green-600/30")} />
-              </div>
-            </div>
-          </>
+          <div className={cn("flex-1", themeId === "dark" && "dark")}>{preview}</div>
         )}
       </div>
 
@@ -436,15 +368,15 @@ function WorkspacePreviewWithFonts({
                 style={{ fontFamily: `"${monoFont}", monospace` }}
               >
                 <pre className="text-sm leading-relaxed">
-                  <span className="text-[#cf222e] dark:text-[#ff7b72]">fn</span>{" "}
-                  <span className="text-[#8250df] dark:text-[#d2a8ff]">hello</span>
+                  <span className="text-base08">fn</span>{" "}
+                  <span className="text-base0e">hello</span>
                   <span className="text-muted-foreground">()</span>{" "}
-                  <span className="text-[#cf222e] dark:text-[#ff7b72]">{"->"}</span>{" "}
-                  <span className="text-[#0550ae] dark:text-[#79c0ff]">String</span>{" "}
+                  <span className="text-base08">{"->"}</span>{" "}
+                  <span className="text-base0d">String</span>{" "}
                   <span className="text-muted-foreground">{"{"}</span>
                   {"\n"}
                   {"    "}
-                  <span className="text-[#0a3069] dark:text-[#a5d6ff]">{'"The quick brown fox"'}</span>
+                  <span className="text-base0b">{'"The quick brown fox"'}</span>
                   <span className="text-muted-foreground">.to_string()</span>
                   {"\n"}
                   <span className="text-muted-foreground">{"}"}</span>
@@ -499,7 +431,7 @@ const mockConfigTree: ConfigFile[] = [
     name: "AGENTS.md",
     type: "file",
     icon: FileText,
-    iconColor: "text-blue-500",
+    iconColor: "text-base0d",
     content: `# Codex Agent Configuration
 
 ## Model Settings
@@ -520,7 +452,7 @@ and write clean, maintainable code.`,
     name: "config.toml",
     type: "file",
     icon: FileCode,
-    iconColor: "text-orange-500",
+    iconColor: "text-base09",
     content: `[model]
 default = "gpt-4o"
 temperature = 0.7
@@ -539,21 +471,21 @@ font_size = 14`,
     name: "skills",
     type: "folder",
     icon: Folder,
-    iconColor: "text-yellow-500",
+    iconColor: "text-base0a",
     children: [
       {
         id: "skills-web-browser",
         name: "web-browser",
         type: "folder",
         icon: Folder,
-        iconColor: "text-yellow-500/70",
+        iconColor: "text-base0a/70",
         children: [
           {
             id: "skills-web-browser-skill",
             name: "SKILL.md",
             type: "file",
             icon: FileText,
-            iconColor: "text-blue-400",
+            iconColor: "text-base0d",
             content: `# Web Browser Skill
 
 Enables web browsing and page interaction.
@@ -571,14 +503,14 @@ Enables web browsing and page interaction.
         name: "code-review",
         type: "folder",
         icon: Folder,
-        iconColor: "text-yellow-500/70",
+        iconColor: "text-base0a/70",
         children: [
           {
             id: "skills-code-review-skill",
             name: "SKILL.md",
             type: "file",
             icon: FileText,
-            iconColor: "text-blue-400",
+            iconColor: "text-base0d",
             content: `# Code Review Skill
 
 Provides automated code review capabilities.
@@ -601,7 +533,7 @@ const mockAmpConfigTree: ConfigFile[] = [
     name: "config.yaml",
     type: "file",
     icon: FileCode,
-    iconColor: "text-orange-500",
+    iconColor: "text-base09",
     content: `model: claude-3.5-sonnet
 temperature: 0.2
 max_tokens: 4096
@@ -618,7 +550,7 @@ tools:
     name: "rules.md",
     type: "file",
     icon: FileText,
-    iconColor: "text-blue-500",
+    iconColor: "text-base0d",
     content: `# Amp Rules
 
 - Keep changes small and reviewable.
@@ -631,14 +563,14 @@ tools:
     name: "prompts",
     type: "folder",
     icon: Folder,
-    iconColor: "text-yellow-500",
+    iconColor: "text-base0a",
     children: [
       {
         id: "prompt-default-md",
         name: "default.md",
         type: "file",
         icon: FileText,
-        iconColor: "text-blue-400",
+        iconColor: "text-base0d",
         content: `# Default Prompt
 
 You are a helpful coding assistant.
@@ -649,7 +581,7 @@ You are a helpful coding assistant.
         name: "review.md",
         type: "file",
         icon: FileText,
-        iconColor: "text-blue-400",
+        iconColor: "text-base0d",
         content: `# Review Prompt
 
 - Prioritize correctness and safety.
@@ -663,14 +595,14 @@ You are a helpful coding assistant.
     name: "profiles",
     type: "folder",
     icon: Folder,
-    iconColor: "text-yellow-500",
+    iconColor: "text-base0a",
     children: [
       {
         id: "profile-work-md",
         name: "work.md",
         type: "file",
         icon: FileText,
-        iconColor: "text-blue-400",
+        iconColor: "text-base0d",
         content: `# Work Profile
 
 Focus on backend tasks and keep output concise.
@@ -968,8 +900,8 @@ function CodexSettings() {
                   <span className={cn(
                     "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
                     saveStatus === "saved" 
-                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      ? "bg-status-success/10 text-status-success"
+                      : "bg-status-warning/10 text-status-warning"
                   )}>
                     {saveStatus === "saving" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                     {saveStatus === "saved" && <CheckCircle2 className="w-2.5 h-2.5" />}
@@ -997,12 +929,12 @@ function CodexSettings() {
                     </>
                   ) : checkStatus === "success" ? (
                     <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
                       Connected
                     </>
                   ) : checkStatus === "error" ? (
                     <>
-                      <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                      <XCircle className="w-3.5 h-3.5 text-status-error" />
                       Failed
                     </>
                   ) : (
@@ -1220,8 +1152,8 @@ function AmpSettings() {
                     className={cn(
                       "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
                       saveStatus === "saved"
-                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        ? "bg-status-success/10 text-status-success"
+                        : "bg-status-warning/10 text-status-warning"
                     )}
                   >
                     {saveStatus === "saving" && (
@@ -1254,12 +1186,12 @@ function AmpSettings() {
                     </>
                   ) : checkStatus === "success" ? (
                     <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
                       Connected
                     </>
                   ) : checkStatus === "error" ? (
                     <>
-                      <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                      <XCircle className="w-3.5 h-3.5 text-status-error" />
                       Failed
                     </>
                   ) : (
@@ -1736,11 +1668,11 @@ function TaskPromptEditor() {
                   className={cn(
                     "w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors",
                     isSelected
-                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      ? "bg-status-warning/15 text-status-warning"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent"
                   )}
                 >
-                  <Icon className={cn("w-4 h-4 shrink-0", isSelected ? "text-amber-500" : "text-muted-foreground")} />
+                  <Icon className={cn("w-4 h-4 shrink-0", isSelected ? "text-status-warning" : "text-muted-foreground")} />
                   <span className="truncate">{taskType.label}</span>
                 </button>
               )
@@ -1804,11 +1736,11 @@ function TaskPromptEditor() {
           
           {/* System task warning banner */}
           {isCurrentSystemTask && (
-            <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border-b border-amber-500/20">
-              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 px-3 py-2.5 bg-status-warning/10 border-b border-status-warning/20">
+              <AlertTriangle className="w-4 h-4 text-status-warning shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                  <span className="font-medium">System Prompt</span> — Luban&apos;s core functionality depends on this prompt. Please avoid modifying unless you have specific requirements.
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <span className="font-medium text-status-warning">System Prompt</span> — Luban&apos;s core functionality depends on this prompt. Please avoid modifying unless you have specific requirements.
                 </p>
               </div>
             </div>

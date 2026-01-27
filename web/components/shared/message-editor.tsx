@@ -214,21 +214,21 @@ export function MessageEditor({
   }, [mentionQuery, showMentionMenu, workspaceId])
 
   function getMentionIcon(item: MentionItemSnapshot) {
-    if (item.kind === "folder") return <Folder className="w-3.5 h-3.5 text-blue-500" />
+    if (item.kind === "folder") return <Folder className="w-3.5 h-3.5 text-base0d" />
     const ext = item.name.split(".").pop()?.toLowerCase()
     switch (ext) {
       case "tsx":
       case "ts":
       case "js":
       case "jsx":
-        return <FileCode className="w-3.5 h-3.5 text-blue-400" />
+        return <FileCode className="w-3.5 h-3.5 text-base0d" />
       case "css":
-        return <FileText className="w-3.5 h-3.5 text-pink-400" />
+        return <FileText className="w-3.5 h-3.5 text-base0e" />
       case "json":
       case "toml":
       case "yaml":
       case "yml":
-        return <FileCode className="w-3.5 h-3.5 text-amber-500" />
+        return <FileCode className="w-3.5 h-3.5 text-base09" />
       default:
         return <File className="w-3.5 h-3.5 text-muted-foreground" />
     }
@@ -606,9 +606,9 @@ export function MessageEditor({
                   ) : (
                     <div className="flex flex-col items-center gap-1.5">
                       {attachment.name.toLowerCase().endsWith(".json") ? (
-                        <FileCode className="w-6 h-6 text-amber-500" />
+                        <FileCode className="w-6 h-6 text-base09" />
                       ) : attachment.name.toLowerCase().endsWith(".pdf") ? (
-                        <FileText className="w-6 h-6 text-red-500" />
+                        <FileText className="w-6 h-6 text-base08" />
                       ) : (
                         <FileText className="w-6 h-6 text-muted-foreground" />
                       )}

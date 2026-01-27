@@ -138,7 +138,7 @@ export function OpenButton() {
         className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-l px-1"
       >
         {copied && selection.type === "action" && selection.id === "copy-path" ? (
-          <Check className="w-3 h-3 text-green-500 flex-shrink-0" />
+          <Check className="w-3 h-3 text-status-success flex-shrink-0" />
         ) : (
           renderIcon(config.icon, "w-3 h-3 flex-shrink-0")
         )}

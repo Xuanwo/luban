@@ -136,7 +136,7 @@ export function ConversationMessage({
                         ) : (
                           <div className="flex flex-col items-center gap-1.5 px-2">
                             {attachment.extension.toLowerCase() === "json" ? (
-                              <FileCode className="w-6 h-6 text-amber-500" />
+                              <FileCode className="w-6 h-6 text-base09" />
                             ) : (
                               <FileText className="w-6 h-6 text-muted-foreground" />
                             )}

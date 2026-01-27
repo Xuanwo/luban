@@ -832,7 +832,7 @@ export const config = {
                       title={copySuccess ? "Copied!" : "Copy branch name"}
                     >
                       {copySuccess ? (
-                        <Check className="w-3 h-3 text-green-500" />
+                        <Check className="w-3 h-3 text-status-success" />
                       ) : (
                         <Copy className="w-3 h-3" />
                       )}

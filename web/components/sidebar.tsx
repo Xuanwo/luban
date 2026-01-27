@@ -412,7 +412,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                   </span>
                   {project.pinned && (
                     <Pin
-                      className="w-3 h-3 text-amber-500 flex-shrink-0 opacity-70 group-hover/project:opacity-0 transition-opacity duration-150"
+                      className="w-3 h-3 text-base09 flex-shrink-0 opacity-70 group-hover/project:opacity-0 transition-opacity duration-150"
                       aria-label="Pinned"
                     />
                   )}
@@ -448,7 +448,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     className={cn(
                       "p-1 transition-all duration-200",
                       project.pinned
-                        ? "text-amber-500 hover:text-amber-400 rotate-0"
+                        ? "text-base09 hover:text-base0a rotate-0"
                         : "text-muted-foreground hover:text-foreground -rotate-45 hover:rotate-0",
                     )}
                     title={project.pinned ? "Unpin project" : "Pin project"}
@@ -537,7 +537,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                             </span>
                             {worktree.pinned && (
                               <Pin
-                                className="w-2.5 h-2.5 text-amber-500 flex-shrink-0 opacity-70 group-hover/worktree:opacity-0 transition-opacity duration-150"
+                                className="w-2.5 h-2.5 text-base09 flex-shrink-0 opacity-70 group-hover/worktree:opacity-0 transition-opacity duration-150"
                                 aria-label="Pinned"
                               />
                             )}
