@@ -189,6 +189,70 @@ fn normalize_git_tag_version(tag: &str) -> Option<String> {
     Some(tag.strip_prefix('v').unwrap_or(tag).to_owned())
 }
 
+const MSI_BUILD_METADATA_MAX: u32 = 65535;
+
+fn msi_bundle_version_from_display_version(display_version: &str) -> String {
+    let Some((core, build_meta)) = display_version.split_once('+') else {
+        return display_version.to_owned();
+    };
+
+    let build = msi_build_metadata_number(build_meta);
+    format!("{core}+{build}")
+}
+
+fn msi_build_metadata_number(build_meta: &str) -> u32 {
+    if let Some(days) = yyyymmdd_to_unix_days(build_meta) {
+        return days;
+    }
+
+    if build_meta.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(raw) = build_meta.parse::<u64>() {
+            if raw <= u64::from(MSI_BUILD_METADATA_MAX) {
+                return raw as u32;
+            }
+            // Ensure the value is within 1..=65535 for MSI.
+            return ((raw % u64::from(MSI_BUILD_METADATA_MAX)).max(1)) as u32;
+        }
+    }
+
+    // Deterministic fallback for non-numeric metadata like "foo.bar".
+    //
+    // NOTE: Rust's DefaultHasher is randomized per process and would be unstable in CI.
+    let hash = fnv1a64(build_meta.as_bytes());
+    ((hash % u64::from(MSI_BUILD_METADATA_MAX)).max(1)) as u32
+}
+
+fn yyyymmdd_to_unix_days(raw: &str) -> Option<u32> {
+    if raw.len() != 8 || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+
+    let year = raw.get(0..4)?.parse::<i32>().ok()?;
+    let month = raw.get(4..6)?.parse::<u8>().ok()?;
+    let day = raw.get(6..8)?.parse::<u8>().ok()?;
+
+    let month = time::Month::try_from(month).ok()?;
+    let date = time::Date::from_calendar_date(year, month, day).ok()?;
+    let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1).ok()?;
+
+    let days = (date - epoch).whole_days();
+    if !(0..=i64::from(MSI_BUILD_METADATA_MAX)).contains(&days) {
+        return None;
+    }
+    Some(days as u32)
+}
+
+fn fnv1a64(input: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for b in input {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
 fn env_var_nonempty(key: &str) -> Option<String> {
     env_var_opt(key).and_then(|v| (!v.trim().is_empty()).then_some(v))
 }
@@ -392,12 +456,13 @@ fn build_tauri_build_command(
     git_hash: &str,
     git_tag: &str,
     build_time: &str,
-    app_version: &str,
+    display_version: &str,
+    bundle_version: &str,
     bundles: Option<&str>,
     skip_stapling: bool,
 ) -> ProcessCommand {
     let config_patch = serde_json::json!({
-        "version": app_version,
+        "version": bundle_version,
     })
     .to_string();
 
@@ -423,7 +488,7 @@ fn build_tauri_build_command(
         .env("LUBAN_BUILD_CHANNEL", build_channel)
         .env("LUBAN_GIT_HASH", git_hash)
         .env("LUBAN_GIT_TAG", git_tag)
-        .env("LUBAN_DISPLAY_VERSION", app_version)
+        .env("LUBAN_DISPLAY_VERSION", display_version)
         .env("LUBAN_BUILD_TIME", build_time);
     cmd
 }
@@ -558,6 +623,19 @@ fn run_package(target: String, profile: String, out_dir: PathBuf) -> Result<()> 
         PackagePlatform::Windows => (Some("msi"), false),
     };
 
+    let bundle_version = match spec.platform {
+        PackagePlatform::Windows => {
+            let v = msi_bundle_version_from_display_version(&display_version);
+            if v != display_version {
+                eprintln!(
+                    "info: windows msi requires numeric build metadata <= {MSI_BUILD_METADATA_MAX}; bundling as {v} (display version stays {display_version})"
+                );
+            }
+            v
+        }
+        PackagePlatform::Macos | PackagePlatform::Linux => display_version.clone(),
+    };
+
     let mut tauri_build = build_tauri_build_command(
         target_triple,
         &build_flags,
@@ -566,6 +644,7 @@ fn run_package(target: String, profile: String, out_dir: PathBuf) -> Result<()> 
         &git_tag,
         &build_time,
         &display_version,
+        &bundle_version,
         bundles,
         skip_stapling,
     );
@@ -1069,6 +1148,34 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
+    fn msi_bundle_version_keeps_versions_without_build_metadata() {
+        assert_eq!(msi_bundle_version_from_display_version("0.1.0"), "0.1.0");
+    }
+
+    #[test]
+    fn msi_bundle_version_keeps_small_numeric_build_metadata() {
+        assert_eq!(msi_bundle_version_from_display_version("0.1.0+42"), "0.1.0+42");
+    }
+
+    #[test]
+    fn msi_bundle_version_maps_yyyymmdd_to_unix_days() {
+        // 2026-01-27 is 20480 days since 1970-01-01.
+        assert_eq!(
+            msi_bundle_version_from_display_version("0.1.0+20260127"),
+            "0.1.0+20480"
+        );
+    }
+
+    #[test]
+    fn msi_bundle_version_hashes_non_numeric_build_metadata_into_range() {
+        let v = msi_bundle_version_from_display_version("0.1.0+abc.def");
+        let (_, build) = v.split_once('+').expect("must have build metadata");
+        assert!(build.bytes().all(|b| b.is_ascii_digit()));
+        let build = build.parse::<u32>().expect("numeric build");
+        assert!((1..=MSI_BUILD_METADATA_MAX).contains(&build));
+    }
+
+    #[test]
     fn expand_kv_value_uses_prior_kv_entries() {
         let kv = HashMap::from([("FOO".to_owned(), "bar".to_owned())]);
         let expanded = expand_kv_value("prefix-${FOO}-suffix", &kv).expect("must expand");
@@ -1151,6 +1258,7 @@ mod tests {
             "deadbeef",
             "v0.0.0",
             "2026-01-23T00:00:00Z",
+            "0.0.0+20260123",
             "0.0.0+20260123",
             Some("app,dmg"),
             true,

@@ -51,6 +51,7 @@ Recommended: create and push a tag:
 
 1. Ensure `LUBAN_VAULT` and `OP_SERVICE_ACCOUNT_TOKEN` are configured.
 2. Create a tag like `v0.1.5+20260127` and push it (tags containing `-` are rejected).
+   - Note: Windows MSI packaging requires numeric-only build metadata that is <= 65535; the release tooling will normalize `+YYYYMMDD` into an MSI-safe build number while keeping the user-visible version as the tag.
 3. Wait for the `Release` workflow to finish.
 4. Verify `latest.json` and the uploaded artifacts on `releases.luban.dev`.
 5. Verify the GitHub release assets and notes on the corresponding tag release page.
