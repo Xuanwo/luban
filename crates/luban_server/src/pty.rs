@@ -257,9 +257,20 @@ pub async fn pty_ws_task(mut socket: WebSocket, session: Arc<PtySession>) {
                 }
             }
             outgoing = output.recv() => {
-                let Ok(bytes) = outgoing else { break };
-                if socket.send(Message::Binary(bytes.into())).await.is_err() {
-                    break;
+                match outgoing {
+                    Ok(bytes) => {
+                        if socket.send(Message::Binary(bytes.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        for chunk in session.snapshot_output_history() {
+                            if socket.send(Message::Binary(chunk.into())).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }

@@ -19,6 +19,12 @@ Multipart form-data:
 - `kind`: `AttachmentKind` (`image` | `text` | `file`)
 - `file`: binary payload
 
+Optional headers:
+
+- `Idempotency-Key`: an opaque client-generated key used to deduplicate retries. If the same
+  request is retried with the same key, the provider may return the original `AttachmentRef`
+  instead of creating a new attachment.
+
 ## Response
 
 - `200 OK`

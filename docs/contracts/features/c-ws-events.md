@@ -14,6 +14,11 @@ Primary action/event protocol used by the UI:
 - Client sends `WsClientMessage::Hello` then `WsClientMessage::Action`.
 - Server sends `WsServerMessage::Hello`, `WsServerMessage::Ack`, and `WsServerMessage::Event`.
 
+This surface is designed to be resilient to transient network failures:
+
+- The client may reconnect and resend `Hello` with a `last_seen_rev` cursor.
+- The server may proactively send a full `AppChanged` snapshot to resynchronize state.
+
 ## Message types
 
 See `crates/luban_api`:
@@ -31,6 +36,13 @@ See `crates/luban_api`:
   - Each `Action` must eventually be followed by either:
     - `Ack` (plus any number of `Event`)
     - `Error` with the matching `request_id`
+
+- Resync invariants:
+  - The client should send `WsClientMessage::Hello { last_seen_rev: <cursor> }` on every connection.
+  - If `last_seen_rev` does not match the provider's current revision, the provider may send an
+    `AppChanged` snapshot to allow the client to resynchronize.
+  - If the provider detects that a subscriber has lagged (dropped broadcast messages), it may send
+    an `AppChanged` snapshot and continue streaming.
 
 - Mock-mode invariant:
   - The web UI must be able to run without a real WebSocket by directly executing `ClientAction`

@@ -16,6 +16,8 @@ PTY streaming for the terminal UI.
 - Provider invariants:
   - The server must provide a bounded replay on connect for stable refresh/reconnect UX.
   - The protocol must be robust to reconnects and network loss.
+  - If a client lags behind and drops output (e.g. due to a slow network), the server may replay the
+    bounded output history again to help the client recover.
 
 - Mock-mode invariant:
   - The UI must render an interactive terminal without requiring the server. This is implemented as a

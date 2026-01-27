@@ -35,6 +35,8 @@ import type {
   WorkspaceTabsSnapshot,
 } from "./luban-api"
 import { createLubanActions } from "./luban-actions"
+import { fetchApp, fetchConversation, fetchThreads } from "./luban-http"
+import { isMockMode } from "./luban-mode"
 import { useLubanStore } from "./luban-store"
 import { createLubanServerEventHandler } from "./luban-store-events"
 import { useExternalLinkInterceptor } from "./external-link-interceptor"
@@ -163,6 +165,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
   const eventHandlerRef = useRef<(event: ServerEvent) => void>(() => {})
   const pendingAutoOpenWorkspaceIdRef = useRef<WorkspaceId | null>(null)
   const lastActiveProjectIdxRef = useRef<number | null>(null)
+  const prevWsConnectedRef = useRef<boolean>(false)
 
   useExternalLinkInterceptor()
 
@@ -173,6 +176,61 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
       toast.error(message)
     },
   })
+
+  useEffect(() => {
+    if (isMockMode()) return
+
+    const prev = prevWsConnectedRef.current
+    prevWsConnectedRef.current = wsConnected
+    if (prev || !wsConnected) return
+
+    void (async () => {
+      try {
+        const snap = await fetchApp()
+        store.setApp(snap)
+      } catch (err) {
+        console.warn("resync fetchApp failed", err)
+      }
+
+      const wid = store.refs.activeWorkspaceIdRef.current
+      if (wid == null) return
+
+      let threadsSnap = null as Awaited<ReturnType<typeof fetchThreads>> | null
+      try {
+        threadsSnap = await fetchThreads(wid)
+      } catch (err) {
+        console.warn("resync fetchThreads failed", err)
+        return
+      }
+
+      if (threadsSnap == null) return
+
+      store.cacheThreads(wid, threadsSnap.threads)
+      store.setThreads(threadsSnap.threads)
+      store.cacheWorkspaceTabs(wid, threadsSnap.tabs)
+      store.setWorkspaceTabs(threadsSnap.tabs)
+
+      const threadIds = new Set(threadsSnap.threads.map((t) => t.thread_id))
+      const currentTid = store.refs.activeThreadIdRef.current
+      const preferred = currentTid != null && threadIds.has(currentTid) ? currentTid : threadsSnap.tabs.active_tab
+      const resolvedTid = threadIds.has(preferred) ? preferred : threadsSnap.threads[0]?.thread_id ?? null
+      store.setActiveThreadId(resolvedTid)
+
+      if (resolvedTid == null) {
+        store.setConversation(null)
+        return
+      }
+
+      try {
+        store.setConversation(store.getCachedConversation(wid, resolvedTid))
+        const convo = await fetchConversation(wid, resolvedTid)
+        store.cacheConversation(convo)
+        store.setConversation(convo)
+      } catch (err) {
+        console.warn("resync fetchConversation failed", err)
+      }
+    })()
+  }, [wsConnected, store])
 
   const actions = createLubanActions({
     store,

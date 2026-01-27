@@ -50,6 +50,13 @@ impl AuthState {
             return false;
         }
 
+        {
+            let session = self.session_token.read().await;
+            if session.as_deref() == Some(token) {
+                return true;
+            }
+        }
+
         let mut bootstrap = self.bootstrap_token.lock().await;
         let Some(expected) = bootstrap.as_deref() else {
             return false;
@@ -58,9 +65,9 @@ impl AuthState {
             return false;
         }
 
-        *bootstrap = None;
         let mut session = self.session_token.write().await;
         *session = Some(token.to_owned());
+        *bootstrap = None;
         true
     }
 }

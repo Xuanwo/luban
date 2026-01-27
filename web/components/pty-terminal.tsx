@@ -434,6 +434,8 @@ export function PtyTerminal() {
     let pendingInput: Uint8Array[] = []
     let pendingReconnectTimer: number | null = null
     let pendingAtlasRefresh: number | null = null
+    let reconnectAttempt = 0
+    const maxPendingInput = 256
 
     function scheduleWebglAtlasRefresh() {
       if (!webglAddon) return
@@ -462,6 +464,7 @@ export function PtyTerminal() {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(bytes)
       } else {
+        if (pendingInput.length >= maxPendingInput) pendingInput.shift()
         pendingInput.push(bytes)
       }
     }
@@ -478,6 +481,7 @@ export function PtyTerminal() {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(bytes)
       } else {
+        if (pendingInput.length >= maxPendingInput) pendingInput.shift()
         pendingInput.push(bytes)
       }
     }
@@ -784,6 +788,7 @@ export function PtyTerminal() {
 
         socket.onopen = () => {
           if (disposed) return
+          reconnectAttempt = 0
           if (pendingInput.length > 0) {
             for (const bytes of pendingInput) socket.send(bytes)
             pendingInput = []
@@ -795,11 +800,14 @@ export function PtyTerminal() {
           if (disposed) return
           if (ws !== socket) return
           if (pendingReconnectTimer != null) return
+          const exp = Math.min(reconnectAttempt, 6)
+          const delay = Math.min(5_000, 150 * 2 ** exp) + Math.floor(Math.random() * 100)
+          reconnectAttempt += 1
           pendingReconnectTimer = window.setTimeout(() => {
             pendingReconnectTimer = null
             if (disposed) return
             connect()
-          }, 150)
+          }, delay)
         }
       }
 

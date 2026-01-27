@@ -53,6 +53,13 @@ async fn auth_bootstrap_sets_cookie_and_unlocks_api() {
         "unexpected set-cookie: {set_cookie}"
     );
 
+    let bootstrap_again = client
+        .get(format!("http://{}/auth?token={}", server.addr, token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bootstrap_again.status(), reqwest::StatusCode::OK);
+
     let authorized = client
         .get(format!("http://{}/api/app", server.addr))
         .header(

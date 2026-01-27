@@ -1,5 +1,6 @@
 use crate::auth;
 use crate::engine::{Engine, EngineHandle, new_default_services};
+use crate::idempotency::{Begin, IdempotencyStore};
 use crate::mentions;
 use crate::pty::PtyManager;
 use anyhow::Context as _;
@@ -32,6 +33,10 @@ pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
         pty: PtyManager::new(),
         services,
         auth: auth::AuthState::new(config.auth),
+        idempotency_attachments: IdempotencyStore::new(
+            std::time::Duration::from_secs(10 * 60),
+            256,
+        ),
     };
 
     let api_public = Router::new().route("/health", get(health));
@@ -110,6 +115,7 @@ pub(crate) struct AppStateHolder {
     pty: PtyManager,
     services: std::sync::Arc<dyn ProjectWorkspaceService>,
     pub(crate) auth: auth::AuthState,
+    idempotency_attachments: IdempotencyStore<luban_api::AttachmentRef>,
 }
 
 async fn get_app(State(state): State<AppStateHolder>) -> impl IntoResponse {
@@ -326,9 +332,18 @@ async fn ws_events_task(mut socket: axum::extract::ws::WebSocket, state: AppStat
                 }
             }
             outgoing = rx.recv() => {
-                let Ok(outgoing) = outgoing else { break };
-                if socket.send(json_text(&outgoing)).await.is_err() {
-                    break;
+                match outgoing {
+                    Ok(outgoing) => {
+                        if socket.send(json_text(&outgoing)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        if send_app_snapshot_if_needed(&engine, None, &mut socket).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }
@@ -362,7 +377,10 @@ async fn handle_ws_incoming(
     };
 
     match client {
-        WsClientMessage::Hello { .. } => Ok(()),
+        WsClientMessage::Hello { last_seen_rev, .. } => {
+            send_app_snapshot_if_needed(engine, last_seen_rev, socket).await?;
+            Ok(())
+        }
         WsClientMessage::Ping => {
             socket.send(json_text(&WsServerMessage::Pong)).await?;
             Ok(())
@@ -382,6 +400,28 @@ async fn handle_ws_incoming(
             Ok(())
         }
     }
+}
+
+async fn send_app_snapshot_if_needed(
+    engine: &EngineHandle,
+    last_seen_rev: Option<u64>,
+    socket: &mut axum::extract::ws::WebSocket,
+) -> anyhow::Result<()> {
+    let current_rev = engine.current_rev().await.unwrap_or(0);
+    if last_seen_rev == Some(current_rev) {
+        return Ok(());
+    }
+
+    let snapshot = engine.app_snapshot().await?;
+    let msg = WsServerMessage::Event {
+        rev: current_rev,
+        event: Box::new(luban_api::ServerEvent::AppChanged {
+            rev: current_rev,
+            snapshot,
+        }),
+    };
+    socket.send(json_text(&msg)).await?;
+    Ok(())
 }
 
 async fn ws_pty(
@@ -601,6 +641,7 @@ async fn delete_context_item(
 async fn upload_attachment(
     State(state): State<AppStateHolder>,
     Path(workspace_id): Path<u64>,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let Some((project_slug, workspace_name)) =
@@ -609,142 +650,195 @@ async fn upload_attachment(
         return (axum::http::StatusCode::NOT_FOUND, "workspace not found").into_response();
     };
 
-    let mut file_bytes: Option<Vec<u8>> = None;
-    let mut file_name: Option<String> = None;
-    let mut content_type: Option<String> = None;
-    let mut kind: Option<String> = None;
+    let idempotency_key = headers
+        .get("Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("upload_attachment:{workspace_id}:{v}"));
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_owned();
-        if name == "kind" {
-            if let Ok(text) = field.text().await {
-                kind = Some(text);
-            }
-            continue;
+    let mut idempotency_owner = false;
+    if let Some(key) = idempotency_key.clone() {
+        match state.idempotency_attachments.begin(key.clone()).await {
+            Begin::Done(value) => return Json(value).into_response(),
+            Begin::Wait(rx) => match rx.await {
+                Ok(Ok(value)) => return Json(value).into_response(),
+                Ok(Err(message)) => {
+                    return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message)
+                        .into_response();
+                }
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to await idempotency result",
+                    )
+                        .into_response();
+                }
+            },
+            Begin::Owner => idempotency_owner = true,
         }
-        if name != "file" {
-            continue;
-        }
-
-        file_name = field.file_name().map(|s| s.to_owned());
-        content_type = field.content_type().map(|m| m.to_string());
-        file_bytes = field.bytes().await.ok().map(|b| b.to_vec());
     }
 
-    let Some(bytes) = file_bytes else {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "missing multipart field: file",
-        )
-            .into_response();
-    };
+    let result: Result<luban_api::AttachmentRef, (axum::http::StatusCode, String)> = async {
+        let mut file_bytes: Option<Vec<u8>> = None;
+        let mut file_name: Option<String> = None;
+        let mut content_type: Option<String> = None;
+        let mut kind: Option<String> = None;
 
-    let resolved_kind = kind
-        .as_deref()
-        .map(|s| s.trim().to_ascii_lowercase())
-        .or_else(|| {
-            content_type
-                .as_deref()
-                .map(|ct| ct.trim().to_ascii_lowercase())
-        })
-        .unwrap_or_else(|| "file".to_owned());
-
-    let name = file_name.unwrap_or_else(|| "attachment".to_owned());
-    let extension = name
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase())
-        .unwrap_or_else(|| "bin".to_owned());
-
-    let uploaded_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let display_name = append_timestamp_to_basename(&name, uploaded_at_ms);
-
-    let stored = if resolved_kind.starts_with("image") {
-        state.services.store_context_image(
-            project_slug.clone(),
-            workspace_name.clone(),
-            ContextImage { extension, bytes },
-        )
-    } else if resolved_kind.starts_with("text") {
-        let text = match String::from_utf8(bytes) {
-            Ok(text) => text,
-            Err(_) => {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "text attachments must be valid UTF-8",
-                )
-                    .into_response();
+        while let Ok(Some(field)) = multipart.next_field().await {
+            let name = field.name().unwrap_or("").to_owned();
+            if name == "kind" {
+                if let Ok(text) = field.text().await {
+                    kind = Some(text);
+                }
+                continue;
             }
+            if name != "file" {
+                continue;
+            }
+
+            file_name = field.file_name().map(|s| s.to_owned());
+            content_type = field.content_type().map(|m| m.to_string());
+            file_bytes = field.bytes().await.ok().map(|b| b.to_vec());
+        }
+
+        let Some(bytes) = file_bytes else {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "missing multipart field: file".to_owned(),
+            ));
         };
-        state.services.store_context_text(
-            project_slug.clone(),
-            workspace_name.clone(),
-            text,
-            extension,
-        )
-    } else {
-        let unique = SystemTime::now()
+
+        let resolved_kind = kind
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .or_else(|| {
+                content_type
+                    .as_deref()
+                    .map(|ct| ct.trim().to_ascii_lowercase())
+            })
+            .unwrap_or_else(|| "file".to_owned());
+
+        let name = file_name.unwrap_or_else(|| "attachment".to_owned());
+        let extension = name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .unwrap_or_else(|| "bin".to_owned());
+
+        let uploaded_at_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos();
-        let tmp_dir =
-            std::env::temp_dir().join(format!("luban-upload-{}-{}", std::process::id(), unique));
-        if let Err(err) = std::fs::create_dir_all(&tmp_dir) {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to create tmp dir: {err}"),
-            )
-                .into_response();
-        }
+            .as_millis() as u64;
+        let display_name = append_timestamp_to_basename(&name, uploaded_at_ms);
 
-        let tmp_path = tmp_dir.join(display_name.clone());
-        if let Err(err) = std::fs::write(&tmp_path, &bytes) {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to write tmp file: {err}"),
-            )
-                .into_response();
-        }
-
-        let stored = state.services.store_context_file(
-            project_slug.clone(),
-            workspace_name.clone(),
-            tmp_path,
-        );
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        stored
-    };
-
-    match stored {
-        Ok(mut att) => {
-            att.name = display_name;
-            if let Err(message) = state.services.record_context_item(
+        let stored = if resolved_kind.starts_with("image") {
+            state.services.store_context_image(
                 project_slug.clone(),
                 workspace_name.clone(),
-                att.clone(),
-                uploaded_at_ms,
-            ) {
-                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response();
+                ContextImage { extension, bytes },
+            )
+        } else if resolved_kind.starts_with("text") {
+            let text = match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    return Err((
+                        axum::http::StatusCode::BAD_REQUEST,
+                        "text attachments must be valid UTF-8".to_owned(),
+                    ));
+                }
+            };
+            state.services.store_context_text(
+                project_slug.clone(),
+                workspace_name.clone(),
+                text,
+                extension,
+            )
+        } else {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let tmp_dir = std::env::temp_dir().join(format!(
+                "luban-upload-{}-{}",
+                std::process::id(),
+                unique
+            ));
+            if let Err(err) = std::fs::create_dir_all(&tmp_dir) {
+                return Err((
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to create tmp dir: {err}"),
+                ));
             }
 
-            let api = luban_api::AttachmentRef {
-                id: att.id,
-                kind: match att.kind {
-                    luban_domain::AttachmentKind::Image => luban_api::AttachmentKind::Image,
-                    luban_domain::AttachmentKind::Text => luban_api::AttachmentKind::Text,
-                    luban_domain::AttachmentKind::File => luban_api::AttachmentKind::File,
-                },
-                name: att.name,
-                extension: att.extension,
-                mime: att.mime,
-                byte_len: att.byte_len,
-            };
-            Json(api).into_response()
+            let tmp_path = tmp_dir.join(display_name.clone());
+            if let Err(err) = std::fs::write(&tmp_path, &bytes) {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                return Err((
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to write tmp file: {err}"),
+                ));
+            }
+
+            let stored = state.services.store_context_file(
+                project_slug.clone(),
+                workspace_name.clone(),
+                tmp_path,
+            );
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            stored
+        };
+
+        match stored {
+            Ok(mut att) => {
+                att.name = display_name;
+                if let Err(message) = state.services.record_context_item(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    att.clone(),
+                    uploaded_at_ms,
+                ) {
+                    return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, message));
+                }
+
+                let api = luban_api::AttachmentRef {
+                    id: att.id,
+                    kind: match att.kind {
+                        luban_domain::AttachmentKind::Image => luban_api::AttachmentKind::Image,
+                        luban_domain::AttachmentKind::Text => luban_api::AttachmentKind::Text,
+                        luban_domain::AttachmentKind::File => luban_api::AttachmentKind::File,
+                    },
+                    name: att.name,
+                    extension: att.extension,
+                    mime: att.mime,
+                    byte_len: att.byte_len,
+                };
+                Ok(api)
+            }
+            Err(message) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, message)),
         }
-        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+    .await;
+
+    if idempotency_owner && let Some(key) = idempotency_key.clone() {
+        match &result {
+            Ok(value) => {
+                state
+                    .idempotency_attachments
+                    .complete(key, Ok(value.clone()))
+                    .await
+            }
+            Err((_status, message)) => {
+                state
+                    .idempotency_attachments
+                    .complete(key, Err(message.clone()))
+                    .await
+            }
+        }
+    }
+
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err((status, message)) => (status, message).into_response(),
     }
 }
 

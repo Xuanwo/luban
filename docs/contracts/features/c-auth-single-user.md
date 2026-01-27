@@ -23,8 +23,8 @@ On success, the server:
   - `Set-Cookie: luban_session=<bootstrap_token>; Path=/; HttpOnly; SameSite=Lax`
 - Returns a small HTML page that replaces the current history entry and navigates to `/`.
 
-The `<bootstrap_token>` is accepted **once** per server process. After it is consumed, subsequent
-requests to `/auth` with the same token return `401`.
+The `<bootstrap_token>` is accepted **once** to establish the session, but may be reused to
+re-issue the session cookie (idempotent retry) for the lifetime of the server process.
 
 ## Unauthorized behavior
 
@@ -32,4 +32,3 @@ For protected surfaces, when no valid session cookie is present:
 
 - HTTP endpoints return `401` with a plain-text body: `unauthorized`.
 - WebSocket handshakes return `401`.
-

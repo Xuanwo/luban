@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 mod auth;
 pub mod engine;
 mod git_changes;
+mod idempotency;
 mod mentions;
 pub mod pty;
 pub mod server;

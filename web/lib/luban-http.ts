@@ -59,16 +59,34 @@ export async function uploadAttachment(args: {
   workspaceId: number
   file: File
   kind: AttachmentKind
+  idempotencyKey?: string
 }): Promise<AttachmentRef> {
   if (isMockMode()) return await mockUploadAttachment(args)
   const form = new FormData()
   form.append("kind", args.kind)
   form.append("file", args.file, args.file.name)
 
-  const res = await fetch(`/api/workspaces/${args.workspaceId}/attachments`, {
-    method: "POST",
-    body: form,
-  })
+  const resolvedKey =
+    args.idempotencyKey ??
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `att_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`)
+
+  let res: Response
+  try {
+    res = await fetch(`/api/workspaces/${args.workspaceId}/attachments`, {
+      method: "POST",
+      headers: { "Idempotency-Key": resolvedKey },
+      body: form,
+    })
+  } catch {
+    await new Promise((r) => window.setTimeout(r, 200))
+    res = await fetch(`/api/workspaces/${args.workspaceId}/attachments`, {
+      method: "POST",
+      headers: { "Idempotency-Key": resolvedKey },
+      body: form,
+    })
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
