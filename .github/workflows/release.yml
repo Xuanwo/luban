@@ -198,7 +198,6 @@ jobs:
           set +a
           : "${APPLE_CERTIFICATE:?APPLE_CERTIFICATE is required}"
           : "${APPLE_CERTIFICATE_PASSWORD:?APPLE_CERTIFICATE_PASSWORD is required}"
-          : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY is required}"
 
           keychain_password="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
           echo "CI_KEYCHAIN_PASSWORD=${keychain_password}" >> "${GITHUB_ENV}"
@@ -246,7 +245,40 @@ jobs:
           fi
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${keychain_password}" "${keychain}"
 
-          security find-identity -v -p codesigning "${keychain}" || true
+          identity_line="$(security find-identity -v -p codesigning "${keychain}" | grep -m1 'Developer ID Application' || true)"
+          if [[ -z "${identity_line}" ]]; then
+            echo "no Developer ID Application identity found in ${keychain}" >&2
+            security find-identity -v -p codesigning "${keychain}" || true
+            exit 1
+          fi
+          identity_name="$(echo "${identity_line}" | awk -F'\"' '{print $2}')"
+          if [[ -z "${identity_name}" ]]; then
+            echo "failed to parse code signing identity from: ${identity_line}" >&2
+            exit 1
+          fi
+
+          python3 - "${identity_name}" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          identity = sys.argv[1].replace('"', '\\"')
+          env_path = pathlib.Path(".env")
+          src = env_path.read_text(encoding="utf-8")
+          line = f'APPLE_SIGNING_IDENTITY="{identity}"'
+
+          if re.search(r'(?m)^APPLE_SIGNING_IDENTITY=.*$', src):
+              out = re.sub(r'(?m)^APPLE_SIGNING_IDENTITY=.*$', line, src)
+          else:
+              out = src
+              if out and not out.endswith("\n"):
+                  out += "\n"
+              out += line + "\n"
+
+          env_path.write_text(out, encoding="utf-8")
+          PY
+
+          echo "APPLE_SIGNING_IDENTITY=${identity_name}" >> "${GITHUB_ENV}"
 
       - name: Package
         shell: bash
