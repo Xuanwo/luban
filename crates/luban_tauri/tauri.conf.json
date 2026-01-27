@@ -1,6 +1,6 @@
 {
   "productName": "Luban",
-  "version": "0.1.6",
+  "version": "42.7.20",
   "identifier": "io.xuanwo.luban",
   "app": {
     "withGlobalTauri": true,

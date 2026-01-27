@@ -48,6 +48,24 @@ Packaging outputs are written under `dist/` (gitignored) by default.
 Recommended: create and push a tag:
 
 1. Ensure `LUBAN_VAULT` and `OP_SERVICE_ACCOUNT_TOKEN` are configured.
-2. Create a tag like `v0.1.5` and push it (tags containing `-` are rejected).
+2. Create a tag like `v0.1.5+20260127` and push it (tags containing `-` are rejected).
 3. Wait for the `Release` workflow to finish.
 4. Verify `latest.json` and the uploaded artifacts on `releases.luban.dev`.
+
+Note: Repository versions (`Cargo.toml`, `web/package.json`, `crates/luban_tauri/tauri.conf.json`) are placeholders. Release builds derive the user-visible version from the git tag and inject it at build time.
+
+## Nightly patch releases
+
+Workflow file: `.github/workflows/nightly-release.yml`
+
+This workflow runs daily (03:00 UTC) and:
+
+- Checks whether `main` has new commits since the latest release tag.
+- If yes, bumps the patch version and appends a build metadata suffix `+YYYYMMDD`.
+- Creates an annotated tag `v<version>` and a GitHub release.
+- The existing `Release` workflow will then package and upload artifacts when the tag is pushed.
+
+Notes:
+
+- Build date uses UTC by default. Override via workflow dispatch input `build_date` (or `BUILD_DATE=YYYYMMDD`) if needed.
+- If `Cargo.toml` is already ahead of the latest tag (e.g. a manual version bump), the workflow will release that version (with a build suffix) instead of bumping patch again.

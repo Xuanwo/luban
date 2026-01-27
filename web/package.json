@@ -1,6 +1,6 @@
 {
   "name": "luban-web",
-  "version": "0.1.6",
+  "version": "42.7.20",
   "private": true,
   "scripts": {
     "build": "next build",

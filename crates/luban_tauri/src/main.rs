@@ -44,6 +44,20 @@ fn auto_update_enabled() -> bool {
     matches!(build_channel(), BuildChannel::Release)
 }
 
+fn display_version_override() -> Option<String> {
+    if let Ok(raw) = std::env::var("LUBAN_DISPLAY_VERSION")
+        && !raw.trim().is_empty()
+    {
+        return Some(raw);
+    }
+    if let Some(raw) = option_env!("LUBAN_DISPLAY_VERSION")
+        && !raw.trim().is_empty()
+    {
+        return Some(raw.to_owned());
+    }
+    None
+}
+
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -94,11 +108,18 @@ fn webview_devtools_enabled() -> bool {
 fn build_app_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
     manager: &M,
 ) -> anyhow::Result<tauri::menu::Menu<R>> {
+    let about_version =
+        display_version_override().unwrap_or_else(|| manager.package_info().version.to_string());
+    let about_metadata = tauri::menu::AboutMetadata {
+        version: Some(about_version),
+        ..Default::default()
+    };
+
     let menu_builder = tauri::menu::MenuBuilder::new(manager).item(&{
         let app_submenu_builder = tauri::menu::SubmenuBuilder::new(manager, "Luban")
             .text(MENU_ID_CHECK_FOR_UPDATES, "Check for Updates...")
             .separator()
-            .about(None);
+            .about(Some(about_metadata));
 
         #[cfg(target_os = "macos")]
         let app_submenu_builder = app_submenu_builder

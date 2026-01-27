@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 use opendal::layers::RetryLayer;
 use opendal::services::S3;
 use opendal::Operator;
-use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -160,20 +159,6 @@ fn run_cmd(mut cmd: ProcessCommand, context: &str) -> Result<()> {
     anyhow::bail!("{context} failed (exit {status})");
 }
 
-fn run_cmd_capture_stdout(mut cmd: ProcessCommand, context: &str) -> Result<String> {
-    let output = cmd.output().with_context(|| format!("spawn {context}"))?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "{} failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
-            context,
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
 fn cmd_capture_stdout_if_ok(mut cmd: ProcessCommand) -> Option<String> {
     cmd.stdin(Stdio::null());
     let output = cmd.output().ok()?;
@@ -196,27 +181,16 @@ fn git_exact_tag() -> Option<String> {
     cmd_capture_stdout_if_ok(cmd)
 }
 
-#[derive(Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoPackage>,
+fn normalize_git_tag_version(tag: &str) -> Option<String> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return None;
+    }
+    Some(tag.strip_prefix('v').unwrap_or(tag).to_owned())
 }
 
-#[derive(Deserialize)]
-struct CargoPackage {
-    name: String,
-    version: String,
-}
-
-fn resolve_luban_tauri_version() -> Result<String> {
-    let mut cmd = ProcessCommand::new("cargo");
-    cmd.arg("metadata").arg("--no-deps").arg("--format-version").arg("1");
-    let stdout = run_cmd_capture_stdout(cmd, "cargo metadata")?;
-    let meta: CargoMetadata = serde_json::from_str(&stdout).context("parse cargo metadata")?;
-    meta.packages
-        .into_iter()
-        .find(|p| p.name == "luban_tauri")
-        .map(|p| p.version)
-        .context("luban_tauri not found in cargo metadata")
+fn env_var_nonempty(key: &str) -> Option<String> {
+    env_var_opt(key).and_then(|v| (!v.trim().is_empty()).then_some(v))
 }
 
 fn now_rfc3339_utc() -> Result<String> {
@@ -275,6 +249,7 @@ fn build_web(
     git_hash: &str,
     git_tag: &str,
     build_time: &str,
+    display_version: &str,
 ) -> Result<()> {
     let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
 
@@ -286,13 +261,12 @@ fn build_web(
     install.current_dir("web").arg("install");
     run_cmd(install, "pnpm install")?;
 
-    let web_version = resolve_web_version()?;
     let build_script = if profile == "release" { "build" } else { "build" };
     let mut build = ProcessCommand::new(pnpm);
     build
         .current_dir("web")
         .arg(build_script)
-        .env("NEXT_PUBLIC_LUBAN_VERSION", web_version)
+        .env("NEXT_PUBLIC_LUBAN_VERSION", display_version)
         .env("NEXT_PUBLIC_LUBAN_BUILD_CHANNEL", build_channel)
         .env("NEXT_PUBLIC_LUBAN_COMMIT", git_hash)
         .env("NEXT_PUBLIC_LUBAN_GIT_TAG", git_tag)
@@ -418,14 +392,22 @@ fn build_tauri_build_command(
     git_hash: &str,
     git_tag: &str,
     build_time: &str,
+    app_version: &str,
     bundles: Option<&str>,
     skip_stapling: bool,
 ) -> ProcessCommand {
+    let config_patch = serde_json::json!({
+        "version": app_version,
+    })
+    .to_string();
+
     let mut cmd = ProcessCommand::new("cargo");
     cmd.current_dir("crates/luban_tauri")
         .arg("tauri")
         .arg("build")
         .arg("--ci")
+        .arg("--config")
+        .arg(config_patch)
         .args(skip_stapling.then_some("--skip-stapling"))
         .args(
             bundles
@@ -441,6 +423,7 @@ fn build_tauri_build_command(
         .env("LUBAN_BUILD_CHANNEL", build_channel)
         .env("LUBAN_GIT_HASH", git_hash)
         .env("LUBAN_GIT_TAG", git_tag)
+        .env("LUBAN_DISPLAY_VERSION", app_version)
         .env("LUBAN_BUILD_TIME", build_time);
     cmd
 }
@@ -552,7 +535,22 @@ fn run_package(target: String, profile: String, out_dir: PathBuf) -> Result<()> 
     };
     let build_time = now_rfc3339_utc()?;
 
-    build_web(&profile, build_channel, &git_hash, &git_tag, &build_time)?;
+    let display_version = if let Some(v) = env_var_nonempty("LUBAN_DISPLAY_VERSION") {
+        v
+    } else if let Some(v) = normalize_git_tag_version(&git_tag) {
+        v
+    } else {
+        resolve_web_version()?
+    };
+
+    build_web(
+        &profile,
+        build_channel,
+        &git_hash,
+        &git_tag,
+        &build_time,
+        &display_version,
+    )?;
 
     let (bundles, skip_stapling) = match spec.platform {
         PackagePlatform::Macos => (Some("app,dmg"), false),
@@ -567,13 +565,14 @@ fn run_package(target: String, profile: String, out_dir: PathBuf) -> Result<()> 
         &git_hash,
         &git_tag,
         &build_time,
+        &display_version,
         bundles,
         skip_stapling,
     );
     apply_updater_signing_env(&mut tauri_build);
     run_cmd(tauri_build, "cargo tauri build")?;
 
-    let version = resolve_luban_tauri_version()?;
+    let version = display_version;
     std::fs::create_dir_all(&out_dir).with_context(|| format!("create {}", out_dir.display()))?;
 
     let base_url = env_var_opt("LUBAN_RELEASE_BASE_URL").unwrap_or_else(|| "https://releases.luban.dev".to_owned());
@@ -1152,6 +1151,7 @@ mod tests {
             "deadbeef",
             "v0.0.0",
             "2026-01-23T00:00:00Z",
+            "0.0.0+20260123",
             Some("app,dmg"),
             true,
         );

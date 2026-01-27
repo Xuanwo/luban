@@ -2061,7 +2061,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "luban_api"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "serde",
  "serde_json",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "luban_backend"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "anyhow",
  "bip39",
@@ -2084,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "luban_domain"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "serde",
  "serde_json",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "luban_server"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "anyhow",
  "axum",
@@ -2113,7 +2113,7 @@ dependencies = [
 
 [[package]]
 name = "luban_tauri"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "anyhow",
  "luban_server",

@@ -1,0 +1,165 @@
+name: Nightly Release
+
+on:
+  schedule:
+    # 03:00 UTC every day.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Create a release even if there are no new commits since the latest release tag"
+        required: false
+        type: boolean
+        default: false
+      build_date:
+        description: "Override build date (UTC, YYYYMMDD). Leave empty to use current UTC date."
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  create_release:
+    name: Create tag + GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure on latest main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune --tags origin main
+          git checkout -B main origin/main
+
+      - name: Compute nightly release version
+        id: bump
+        shell: bash
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
+          BUILD_DATE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_date || '' }}
+        run: |
+          set -euo pipefail
+          force="${FORCE}"
+          build_date="${BUILD_DATE}"
+
+          if [[ -z "${build_date}" ]]; then
+            build_date="$(date -u +%Y%m%d)"
+          fi
+          if [[ ! "${build_date}" =~ ^[0-9]{8}$ ]]; then
+            echo "build_date must be YYYYMMDD (UTC), got: ${build_date}" >&2
+            exit 2
+          fi
+
+          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1 || true)"
+          if [[ -z "${last_tag}" ]]; then
+            {
+              echo "should_release=false"
+              echo "reason=no_release_tags_found"
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          last_rev="$(git rev-list -n 1 "${last_tag}")"
+          current_rev="$(git rev-list -n 1 HEAD)"
+          if [[ "${last_rev}" == "${current_rev}" && "${force}" != "true" ]]; then
+            {
+              echo "should_release=false"
+              echo "reason=no_new_commits_since_last_release"
+              echo "last_tag=${last_tag}"
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          core="${last_tag#v}"
+          core="${core%%+*}"
+          IFS='.' read -r major minor patch <<<"${core}"
+          if [[ -z "${major}" || -z "${minor}" || -z "${patch}" ]]; then
+            echo "failed to parse semver from tag: ${last_tag}" >&2
+            exit 2
+          fi
+          if [[ ! "${major}" =~ ^[0-9]+$ || ! "${minor}" =~ ^[0-9]+$ || ! "${patch}" =~ ^[0-9]+$ ]]; then
+            echo "tag is not numeric semver: ${last_tag}" >&2
+            exit 2
+          fi
+
+          new_patch="$((patch + 1))"
+          version="${major}.${minor}.${new_patch}+${build_date}"
+          tag="v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            {
+              echo "should_release=false"
+              echo "reason=tag_already_exists"
+              echo "tag=${tag}"
+              echo "version=${version}"
+              echo "last_tag=${last_tag}"
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          reason="new_commits_detected"
+          if [[ "${last_rev}" == "${current_rev}" ]]; then
+            reason="forced"
+          fi
+
+          {
+            echo "should_release=true"
+            echo "reason=${reason}"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "last_tag=${last_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Configure git identity
+        if: steps.bump.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Luban Robot"
+          git config user.email "robot@luban.dev"
+
+      - name: Tag and push
+        if: steps.bump.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.bump.outputs.tag }}"
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "refs/tags/${tag}"
+
+      - name: Create GitHub release
+        if: steps.bump.outputs.should_release == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const tag = `${{ steps.bump.outputs.tag }}`;
+            const reason = `${{ steps.bump.outputs.reason }}`;
+            try {
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: tag,
+                generate_release_notes: true,
+                prerelease: false,
+              });
+              core.info(`Created release ${tag} (${reason})`);
+            } catch (e) {
+              if (e.status === 422) {
+                core.info(`Release already exists for ${tag}`);
+              } else {
+                throw e;
+              }
+            }

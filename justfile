@@ -25,10 +25,13 @@ web cmd profile="debug":
       (cd web && pnpm install); \
       (cd web && \
         channel="$([ "{{profile}}" = "release" ] && echo release || echo dev)" && \
-        NEXT_PUBLIC_LUBAN_VERSION="$(node -p 'require("./package.json").version')" \
+        tag="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" && \
+        version="${LUBAN_DISPLAY_VERSION:-${tag#v}}" && \
+        version="${version:-$(node -p 'require("./package.json").version')}" && \
+        NEXT_PUBLIC_LUBAN_VERSION="$version" \
         NEXT_PUBLIC_LUBAN_BUILD_CHANNEL="$channel" \
         NEXT_PUBLIC_LUBAN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
-        NEXT_PUBLIC_LUBAN_GIT_TAG="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" \
+        NEXT_PUBLIC_LUBAN_GIT_TAG="$tag" \
         NEXT_PUBLIC_LUBAN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
         pnpm build); \
       mkdir -p web/out; \
@@ -53,10 +56,13 @@ web cmd profile="debug":
     fi; \
     (cd web && \
       channel="$([ "{{profile}}" = "release" ] && echo release || echo dev)" && \
-      NEXT_PUBLIC_LUBAN_VERSION="$(node -p 'require("./package.json").version')" \
+      tag="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" && \
+      version="${LUBAN_DISPLAY_VERSION:-${tag#v}}" && \
+      version="${version:-$(node -p 'require("./package.json").version')}" && \
+      NEXT_PUBLIC_LUBAN_VERSION="$version" \
       NEXT_PUBLIC_LUBAN_BUILD_CHANNEL="$channel" \
       NEXT_PUBLIC_LUBAN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
-      NEXT_PUBLIC_LUBAN_GIT_TAG="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" \
+      NEXT_PUBLIC_LUBAN_GIT_TAG="$tag" \
       NEXT_PUBLIC_LUBAN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
       pnpm dev); \
   elif [ "{{cmd}}" = "dev-mock" ]; then \
@@ -69,11 +75,14 @@ web cmd profile="debug":
     fi; \
     (cd web && \
       channel="$([ "{{profile}}" = "release" ] && echo release || echo dev)" && \
+      tag="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" && \
+      version="${LUBAN_DISPLAY_VERSION:-${tag#v}}" && \
+      version="${version:-$(node -p 'require("./package.json").version')}" && \
       NEXT_PUBLIC_LUBAN_MODE=mock \
-      NEXT_PUBLIC_LUBAN_VERSION="$(node -p 'require("./package.json").version')" \
+      NEXT_PUBLIC_LUBAN_VERSION="$version" \
       NEXT_PUBLIC_LUBAN_BUILD_CHANNEL="$channel" \
       NEXT_PUBLIC_LUBAN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
-      NEXT_PUBLIC_LUBAN_GIT_TAG="$( [ "$channel" = "release" ] && git describe --tags --exact-match 2>/dev/null || true )" \
+      NEXT_PUBLIC_LUBAN_GIT_TAG="$tag" \
       NEXT_PUBLIC_LUBAN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
       pnpm dev); \
   else \
