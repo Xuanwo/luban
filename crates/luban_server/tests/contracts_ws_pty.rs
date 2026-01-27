@@ -62,7 +62,7 @@ async fn ws_pty_reconnect_replays_history_for_same_token() {
 
     let marker = b"luban_ws_pty_contract_marker";
     let input = b"printf 'luban_ws_pty_contract_marker\\n'\n";
-    ws.send(Message::Binary(input.to_vec()))
+    ws.send(Message::Binary(input.to_vec().into()))
         .await
         .expect("send input");
 
