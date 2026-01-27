@@ -297,6 +297,16 @@ jobs:
         with:
           name: package-env-${{ matrix.target }}
           path: dist/${{ matrix.target }}/package.env
+          if-no-files-found: error
+
+      - name: Export release assets
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.target }}
+          path: |
+            dist/${{ matrix.target }}/Luban_*
+          if-no-files-found: error
 
       - name: Cleanup injected env file
         if: always()
@@ -310,9 +320,12 @@ jobs:
     if: >-
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 30
+    permissions:
+      contents: write
     env:
       OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
       LUBAN_VAULT: ${{ secrets.LUBAN_VAULT }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -338,7 +351,15 @@ jobs:
       - name: Download package envs
         uses: actions/download-artifact@v4
         with:
+          pattern: package-env-*
           path: dist/.ci/release-packages
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: dist/.ci/github-release-assets
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -383,6 +404,37 @@ jobs:
       - name: Upload latest.json to R2
         shell: bash
         run: just upload-manifest "dist/.ci/release-packages/latest.json"
+
+      - name: Ensure GitHub release exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "${tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${tag}" \
+            --generate-notes
+
+      - name: Upload artifacts to GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          shopt -s nullglob
+          files=(dist/.ci/github-release-assets/*)
+          if (( ${#files[@]} == 0 )); then
+            echo "no GitHub release assets found under dist/.ci/github-release-assets" >&2
+            exit 1
+          fi
+          gh release upload "${tag}" "${files[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+          gh release upload "${tag}" dist/.ci/release-packages/latest.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
 
       - name: Cleanup injected env file
         if: always()

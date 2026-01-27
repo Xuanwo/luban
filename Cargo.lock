@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "luban_cli"
-version = "0.1.6"
+version = "42.7.20"
 dependencies = [
  "anyhow",
  "clap",

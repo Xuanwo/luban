@@ -50,6 +50,7 @@ consumer-driven contracts under `docs/contracts/`.
 ### macOS prebuilt
 
 Prebuilt macOS artifacts are published under `https://releases.luban.dev/`.
+GitHub Releases for each `v*` tag also includes the packaged artifacts as release assets.
 
 - Installer (recommended for first install): `https://releases.luban.dev/Luban_latest_darwin-universal.dmg`
   - Also available as per-platform aliases: `https://releases.luban.dev/Luban_latest_<platform>.dmg`
