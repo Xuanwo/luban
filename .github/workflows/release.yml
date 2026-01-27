@@ -9,6 +9,8 @@ on:
     paths:
       - justfile
       - .github/workflows/release.yml
+      - crates/luban_tauri/tauri.conf.json
+      - crates/luban_tauri/icons/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
