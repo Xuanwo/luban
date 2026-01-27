@@ -503,7 +503,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       key={worktree.workspaceId}
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 transition-all cursor-pointer",
+                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 transition-all cursor-pointer outline-none",
                         worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-sidebar-accent/30",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
                           "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
