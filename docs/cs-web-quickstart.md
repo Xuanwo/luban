@@ -12,6 +12,18 @@ This repo contains a local Rust server (`luban_server`) and a browser UI (`web/`
 `just web run` builds `web/` (requires `pnpm`) and starts `luban_server`, which serves
 the built assets from `/`.
 
+## Run (browser, zero-config launcher)
+
+1. Run:
+   - `cargo run -p luban_cli -- ui`
+2. Your default browser should open automatically.
+
+The launcher:
+
+- binds to `127.0.0.1` with a random available port
+- bootstraps a session cookie via `GET /auth?token=...`
+- then navigates to `/` to load the UI
+
 ## Run (mock mode, UI-first preview)
 
 Mock mode runs the browser UI without starting the Rust server. This is the preferred workflow for

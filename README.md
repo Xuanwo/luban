@@ -13,6 +13,15 @@ just app run
 
 The Tauri app starts the local server in-process and loads the UI in a WebView.
 
+### Run (browser, zero-config launcher)
+
+```bash
+cargo run -p luban_cli -- ui
+```
+
+This starts the local server on a random available port, prints a local URL, and opens it in your
+browser.
+
 ### Run (browser, same-origin UI + APIs)
 
 ```bash
@@ -119,6 +128,7 @@ See `docs/contracts/README.md`.
 
 ## Repository layout
 
+- `crates/luban_cli/`: `luban` CLI entrypoint (`luban ui`)
 - `crates/luban_domain/`: pure state + reducers (most regressions should be captured here)
 - `crates/luban_server/`: HTTP + WebSocket server, serves `web/`
 - `crates/luban_tauri/`: Tauri desktop wrapper

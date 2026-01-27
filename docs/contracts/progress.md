@@ -49,6 +49,7 @@ Legend:
 
 ## Feature contracts
 
+- `docs/contracts/features/c-auth-single-user.md`
 - `docs/contracts/features/c-http-health.md`
 - `docs/contracts/features/c-http-app.md`
 - `docs/contracts/features/c-http-codex-prompts.md`

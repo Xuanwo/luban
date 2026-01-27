@@ -1,7 +1,9 @@
+use crate::auth;
 use crate::engine::{Engine, EngineHandle, new_default_services};
 use crate::mentions;
 use crate::pty::PtyManager;
 use anyhow::Context as _;
+use axum::middleware;
 use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State, ws::WebSocketUpgrade},
@@ -20,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use tower_http::services::{ServeDir, ServeFile};
 
-pub async fn router() -> anyhow::Result<Router> {
+pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
     let services = new_default_services()?;
     let (engine, events) = Engine::start(services.clone());
 
@@ -29,10 +31,12 @@ pub async fn router() -> anyhow::Result<Router> {
         events,
         pty: PtyManager::new(),
         services,
+        auth: auth::AuthState::new(config.auth),
     };
 
-    let api = Router::new()
-        .route("/health", get(health))
+    let api_public = Router::new().route("/health", get(health));
+
+    let api_protected = Router::new()
         .route("/app", get(get_app))
         .route("/codex/prompts", get(get_codex_prompts))
         .route("/workspaces/{workspace_id}/threads", get(get_threads))
@@ -61,7 +65,12 @@ pub async fn router() -> anyhow::Result<Router> {
         )
         .route("/events", get(ws_events))
         .route("/pty/{workspace_id}/{thread_id}", get(ws_pty))
-        .with_state(state);
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_session,
+        ));
+
+    let api = api_public.merge(api_protected);
 
     let web_dist = std::env::var_os("LUBAN_WEB_DIST_DIR")
         .map(PathBuf::from)
@@ -69,7 +78,11 @@ pub async fn router() -> anyhow::Result<Router> {
     let web_index = web_dist.join("index.html");
     let web = ServeDir::new(web_dist).not_found_service(ServeFile::new(web_index));
 
-    Ok(Router::new().nest("/api", api).fallback_service(web))
+    Ok(Router::new()
+        .merge(auth::router())
+        .nest("/api", api)
+        .fallback_service(web)
+        .with_state(state))
 }
 
 async fn health() -> &'static str {
@@ -91,11 +104,12 @@ fn resolve_codex_root() -> anyhow::Result<PathBuf> {
 }
 
 #[derive(Clone)]
-struct AppStateHolder {
+pub(crate) struct AppStateHolder {
     engine: EngineHandle,
     events: broadcast::Sender<WsServerMessage>,
     pty: PtyManager,
     services: std::sync::Arc<dyn ProjectWorkspaceService>,
+    pub(crate) auth: auth::AuthState,
 }
 
 async fn get_app(State(state): State<AppStateHolder>) -> impl IntoResponse {

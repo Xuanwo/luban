@@ -4,6 +4,7 @@ members = [
     "crates/luban_api",
     "crates/luban_backend",
     "crates/luban_domain",
+    "crates/luban_cli",
     "crates/luban_server",
     "crates/luban_tauri",
 ]

@@ -1,0 +1,19 @@
+[package]
+name = "luban_cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "luban"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+luban_server = { path = "../luban_server" }
+open = "5"
+rand.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
