@@ -1,17 +1,22 @@
 use anyhow::Context as _;
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
+use futures::{SinkExt as _, StreamExt as _};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read as _, Write};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc, watch};
+use tokio::time::Duration;
 
-type PtyKey = (u64, u64);
+type PtyKey = (u64, String);
 type PtySessions = HashMap<PtyKey, Arc<PtySession>>;
 
 const MAX_OUTPUT_HISTORY_BYTES: usize = 512 * 1024;
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const LIVE_BUFFER_CAPACITY: usize = 64;
 
 fn trace_bytes(label: &str, bytes: &[u8]) {
     if std::env::var_os("LUBAN_PTY_TRACE").is_none() {
@@ -34,31 +39,38 @@ fn trace_bytes(label: &str, bytes: &[u8]) {
 #[derive(Clone)]
 pub struct PtyManager {
     inner: Arc<Mutex<PtySessions>>,
+    idle_timeout: Duration,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
         }
     }
 
     pub fn get_or_create(
         &self,
         workspace_id: u64,
-        thread_id: u64,
+        reconnect: String,
         cwd: PathBuf,
     ) -> anyhow::Result<Arc<PtySession>> {
         let mut guard = self.inner.lock().expect("pty manager lock poisoned");
-        if let Some(existing) = guard.get(&(workspace_id, thread_id)) {
+        if let Some(existing) = guard.get(&(workspace_id, reconnect.clone())) {
             if !existing.is_terminated() {
                 return Ok(existing.clone());
             }
-            guard.remove(&(workspace_id, thread_id));
+            guard.remove(&(workspace_id, reconnect.clone()));
         }
 
-        let session = Arc::new(PtySession::spawn(cwd)?);
-        guard.insert((workspace_id, thread_id), session.clone());
+        let session = Arc::new(PtySession::spawn(
+            cwd,
+            self.idle_timeout,
+            Arc::downgrade(&self.inner),
+            (workspace_id, reconnect.clone()),
+        )?);
+        guard.insert((workspace_id, reconnect), session.clone());
         Ok(session)
     }
 }
@@ -70,41 +82,70 @@ impl Default for PtyManager {
 }
 
 pub struct PtySession {
-    output: broadcast::Sender<Vec<u8>>,
     terminated: Arc<std::sync::atomic::AtomicBool>,
     terminated_tx: broadcast::Sender<()>,
-    history: Arc<Mutex<OutputHistory>>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    _child: Mutex<Box<dyn portable_pty::Child + Send>>,
+    connection_count_tx: watch::Sender<usize>,
+    state: Arc<Mutex<PtySessionState>>,
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+    child: Arc<Mutex<Option<Box<dyn portable_pty::Child + Send>>>>,
 }
 
 #[derive(Default)]
 struct OutputHistory {
-    chunks: VecDeque<Vec<u8>>,
+    chunks: VecDeque<HistoryChunk>,
     total_bytes: usize,
 }
 
 impl OutputHistory {
-    fn push(&mut self, chunk: Vec<u8>) {
+    fn push(&mut self, chunk: Bytes) {
         self.total_bytes = self.total_bytes.saturating_add(chunk.len());
-        self.chunks.push_back(chunk);
+        self.chunks.push_back(HistoryChunk { bytes: chunk });
         while self.total_bytes > MAX_OUTPUT_HISTORY_BYTES {
             let Some(front) = self.chunks.pop_front() else {
                 self.total_bytes = 0;
                 break;
             };
-            self.total_bytes = self.total_bytes.saturating_sub(front.len());
+            self.total_bytes = self.total_bytes.saturating_sub(front.bytes.len());
         }
     }
 
-    fn snapshot_chunks(&self) -> Vec<Vec<u8>> {
-        self.chunks.iter().cloned().collect()
+    fn snapshot_chunks(&self) -> Vec<Bytes> {
+        self.chunks.iter().map(|c| c.bytes.clone()).collect()
     }
 }
 
+#[derive(Clone)]
+struct HistoryChunk {
+    bytes: Bytes,
+}
+
+#[derive(Clone)]
+struct LiveChunk {
+    seq: u64,
+    bytes: Bytes,
+}
+
+struct PtySessionState {
+    history: OutputHistory,
+    next_seq: u64,
+    active: Option<ActiveConnection>,
+    next_connection_id: u64,
+}
+
+#[derive(Clone)]
+struct ActiveConnection {
+    id: u64,
+    tx: mpsc::Sender<LiveChunk>,
+}
+
 impl PtySession {
-    fn spawn(cwd: PathBuf) -> anyhow::Result<Self> {
+    fn spawn(
+        cwd: PathBuf,
+        idle_timeout: Duration,
+        manager: std::sync::Weak<Mutex<PtySessions>>,
+        key: PtyKey,
+    ) -> anyhow::Result<Self> {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
@@ -131,14 +172,21 @@ impl PtySession {
         let reader = pair.master.try_clone_reader().context("clone pty reader")?;
         let writer = pair.master.take_writer().context("take pty writer")?;
 
-        let (output, _) = broadcast::channel::<Vec<u8>>(256);
         let (terminated_tx, _) = broadcast::channel::<()>(8);
+        let (connection_count_tx, _) = watch::channel::<usize>(0);
         let terminated = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let output_for_thread = output.clone();
         let terminated_for_thread = terminated.clone();
         let terminated_tx_for_thread = terminated_tx.clone();
-        let history = Arc::new(Mutex::new(OutputHistory::default()));
-        let history_for_thread = history.clone();
+        let state = Arc::new(Mutex::new(PtySessionState {
+            history: OutputHistory::default(),
+            next_seq: 1,
+            active: None,
+            next_connection_id: 1,
+        }));
+        let state_for_thread = state.clone();
+        let connection_count_for_thread = connection_count_tx.clone();
+        let manager_for_thread = manager.clone();
+        let key_for_thread = key.clone();
 
         std::thread::Builder::new()
             .name("luban-pty-read".to_owned())
@@ -149,52 +197,171 @@ impl PtySession {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let chunk = buf[..n].to_vec();
-                            if let Ok(mut guard) = history_for_thread.lock() {
-                                guard.push(chunk.clone());
+                            let chunk = Bytes::copy_from_slice(&buf[..n]);
+                            let (seq, active) = match state_for_thread.lock() {
+                                Ok(mut guard) => {
+                                    let seq = guard.next_seq;
+                                    guard.next_seq = guard.next_seq.saturating_add(1);
+                                    guard.history.push(chunk.clone());
+                                    (seq, guard.active.clone())
+                                }
+                                Err(_) => break,
+                            };
+
+                            let Some(active) = active else {
+                                continue;
+                            };
+
+                            if active
+                                .tx
+                                .blocking_send(LiveChunk { seq, bytes: chunk })
+                                .is_err()
+                                && let Ok(mut guard) = state_for_thread.lock()
+                                && guard.active.as_ref().is_some_and(|c| c.id == active.id)
+                            {
+                                guard.active = None;
+                                let _ = connection_count_for_thread.send(0);
                             }
-                            let _ = output_for_thread.send(chunk);
                         }
                         Err(_) => break,
                     }
                 }
                 terminated_for_thread.store(true, Ordering::SeqCst);
+                if let Ok(mut guard) = state_for_thread.lock() {
+                    guard.active = None;
+                }
+                let _ = connection_count_for_thread.send(0);
+                if let Some(manager) = manager_for_thread.upgrade()
+                    && let Ok(mut guard) = manager.lock()
+                {
+                    guard.remove(&key_for_thread);
+                }
                 let _ = terminated_tx_for_thread.send(());
             })
             .context("spawn pty reader thread")?;
 
-        Ok(Self {
-            output,
+        let session = Self {
             terminated,
             terminated_tx,
-            history,
-            writer: Mutex::new(writer),
-            master: Mutex::new(pair.master),
-            _child: Mutex::new(child),
-        })
+            connection_count_tx,
+            state,
+            writer: Arc::new(Mutex::new(Some(writer))),
+            master: Arc::new(Mutex::new(Some(pair.master))),
+            child: Arc::new(Mutex::new(Some(child))),
+        };
+
+        session.spawn_idle_reaper(idle_timeout, manager, key);
+
+        Ok(session)
+    }
+
+    fn spawn_idle_reaper(
+        &self,
+        idle_timeout: Duration,
+        manager: std::sync::Weak<Mutex<PtySessions>>,
+        key: PtyKey,
+    ) {
+        let mut rx = self.connection_count_tx.subscribe();
+        let terminated = self.terminated.clone();
+        let terminated_tx = self.terminated_tx.clone();
+        let connection_count_tx = self.connection_count_tx.clone();
+        let state = self.state.clone();
+        let child = self.child.clone();
+        let writer = self.writer.clone();
+        let master = self.master.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if terminated.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                if *rx.borrow() > 0 {
+                    if rx.changed().await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+
+                tokio::select! {
+                    _ = tokio::time::sleep(idle_timeout) => {
+                        if terminated.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if *rx.borrow() > 0 {
+                            continue;
+                        }
+                        terminated.store(true, Ordering::SeqCst);
+                        if let Ok(mut guard) = state.lock() {
+                            guard.active = None;
+                        }
+                        let _ = connection_count_tx.send(0);
+
+                        if let Ok(mut guard) = child.lock()
+                            && let Some(mut child) = guard.take()
+                        {
+                            let _ = child.kill();
+                        }
+                        if let Ok(mut guard) = writer.lock() {
+                            guard.take();
+                        }
+                        if let Ok(mut guard) = master.lock() {
+                            guard.take();
+                        }
+                        if let Some(manager) = manager.upgrade()
+                            && let Ok(mut guard) = manager.lock()
+                        {
+                            guard.remove(&key);
+                        }
+                        let _ = terminated_tx.send(());
+                        break;
+                    }
+                    changed = rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn is_terminated(&self) -> bool {
         self.terminated.load(Ordering::SeqCst)
     }
 
-    pub fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
-        self.output.subscribe()
-    }
-
     pub fn subscribe_terminated(&self) -> broadcast::Receiver<()> {
         self.terminated_tx.subscribe()
     }
 
-    pub fn snapshot_output_history(&self) -> Vec<Vec<u8>> {
-        self.history
-            .lock()
-            .map(|h| h.snapshot_chunks())
-            .unwrap_or_default()
+    fn attach(&self) -> (u64, Vec<Bytes>, u64, mpsc::Receiver<LiveChunk>) {
+        let mut guard = self.state.lock().expect("pty session lock poisoned");
+        let history = guard.history.snapshot_chunks();
+        let connection_id = guard.next_connection_id;
+        guard.next_connection_id = guard.next_connection_id.saturating_add(1);
+        let (tx, rx) = mpsc::channel::<LiveChunk>(LIVE_BUFFER_CAPACITY);
+        guard.active = Some(ActiveConnection {
+            id: connection_id,
+            tx,
+        });
+        let last_seq = guard.next_seq.saturating_sub(1);
+        let _ = self.connection_count_tx.send(1);
+        (connection_id, history, last_seq, rx)
+    }
+
+    fn detach(&self, connection_id: u64) {
+        let mut guard = self.state.lock().expect("pty session lock poisoned");
+        if guard.active.as_ref().is_some_and(|c| c.id == connection_id) {
+            guard.active = None;
+            let _ = self.connection_count_tx.send(0);
+        }
     }
 
     pub fn write_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
         let mut writer = self.writer.lock().expect("pty writer lock poisoned");
+        let Some(writer) = writer.as_mut() else {
+            return Ok(());
+        };
         if let Err(err) = writer.write_all(bytes) {
             self.terminated.store(true, Ordering::SeqCst);
             let _ = self.terminated_tx.send(());
@@ -206,6 +373,9 @@ impl PtySession {
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         let master = self.master.lock().expect("pty master lock poisoned");
+        let Some(master) = master.as_ref() else {
+            return Ok(());
+        };
         master
             .resize(PtySize {
                 rows,
@@ -225,56 +395,61 @@ enum PtyClientMessage {
     Resize { cols: u16, rows: u16 },
 }
 
-pub async fn pty_ws_task(mut socket: WebSocket, session: Arc<PtySession>) {
-    let mut output = session.subscribe_output();
-    let mut terminated = session.subscribe_terminated();
+pub async fn pty_ws_task(socket: WebSocket, session: Arc<PtySession>) {
+    let (connection_id, history, mut last_seq, mut output) = session.attach();
+    let (mut sender, mut receiver) = socket.split();
 
-    for chunk in session.snapshot_output_history() {
-        if socket.send(Message::Binary(chunk.into())).await.is_err() {
+    for chunk in history {
+        if sender.send(Message::Binary(chunk)).await.is_err() {
+            session.detach(connection_id);
             return;
         }
     }
 
-    loop {
-        tokio::select! {
-            _ = terminated.recv() => {
-                let _ = socket
-                    .send(Message::Text("{\"type\":\"exited\"}".to_owned().into()))
-                    .await;
-                let _ = socket.send(Message::Close(None)).await;
+    let session_for_incoming = session.clone();
+    let mut incoming_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            if handle_incoming(&session_for_incoming, msg).is_err() {
                 break;
             }
-            incoming = socket.recv() => {
-                let Some(Ok(msg)) = incoming else { break };
-                if handle_incoming(&session, msg).is_err() {
-                    if session.is_terminated() {
-                        let _ = socket
-                            .send(Message::Text("{\"type\":\"exited\"}".to_owned().into()))
-                            .await;
-                        let _ = socket.send(Message::Close(None)).await;
-                    }
+        }
+    });
+
+    let mut terminated_for_outgoing = session.subscribe_terminated();
+    let mut outgoing_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = terminated_for_outgoing.recv() => {
+                    let _ = sender
+                        .send(Message::Text("{\"type\":\"exited\"}".to_owned().into()))
+                        .await;
+                    let _ = sender.send(Message::Close(None)).await;
                     break;
                 }
-            }
-            outgoing = output.recv() => {
-                match outgoing {
-                    Ok(bytes) => {
-                        if socket.send(Message::Binary(bytes.into())).await.is_err() {
-                            break;
-                        }
+                chunk = output.recv() => {
+                    let Some(chunk) = chunk else { break };
+                    if chunk.seq <= last_seq {
+                        continue;
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        for chunk in session.snapshot_output_history() {
-                            if socket.send(Message::Binary(chunk.into())).await.is_err() {
-                                return;
-                            }
-                        }
+                    last_seq = chunk.seq;
+                    if sender.send(Message::Binary(chunk.bytes)).await.is_err() {
+                        break;
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }
+    });
+
+    tokio::select! {
+        _ = &mut incoming_task => {
+            outgoing_task.abort();
+        }
+        _ = &mut outgoing_task => {
+            incoming_task.abort();
+        }
     }
+
+    session.detach(connection_id);
 }
 
 fn handle_incoming(session: &PtySession, msg: Message) -> anyhow::Result<()> {
@@ -304,7 +479,7 @@ mod tests {
     fn output_history_is_bounded() {
         let mut history = OutputHistory::default();
 
-        let chunk = vec![0u8; 128 * 1024];
+        let chunk = Bytes::from(vec![0u8; 128 * 1024]);
         for _ in 0..16 {
             history.push(chunk.clone());
         }

@@ -40,6 +40,35 @@ function encodePtyInputText(encoder: TextEncoder, text: string): Uint8Array {
   return Uint8Array.from(bytes)
 }
 
+function ptyReconnectStorageKey(workspaceId: number, threadId: number): string {
+  return `luban.pty.reconnect.${workspaceId}.${threadId}`
+}
+
+function generateReconnectToken(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getOrCreateReconnectToken(workspaceId: number, threadId: number): string {
+  const key = ptyReconnectStorageKey(workspaceId, threadId)
+  try {
+    const existing = window.localStorage.getItem(key)
+    if (existing && existing.trim().length > 0) return existing.trim()
+  } catch {
+    // Ignore storage errors (private mode, blocked, etc.).
+  }
+
+  const token = generateReconnectToken()
+  try {
+    window.localStorage.setItem(key, token)
+  } catch {
+    // Ignore storage errors.
+  }
+  return token
+}
+
 function terminalFontFamily(fontName: string): string {
   const escaped = escapeCssFontName(fontName.trim() || "Geist Mono")
   return `"${escaped}", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace`
@@ -434,7 +463,7 @@ export function PtyTerminal() {
     let pendingInput: Uint8Array[] = []
     let pendingReconnectTimer: number | null = null
     let pendingAtlasRefresh: number | null = null
-    let reconnectAttempt = 0
+    let reconnectAttempts = 0
     const maxPendingInput = 256
 
     function scheduleWebglAtlasRefresh() {
@@ -771,9 +800,12 @@ export function PtyTerminal() {
     if (isMock) {
       writeMockBannerIfNeeded()
     } else {
+      const reconnectToken = getOrCreateReconnectToken(activeWorkspaceId, ptyThreadId)
+
       const connect = () => {
         const url = new URL(`/api/pty/${activeWorkspaceId}/${ptyThreadId}`, window.location.href)
         url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+        url.searchParams.set("reconnect", reconnectToken)
 
         const socket = new WebSocket(url.toString())
         socket.binaryType = "arraybuffer"
@@ -788,7 +820,8 @@ export function PtyTerminal() {
 
         socket.onopen = () => {
           if (disposed) return
-          reconnectAttempt = 0
+          reconnectAttempts = 0
+          term.clear()
           if (pendingInput.length > 0) {
             for (const bytes of pendingInput) socket.send(bytes)
             pendingInput = []
@@ -800,14 +833,17 @@ export function PtyTerminal() {
           if (disposed) return
           if (ws !== socket) return
           if (pendingReconnectTimer != null) return
-          const exp = Math.min(reconnectAttempt, 6)
-          const delay = Math.min(5_000, 150 * 2 ** exp) + Math.floor(Math.random() * 100)
-          reconnectAttempt += 1
+          const baseDelayMs = 250
+          const maxDelayMs = 5000
+          const exponent = Math.min(6, reconnectAttempts)
+          const jitterMs = Math.floor(Math.random() * 250)
+          const delayMs = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, exponent)) + jitterMs
+          reconnectAttempts += 1
           pendingReconnectTimer = window.setTimeout(() => {
             pendingReconnectTimer = null
             if (disposed) return
             connect()
-          }, delay)
+          }, delayMs)
         }
       }
 

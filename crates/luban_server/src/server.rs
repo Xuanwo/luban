@@ -428,8 +428,14 @@ async fn ws_pty(
     ws: WebSocketUpgrade,
     State(state): State<AppStateHolder>,
     Path((workspace_id, thread_id)): Path<(u64, u64)>,
+    Query(query): Query<PtyQuery>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_pty_task(socket, state, workspace_id, thread_id))
+    ws.on_upgrade(move |socket| ws_pty_task(socket, state, workspace_id, thread_id, query))
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct PtyQuery {
+    reconnect: Option<String>,
 }
 
 async fn ws_pty_task(
@@ -437,6 +443,7 @@ async fn ws_pty_task(
     state: AppStateHolder,
     workspace_id: u64,
     thread_id: u64,
+    query: PtyQuery,
 ) {
     let cwd = match state
         .engine
@@ -447,7 +454,15 @@ async fn ws_pty_task(
         _ => std::env::current_dir().unwrap_or_default(),
     };
 
-    let session = match state.pty.get_or_create(workspace_id, thread_id, cwd) {
+    let reconnect = query
+        .reconnect
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("thread-{thread_id}"));
+
+    let session = match state.pty.get_or_create(workspace_id, reconnect, cwd) {
         Ok(session) => session,
         Err(err) => {
             tracing::error!(error = %err, "failed to create pty session");
