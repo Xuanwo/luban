@@ -276,17 +276,19 @@ fn build_web(
     git_tag: &str,
     build_time: &str,
 ) -> Result<()> {
-    if !ProcessCommand::new("pnpm").arg("--version").output().is_ok() {
+    let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
+
+    if !ProcessCommand::new(pnpm).arg("--version").output().is_ok() {
         anyhow::bail!("pnpm not found; install pnpm to build the web UI");
     }
 
-    let mut install = ProcessCommand::new("pnpm");
+    let mut install = ProcessCommand::new(pnpm);
     install.current_dir("web").arg("install");
     run_cmd(install, "pnpm install")?;
 
     let web_version = resolve_web_version()?;
     let build_script = if profile == "release" { "build" } else { "build" };
-    let mut build = ProcessCommand::new("pnpm");
+    let mut build = ProcessCommand::new(pnpm);
     build
         .current_dir("web")
         .arg(build_script)
