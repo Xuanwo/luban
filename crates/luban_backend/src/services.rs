@@ -58,7 +58,11 @@ fn resolve_prompt_attachments(
         .collect()
 }
 
-fn format_amp_prompt(prompt: &str, attachments: &[PromptAttachment]) -> String {
+fn format_prompt(
+    prompt: &str,
+    attachments: &[PromptAttachment],
+    attachment_path_prefix: &str,
+) -> String {
     if attachments.is_empty() {
         return prompt.to_owned();
     }
@@ -68,46 +72,30 @@ fn format_amp_prompt(prompt: &str, attachments: &[PromptAttachment]) -> String {
     out.push_str("\n\nAttached files:\n");
     for attachment in attachments {
         out.push_str("- ");
-        if attachment.name.trim().is_empty() {
+        let name = attachment.name.trim();
+        if name.is_empty() {
             out.push_str(match attachment.kind {
                 AttachmentKind::Image => "image",
                 AttachmentKind::Text => "text",
                 AttachmentKind::File => "file",
             });
         } else {
-            out.push_str(attachment.name.trim());
+            out.push_str(name);
         }
-        out.push_str(": @");
+        out.push_str(": ");
+        out.push_str(attachment_path_prefix);
         out.push_str(&attachment.path.to_string_lossy());
         out.push('\n');
     }
     out
 }
 
-fn format_codex_prompt(prompt: &str, attachments: &[PromptAttachment]) -> String {
-    if attachments.is_empty() {
-        return prompt.to_owned();
-    }
+fn format_amp_prompt(prompt: &str, attachments: &[PromptAttachment]) -> String {
+    format_prompt(prompt, attachments, "@")
+}
 
-    let mut out = String::with_capacity(prompt.len() + attachments.len() * 96);
-    out.push_str(prompt.trim_end());
-    out.push_str("\n\nAttached files:\n");
-    for attachment in attachments {
-        out.push_str("- ");
-        if attachment.name.trim().is_empty() {
-            out.push_str(match attachment.kind {
-                AttachmentKind::Image => "image",
-                AttachmentKind::Text => "text",
-                AttachmentKind::File => "file",
-            });
-        } else {
-            out.push_str(attachment.name.trim());
-        }
-        out.push_str(": ");
-        out.push_str(&attachment.path.to_string_lossy());
-        out.push('\n');
-    }
-    out
+fn format_codex_prompt(prompt: &str, attachments: &[PromptAttachment]) -> String {
+    format_prompt(prompt, attachments, "")
 }
 
 fn contains_attempt_fraction(text: &str) -> bool {
