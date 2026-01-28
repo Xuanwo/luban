@@ -3714,10 +3714,7 @@ mod tests {
     fn task_prompt_templates_roundtrip_via_files() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-task-prompts-{}-{}",
             std::process::id(),
@@ -3759,10 +3756,7 @@ mod tests {
     fn codex_config_tree_is_shallow_and_codex_config_list_dir_pages() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-codex-config-tree-{}-{}",
             std::process::id(),
@@ -3856,10 +3850,7 @@ mod tests {
 
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-codex-config-symlink-{}-{}",
             std::process::id(),
@@ -3928,10 +3919,7 @@ mod tests {
     fn amp_config_tree_is_shallow_and_amp_config_list_dir_supports_root_listing() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-amp-config-tree-{}-{}",
             std::process::id(),
@@ -4044,10 +4032,7 @@ mod tests {
 
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-amp-config-symlink-{}-{}",
             std::process::id(),
@@ -4116,10 +4101,7 @@ mod tests {
     fn claude_config_tree_is_shallow_and_claude_config_list_dir_pages() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-claude-config-tree-{}-{}",
             std::process::id(),
@@ -4209,10 +4191,7 @@ mod tests {
 
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-claude-config-symlink-{}-{}",
             std::process::id(),
@@ -4283,10 +4262,7 @@ mod tests {
     fn amp_mode_is_detected_from_config_files() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-amp-mode-config-{}-{}",
             std::process::id(),
@@ -4320,10 +4296,7 @@ mod tests {
     fn system_prompt_templates_roundtrip_via_files() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let root = std::env::temp_dir().join(format!(
             "luban-system-prompts-{}-{}",
             std::process::id(),
@@ -4365,10 +4338,7 @@ mod tests {
     fn codex_runner_reports_missing_executable() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-missing-codex-check-{}-{}",
             std::process::id(),
@@ -4421,10 +4391,7 @@ mod tests {
     fn codex_turn_errors_when_no_final_message_is_produced() {
         let _guard = lock_env();
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-no-final-message-{}-{}",
             std::process::id(),
@@ -4547,10 +4514,7 @@ mod tests {
         let _guard = lock_env();
 
         let prev = std::env::var_os(paths::LUBAN_ROOT_ENV);
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir =
             std::env::temp_dir().join(format!("luban-root-env-{}-{}", std::process::id(), unique));
         std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
@@ -4602,10 +4566,7 @@ mod tests {
 
     #[test]
     fn worktree_remove_force_allows_dirty_worktree() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-worktree-remove-force-{}-{}",
             std::process::id(),
@@ -4694,10 +4655,7 @@ mod tests {
 
     #[test]
     fn load_app_state_archives_missing_worktrees() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-load-archives-missing-worktree-{}-{}",
             std::process::id(),
@@ -4828,10 +4786,7 @@ mod tests {
 
     #[test]
     fn create_workspace_bases_on_origin_main_and_does_not_track_upstream() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-create-workspace-origin-main-{}-{}",
             std::process::id(),
@@ -4948,10 +4903,7 @@ mod tests {
 
     #[test]
     fn context_files_are_content_addressed_and_preserve_display_name() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-context-file-name-{}-{}",
             std::process::id(),
@@ -4996,10 +4948,7 @@ mod tests {
 
     #[test]
     fn context_images_are_content_addressed() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-context-image-name-{}-{}",
             std::process::id(),
@@ -5046,10 +4995,7 @@ mod tests {
 
     #[test]
     fn context_images_store_thumbnail_alongside_original() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be valid")
-            .as_nanos();
+        let unique = unix_epoch_nanos_now();
         let base_dir = std::env::temp_dir().join(format!(
             "luban-context-image-thumb-{}-{}",
             std::process::id(),
