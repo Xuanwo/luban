@@ -118,6 +118,12 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
   }
 
   useEffect(() => {
+    if (newlyCreatedWorkspaceId == null) return
+    const t = window.setTimeout(() => setNewlyCreatedWorkspaceId(null), 1500)
+    return () => window.clearTimeout(t)
+  }, [newlyCreatedWorkspaceId])
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<OpenSettingsDetail | null>).detail
       setSettingsInitialSectionId(detail?.sectionId ?? "agent")
@@ -258,8 +264,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
 
       setNewlyCreatedWorkspaceId(created)
       void openWorkspace(created).then(() => focusChatInput())
-      const t = window.setTimeout(() => setNewlyCreatedWorkspaceId(null), 1500)
-      return () => window.clearTimeout(t)
     }
 
     const running = app.projects.find((p) => p.create_workspace_status === "running")

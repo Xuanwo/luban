@@ -128,6 +128,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
       .first()
       .locator("..")
       .locator("..")
+      .locator("..")
     await expect(row.getByTestId("worktree-active-underline")).toBeVisible({ timeout: 10_000 })
   }
 
@@ -152,6 +153,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
       .first()
       .locator("..")
       .locator("..")
+      .locator("..")
     await expect(row.getByTestId("worktree-active-underline")).toBeVisible({ timeout: 10_000 })
   }
 
@@ -159,10 +161,38 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   expect(sawEmptyState).toBe(false)
 })
 
+test("new worktree highlight clears after a short delay", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const snap = await fetchAppSnapshot(page)
+  const projectDir =
+    snap.projects.find((p: any) => p.name === "e2e-project")?.path ??
+    requireEnv("LUBAN_E2E_PROJECT_DIR")
+
+  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  await projectToggle.waitFor({ timeout: 15_000 })
+  const projectContainer = projectToggle.locator("..").locator("..")
+  const branchEntries = projectContainer.getByTestId("worktree-branch-name")
+  const beforeCount = await branchEntries.count()
+
+  await sendWsAction(page, { type: "create_workspace", project_id: projectDir })
+  await expect
+    .poll(async () => await branchEntries.count(), { timeout: 90_000 })
+    .toBe(beforeCount + 1)
+
+  const newRow = branchEntries.last().locator("..").locator("..").locator("..")
+  await expect
+    .poll(async () => ((await newRow.getAttribute("class")) ?? "").includes("ring-1"), { timeout: 10_000 })
+    .toBe(true)
+  await expect
+    .poll(async () => ((await newRow.getAttribute("class")) ?? "").includes("ring-1"), { timeout: 10_000 })
+    .toBe(false)
+})
+
 test("main worktree home icon is only visible on hover", async ({ page }) => {
   await ensureWorkspace(page)
 
-  const row = page.getByTestId("worktree-branch-name").first().locator("..").locator("..")
+  const row = page.getByTestId("worktree-branch-name").first().locator("..").locator("..").locator("..")
   const icon = row.getByTestId("worktree-home-icon")
   await expect(icon).toHaveCount(1)
 
@@ -298,7 +328,7 @@ test("running status spinner stays centered", async ({ page }) => {
     attachments: [],
   })
 
-  const row = page.getByTestId("worktree-branch-name").first().locator("..").locator("..")
+  const row = page.getByTestId("worktree-branch-name").first().locator("..").locator("..").locator("..")
   const spinner = row.locator("svg.animate-spin").first()
   await spinner.waitFor({ state: "visible", timeout: 10_000 })
 
