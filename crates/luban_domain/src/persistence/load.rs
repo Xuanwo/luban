@@ -11,6 +11,22 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
+fn normalize_thread_tabs(
+    active: WorkspaceThreadId,
+    mut open_tabs: Vec<WorkspaceThreadId>,
+    mut archived_tabs: Vec<WorkspaceThreadId>,
+) -> (Vec<WorkspaceThreadId>, Vec<WorkspaceThreadId>) {
+    archived_tabs.retain(|id| !open_tabs.contains(id));
+    if open_tabs.is_empty() {
+        open_tabs.push(active);
+    }
+    if !open_tabs.contains(&active) {
+        open_tabs.push(active);
+    }
+    archived_tabs.retain(|id| *id != active);
+    (open_tabs, archived_tabs)
+}
+
 pub(crate) fn apply_persisted_app_state(
     state: &mut AppState,
     persisted: PersistedAppState,
@@ -121,7 +137,7 @@ pub(crate) fn apply_persisted_app_state(
             .map(WorkspaceThreadId)
             .unwrap_or(WorkspaceThreadId(1));
 
-        let mut open_tabs = persisted
+        let open_tabs = persisted
             .workspace_open_tabs
             .get(&workspace_id.0)
             .cloned()
@@ -129,7 +145,7 @@ pub(crate) fn apply_persisted_app_state(
             .into_iter()
             .map(WorkspaceThreadId)
             .collect::<Vec<_>>();
-        let mut archived_tabs = persisted
+        let archived_tabs = persisted
             .workspace_archived_tabs
             .get(&workspace_id.0)
             .cloned()
@@ -137,14 +153,7 @@ pub(crate) fn apply_persisted_app_state(
             .into_iter()
             .map(WorkspaceThreadId)
             .collect::<Vec<_>>();
-        archived_tabs.retain(|id| !open_tabs.contains(id));
-        if open_tabs.is_empty() {
-            open_tabs.push(active);
-        }
-        if !open_tabs.contains(&active) {
-            open_tabs.push(active);
-        }
-        archived_tabs.retain(|id| *id != active);
+        let (open_tabs, archived_tabs) = normalize_thread_tabs(active, open_tabs, archived_tabs);
 
         let next_thread_id = persisted
             .workspace_next_thread_id
@@ -620,5 +629,26 @@ mod tests {
                 .conversations
                 .contains_key(&(WorkspaceId(workspace_id), WorkspaceThreadId(2)))
         );
+    }
+
+    #[test]
+    fn normalize_thread_tabs_keeps_active_open_and_removes_from_archived() {
+        let active = WorkspaceThreadId(2);
+        let (open, archived) =
+            normalize_thread_tabs(active, vec![WorkspaceThreadId(1)], vec![active]);
+        assert!(open.contains(&active));
+        assert!(!archived.contains(&active));
+    }
+
+    #[test]
+    fn normalize_thread_tabs_removes_archived_tabs_that_are_open() {
+        let active = WorkspaceThreadId(1);
+        let (open, archived) = normalize_thread_tabs(
+            active,
+            vec![WorkspaceThreadId(2)],
+            vec![WorkspaceThreadId(2)],
+        );
+        assert_eq!(open, vec![WorkspaceThreadId(2), active]);
+        assert!(archived.is_empty());
     }
 }
