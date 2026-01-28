@@ -676,46 +676,11 @@ function ThemePreviewCard({
   )
 }
 
-const mockLocalFonts = [
-  "Inter",
-  "SF Pro",
-  "SF Pro Display",
-  "Helvetica Neue",
-  "Arial",
-  "Roboto",
-  "Open Sans",
-  "Lato",
-  "Montserrat",
-  "Poppins",
-  "Nunito",
-  "Source Sans Pro",
-  "Segoe UI",
-  "Georgia",
-  "Source Serif Pro",
-  "Merriweather",
-  "Lora",
-]
 
-const mockMonoFonts = [
-  "Geist Mono",
-  "JetBrains Mono",
-  "Fira Code",
-  "SF Mono",
-  "Menlo",
-  "Monaco",
-  "Consolas",
-  "Source Code Pro",
-  "IBM Plex Mono",
-  "Cascadia Code",
-  "Roboto Mono",
-  "Ubuntu Mono",
-  "Inconsolata",
-]
 
-function InlineFontSelect({
+function InlineFontInput({
   value,
   onChange,
-  fonts,
   mono,
   label,
   vertical,
@@ -723,72 +688,28 @@ function InlineFontSelect({
 }: {
   value: string
   onChange: (value: string) => void
-  fonts: string[]
   mono?: boolean
   label: string
   vertical?: boolean
   testId?: string
 }) {
-  const [open, setOpen] = useState(false)
-
   return (
     <div className={cn("relative", vertical ? "flex flex-col gap-1" : "inline-flex items-center gap-1.5")}>
       <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">{label}</span>
-      <button
+      <input
         data-testid={testId}
-        onClick={() => setOpen((prev) => !prev)}
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Enter font name..."
         className={cn(
-          "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all",
-          "bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30",
-          "shadow-sm hover:shadow",
-          open && "ring-2 ring-primary/40 bg-primary/25",
+          "px-2 py-1 rounded-md text-xs transition-all w-32",
+          "bg-muted border border-border",
+          "focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary",
+          mono ? "font-mono" : "",
         )}
-      >
-        <span
-          className={mono ? "font-mono" : ""}
-          style={{ fontFamily: `"${value}", ${mono ? "monospace" : "sans-serif"}` }}
-        >
-          {value}
-        </span>
-        <ChevronDown className={cn("w-3 h-3 transition-transform", open && "rotate-180")} />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            data-testid={testId ? `${testId}-menu` : undefined}
-            className="absolute top-full left-0 mt-1.5 z-50 bg-popover border border-border rounded-lg shadow-xl max-h-52 w-44 overflow-y-auto"
-          >
-            <div className="p-1">
-              {fonts.map((font) => {
-                const isSelected = value === font
-                return (
-                  <button
-                    key={font}
-                    onClick={() => {
-                      onChange(font)
-                      setOpen(false)
-                    }}
-                    className={cn(
-                      "w-full flex items-center justify-between px-2.5 py-1.5 text-left transition-colors text-xs rounded-md",
-                      isSelected ? "bg-primary/10 text-primary" : "hover:bg-accent",
-                    )}
-                  >
-                    <span
-                      className={mono ? "font-mono" : ""}
-                      style={{ fontFamily: `"${font}", ${mono ? "monospace" : "sans-serif"}` }}
-                    >
-                      {font}
-                    </span>
-                    {isSelected && <Check className="w-3 h-3" />}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
+        style={{ fontFamily: `"${value}", ${mono ? "monospace" : "sans-serif"}` }}
+      />
     </div>
   )
 }
@@ -823,12 +744,11 @@ function WorkspacePreviewWithFonts({
 
           <div className="flex-1 p-3 space-y-2">
             <div className="mb-3 pointer-events-auto">
-              <InlineFontSelect
+              <InlineFontInput
                 testId="settings-ui-font"
                 label="UI Font"
                 value={uiFont}
                 onChange={setUiFont}
-                fonts={mockLocalFonts}
                 vertical
               />
             </div>
@@ -859,12 +779,11 @@ function WorkspacePreviewWithFonts({
             <div className="space-y-4">
               <div className="space-y-2">
                 <div className="pointer-events-auto">
-                  <InlineFontSelect
+                  <InlineFontInput
                     testId="settings-chat-font"
                     label="Chat Font"
                     value={chatFont}
                     onChange={setChatFont}
-                    fonts={mockLocalFonts}
                   />
                 </div>
                 <div className="bg-secondary/40 rounded-lg p-3" style={{ fontFamily: `"${chatFont}", sans-serif` }}>
@@ -874,12 +793,11 @@ function WorkspacePreviewWithFonts({
 
               <div className="space-y-2">
                 <div className="pointer-events-auto">
-                  <InlineFontSelect
+                  <InlineFontInput
                     testId="settings-code-font"
                     label="Code Font"
                     value={monoFont}
                     onChange={setMonoFont}
-                    fonts={mockMonoFonts}
                     mono
                   />
                 </div>
@@ -910,12 +828,11 @@ function WorkspacePreviewWithFonts({
           </div>
           <div className="flex-1 bg-secondary/40 flex flex-col">
             <div className="px-3 py-2 pointer-events-auto">
-              <InlineFontSelect
+              <InlineFontInput
                 testId="settings-terminal-font"
                 label="Terminal Font"
                 value={terminalFont}
                 onChange={setTerminalFont}
-                fonts={mockMonoFonts}
                 mono
                 vertical
               />
