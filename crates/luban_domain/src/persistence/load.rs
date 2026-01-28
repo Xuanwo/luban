@@ -111,8 +111,82 @@ pub(crate) fn apply_persisted_app_state(
         ),
     };
     state.last_open_workspace_id = persisted.last_open_workspace_id.map(WorkspaceId);
-    state.open_button_selection =
-        normalize_optional_string(persisted.open_button_selection.as_deref(), 1024);
+    state.open_button_selection = persisted
+        .open_button_selection
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| s.len() <= 1024)
+        .map(ToOwned::to_owned);
+    let valid_project_ids: HashSet<String> = state
+        .projects
+        .iter()
+        .map(|p| p.path.to_string_lossy().to_string())
+        .collect();
+    state.sidebar_project_order = {
+        let mut out = Vec::with_capacity(persisted.sidebar_project_order.len().min(1024));
+        let mut seen = HashSet::<String>::new();
+        for raw in persisted.sidebar_project_order {
+            if out.len() >= 1024 {
+                break;
+            }
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.len() > 4096 {
+                continue;
+            }
+            if !valid_project_ids.contains(trimmed) {
+                continue;
+            }
+            let key = trimmed.to_owned();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            out.push(key);
+        }
+        out
+    };
+    state.sidebar_worktree_order = {
+        let mut out = HashMap::new();
+        for (project_id, workspace_ids) in persisted.sidebar_worktree_order {
+            if out.len() >= 1024 {
+                break;
+            }
+            let project_id = project_id.trim();
+            if project_id.is_empty() || project_id.len() > 4096 {
+                continue;
+            }
+            if !valid_project_ids.contains(project_id) {
+                continue;
+            }
+            let Some(project) = state
+                .projects
+                .iter()
+                .find(|p| p.path.to_string_lossy().as_ref() == project_id)
+            else {
+                continue;
+            };
+            let valid: HashSet<u64> = project.workspaces.iter().map(|w| w.id.0).collect();
+            let mut seen = HashSet::<u64>::new();
+            let mut ids = Vec::with_capacity(workspace_ids.len().min(4096));
+            for raw in workspace_ids {
+                if ids.len() >= 4096 {
+                    break;
+                }
+                if !valid.contains(&raw) {
+                    continue;
+                }
+                if !seen.insert(raw) {
+                    continue;
+                }
+                ids.push(WorkspaceId(raw));
+            }
+            if ids.is_empty() {
+                continue;
+            }
+            out.insert(project_id.to_owned(), ids);
+        }
+        out
+    };
     state.workspace_tabs = HashMap::new();
     state.conversations = HashMap::new();
     state.workspace_unread_completions = persisted
@@ -572,6 +646,8 @@ mod tests {
             agent_amp_enabled: None,
             last_open_workspace_id: None,
             open_button_selection: None,
+            sidebar_project_order: Vec::new(),
+            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::from([(workspace_id, 2)]),
             workspace_open_tabs: HashMap::from([(workspace_id, vec![1, 2])]),
             workspace_archived_tabs: HashMap::new(),

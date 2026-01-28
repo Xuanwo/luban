@@ -35,6 +35,10 @@ pub struct UiSnapshot {
     pub active_thread_id: Option<WorkspaceThreadId>,
     #[serde(default)]
     pub open_button_selection: Option<String>,
+    #[serde(default)]
+    pub sidebar_project_order: Vec<ProjectId>,
+    #[serde(default)]
+    pub sidebar_worktree_order: std::collections::HashMap<ProjectId, Vec<WorkspaceId>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -767,6 +771,15 @@ pub enum ClientAction {
     OpenButtonSelectionChanged {
         selection: String,
     },
+    SidebarProjectOrderChanged {
+        #[serde(default)]
+        project_ids: Vec<ProjectId>,
+    },
+    SidebarWorktreeOrderChanged {
+        project_id: ProjectId,
+        #[serde(default)]
+        workspace_ids: Vec<WorkspaceId>,
+    },
     AppearanceThemeChanged {
         theme: AppearanceTheme,
     },
@@ -839,7 +852,7 @@ pub enum ClientAction {
 pub enum ServerEvent {
     AppChanged {
         rev: u64,
-        snapshot: AppSnapshot,
+        snapshot: Box<AppSnapshot>,
     },
     WorkspaceThreadsChanged {
         workspace_id: WorkspaceId,
@@ -848,7 +861,7 @@ pub enum ServerEvent {
         threads: Vec<ThreadMeta>,
     },
     ConversationChanged {
-        snapshot: ConversationSnapshot,
+        snapshot: Box<ConversationSnapshot>,
     },
     Toast {
         message: String,

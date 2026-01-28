@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
 import type { SidebarProjectVm, SidebarWorktreeVm } from "@/lib/sidebar-view-model"
 import { buildSidebarProjects } from "@/lib/sidebar-view-model"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { NewTaskModal } from "./new-task-modal"
 import { FeedbackModal } from "./feedback-modal"
@@ -89,6 +89,8 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
     ensureMainWorkspace,
     pickProjectPath,
     deleteProject,
+    setSidebarProjectOrder,
+    setSidebarWorktreeOrder,
   } = useLuban()
 
   const pendingCreateRef = useRef<{ projectId: ProjectId; existingWorkspaceIds: Set<number> } | null>(null)
@@ -145,20 +147,16 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
     })
   }
 
-  const [projectOrder, setProjectOrder] = useState<ProjectId[]>(() => {
-    if (typeof window === "undefined") return []
-    return loadJson<ProjectId[]>(PROJECT_ORDER_KEY) ?? []
-  })
-
-  const [worktreeOrder, setWorktreeOrder] = useState<Map<ProjectId, number[]>>(() => {
-    if (typeof window === "undefined") return new Map()
-    const saved = loadJson<Record<ProjectId, number[]>>(WORKTREE_ORDER_KEY)
-    return saved ? new Map(Object.entries(saved) as [ProjectId, number[]][]) : new Map()
-  })
+  const projectOrder = app?.ui?.sidebar_project_order ?? []
+  const worktreeOrder = useMemo(() => {
+    const record = app?.ui?.sidebar_worktree_order ?? {}
+    return new Map(Object.entries(record) as [ProjectId, number[]][])
+  }, [app?.ui?.sidebar_worktree_order])
 
   const [activeProjectDragId, setActiveProjectDragId] = useState<UniqueIdentifier | null>(null)
   const [activeWorktreeDragId, setActiveWorktreeDragId] = useState<UniqueIdentifier | null>(null)
   const [draggingProjectId, setDraggingProjectId] = useState<ProjectId | null>(null)
+  const migratedSidebarOrderRef = useRef(false)
 
   const projectSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -174,25 +172,13 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
     setActiveProjectDragId(null)
 
     if (over && active.id !== over.id) {
-      setProjectOrder((prev) => {
-        const currentOrder = prev.length > 0 ? prev : projects.map((p) => p.id)
-        const oldIndex = currentOrder.indexOf(active.id as ProjectId)
-        const newIndex = currentOrder.indexOf(over.id as ProjectId)
-        if (oldIndex === -1 || newIndex === -1) {
-          const projectIds = projects.map((p) => p.id)
-          const oldIdx = projectIds.indexOf(active.id as ProjectId)
-          const newIdx = projectIds.indexOf(over.id as ProjectId)
-          if (oldIdx !== -1 && newIdx !== -1) {
-            const newOrder = arrayMove(projectIds, oldIdx, newIdx)
-            saveJson(PROJECT_ORDER_KEY, newOrder)
-            return newOrder
-          }
-          return prev
-        }
-        const newOrder = arrayMove(currentOrder, oldIndex, newIndex)
-        saveJson(PROJECT_ORDER_KEY, newOrder)
-        return newOrder
-      })
+      const currentOrder = projects.map((p) => p.id)
+      const oldIndex = currentOrder.indexOf(active.id as ProjectId)
+      const newIndex = currentOrder.indexOf(over.id as ProjectId)
+      if (oldIndex < 0 || newIndex < 0) return
+      const nextOrder = arrayMove(currentOrder, oldIndex, newIndex)
+      saveJson(PROJECT_ORDER_KEY, nextOrder)
+      setSidebarProjectOrder(nextOrder)
     }
   }
 
@@ -211,31 +197,59 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
     setDraggingProjectId(null)
 
     if (over && active.id !== over.id) {
-      setWorktreeOrder((prev) => {
-        const currentOrder = prev.get(projectId) ?? worktrees.map((w) => w.workspaceId)
-        const oldIndex = currentOrder.indexOf(active.id as number)
-        const newIndex = currentOrder.indexOf(over.id as number)
-        if (oldIndex === -1 || newIndex === -1) {
-          const worktreeIds = worktrees.map((w) => w.workspaceId)
-          const oldIdx = worktreeIds.indexOf(active.id as number)
-          const newIdx = worktreeIds.indexOf(over.id as number)
-          if (oldIdx !== -1 && newIdx !== -1) {
-            const newOrder = arrayMove(worktreeIds, oldIdx, newIdx)
-            const next = new Map(prev)
-            next.set(projectId, newOrder)
-            saveJson(WORKTREE_ORDER_KEY, Object.fromEntries(next))
-            return next
-          }
-          return prev
-        }
-        const newOrder = arrayMove(currentOrder, oldIndex, newIndex)
-        const next = new Map(prev)
-        next.set(projectId, newOrder)
-        saveJson(WORKTREE_ORDER_KEY, Object.fromEntries(next))
-        return next
-      })
+      const currentOrder = worktrees.map((w) => w.workspaceId)
+      const oldIndex = currentOrder.indexOf(active.id as number)
+      const newIndex = currentOrder.indexOf(over.id as number)
+      if (oldIndex < 0 || newIndex < 0) return
+      const nextOrder = arrayMove(currentOrder, oldIndex, newIndex)
+      const saved = loadJson<Record<ProjectId, number[]>>(WORKTREE_ORDER_KEY) ?? {}
+      saved[projectId] = nextOrder
+      saveJson(WORKTREE_ORDER_KEY, saved)
+      setSidebarWorktreeOrder(projectId, nextOrder)
     }
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!app) return
+    if (migratedSidebarOrderRef.current) return
+    migratedSidebarOrderRef.current = true
+
+    const serverProjectOrder = app.ui.sidebar_project_order ?? []
+    const serverWorktreeOrder = app.ui.sidebar_worktree_order ?? {}
+    if (serverProjectOrder.length > 0 || Object.keys(serverWorktreeOrder).length > 0) {
+      return
+    }
+
+    const localProjectOrder = loadJson<ProjectId[]>(PROJECT_ORDER_KEY) ?? []
+    const localWorktreeOrder = loadJson<Record<ProjectId, number[]>>(WORKTREE_ORDER_KEY) ?? {}
+    if (localProjectOrder.length === 0 && Object.keys(localWorktreeOrder).length === 0) {
+      return
+    }
+
+    const projectIds = app.projects.map((p) => p.id)
+    const normalizedProjectOrder = [
+      ...localProjectOrder.filter((id) => projectIds.includes(id)),
+      ...projectIds.filter((id) => !localProjectOrder.includes(id)),
+    ]
+    if (normalizedProjectOrder.length > 0) {
+      setSidebarProjectOrder(normalizedProjectOrder)
+    }
+
+    for (const project of app.projects) {
+      const worktreeIds = project.workspaces.filter((w) => w.status === "active").map((w) => w.id)
+      if (worktreeIds.length === 0) continue
+      const localOrder = localWorktreeOrder[project.id] ?? []
+      const normalizedOrder = [
+        ...localOrder.filter((id) => worktreeIds.includes(id)),
+        ...worktreeIds.filter((id) => !localOrder.includes(id)),
+      ]
+      if (normalizedOrder.length > 0) {
+        setSidebarWorktreeOrder(project.id, normalizedOrder)
+      }
+    }
+
+  }, [app?.rev, setSidebarProjectOrder, setSidebarWorktreeOrder])
 
   useEffect(() => {
     if (newlyCreatedWorkspaceId == null) return

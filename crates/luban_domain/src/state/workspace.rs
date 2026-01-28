@@ -57,6 +57,8 @@ pub struct AppState {
     pub dashboard_preview_workspace_id: Option<WorkspaceId>,
     pub last_open_workspace_id: Option<WorkspaceId>,
     pub open_button_selection: Option<String>,
+    pub sidebar_project_order: Vec<String>,
+    pub sidebar_worktree_order: HashMap<String, Vec<WorkspaceId>>,
     pub last_error: Option<String>,
     pub workspace_chat_scroll_y10: HashMap<(WorkspaceId, WorkspaceThreadId), i32>,
     pub workspace_chat_scroll_anchor: HashMap<(WorkspaceId, WorkspaceThreadId), ChatScrollAnchor>,

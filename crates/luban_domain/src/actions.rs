@@ -318,6 +318,14 @@ pub enum Action {
         anchor: ChatScrollAnchor,
     },
 
+    SidebarProjectOrderChanged {
+        project_ids: Vec<String>,
+    },
+    SidebarWorktreeOrderChanged {
+        project_id: String,
+        workspace_ids: Vec<WorkspaceId>,
+    },
+
     OpenButtonSelectionChanged {
         selection: String,
     },

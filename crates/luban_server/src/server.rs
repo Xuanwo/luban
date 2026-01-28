@@ -417,7 +417,7 @@ async fn send_app_snapshot_if_needed(
         rev: current_rev,
         event: Box::new(luban_api::ServerEvent::AppChanged {
             rev: current_rev,
-            snapshot,
+            snapshot: Box::new(snapshot),
         }),
     };
     socket.send(json_text(&msg)).await?;

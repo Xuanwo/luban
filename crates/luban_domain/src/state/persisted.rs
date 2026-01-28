@@ -20,6 +20,8 @@ pub struct PersistedAppState {
     pub agent_amp_enabled: Option<bool>,
     pub last_open_workspace_id: Option<u64>,
     pub open_button_selection: Option<String>,
+    pub sidebar_project_order: Vec<String>,
+    pub sidebar_worktree_order: HashMap<String, Vec<u64>>,
     pub workspace_active_thread_id: HashMap<u64, u64>,
     pub workspace_open_tabs: HashMap<u64, Vec<u64>>,
     pub workspace_archived_tabs: HashMap<u64, Vec<u64>>,

@@ -752,6 +752,19 @@ export function mockDispatchAction(args: {
     return
   }
 
+  if (a.type === "sidebar_project_order_changed") {
+    state.app.ui.sidebar_project_order = a.project_ids
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
+  if (a.type === "sidebar_worktree_order_changed") {
+    if (!state.app.ui.sidebar_worktree_order) state.app.ui.sidebar_worktree_order = {}
+    state.app.ui.sidebar_worktree_order[a.project_id] = a.workspace_ids
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "open_button_selection_changed") {
     state.app.ui.open_button_selection = a.selection
     emitAppChanged({ state, onEvent: args.onEvent })

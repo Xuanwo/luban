@@ -62,6 +62,8 @@ export type UiSnapshot = {
   active_workspace_id?: WorkspaceId
   active_thread_id?: WorkspaceThreadId
   open_button_selection?: string
+  sidebar_project_order?: ProjectId[]
+  sidebar_worktree_order?: Record<ProjectId, WorkspaceId[]>
 }
 
 export type ProjectSnapshot = {
@@ -416,6 +418,8 @@ export type ClientAction =
       to_index: number
     }
   | { type: "open_button_selection_changed"; selection: string }
+  | { type: "sidebar_project_order_changed"; project_ids: ProjectId[] }
+  | { type: "sidebar_worktree_order_changed"; project_id: ProjectId; workspace_ids: WorkspaceId[] }
   | { type: "appearance_theme_changed"; theme: AppearanceTheme }
   | { type: "appearance_fonts_changed"; fonts: AppearanceFontsSnapshot }
   | { type: "appearance_global_zoom_changed"; zoom: number }

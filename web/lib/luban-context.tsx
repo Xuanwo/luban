@@ -133,6 +133,8 @@ type LubanContextValue = {
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
+  setSidebarProjectOrder: (projectIds: ProjectId[]) => void
+  setSidebarWorktreeOrder: (projectId: ProjectId, workspaceIds: WorkspaceId[]) => void
 
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
@@ -373,6 +375,8 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setAppearanceFonts: actions.setAppearanceFonts,
     setGlobalZoom: actions.setGlobalZoom,
     setOpenButtonSelection: actions.setOpenButtonSelection,
+    setSidebarProjectOrder: actions.setSidebarProjectOrder,
+    setSidebarWorktreeOrder: actions.setSidebarWorktreeOrder,
     setCodexEnabled: actions.setCodexEnabled,
     setAmpEnabled: actions.setAmpEnabled,
     setAgentRunner: actions.setAgentRunner,

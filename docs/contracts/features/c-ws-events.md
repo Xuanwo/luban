@@ -1,7 +1,7 @@
 # C-WS-EVENTS
 
 Status: Draft
-Verification: Mock=yes, Provider=yes, CI=no
+Verification: Mock=yes, Provider=yes, CI=yes
 
 ## Surface
 
@@ -119,6 +119,8 @@ update this section.
 - `RestoreWorkspaceThreadTab`
 - `ReorderWorkspaceThreadTab`
 - `OpenButtonSelectionChanged`
+- `SidebarProjectOrderChanged`
+- `SidebarWorktreeOrderChanged`
 - `AppearanceThemeChanged`
 - `AppearanceFontsChanged`
 - `AppearanceGlobalZoomChanged`

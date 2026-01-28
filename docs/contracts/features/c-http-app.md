@@ -20,6 +20,11 @@ This includes Task settings:
     - `rename-branch`
     - `auto-title-thread`
 
+This includes persisted UI preferences for the sidebar:
+
+- `ui.sidebar_project_order`: stable ordering for the project list.
+- `ui.sidebar_worktree_order`: stable ordering for worktrees per project.
+
 ## Response
 
 - `200 OK`

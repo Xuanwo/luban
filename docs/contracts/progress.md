@@ -44,7 +44,7 @@ Legend:
 
 | Contract | Surface | Server handler | Web entrypoint | Status | Mock | Provider | CI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| C-WS-EVENTS | `WS /api/events` | `crates/luban_server/src/server.rs:ws_events` | `web/lib/luban-transport.ts:useLubanTransport` | Draft | ✅ | ✅ | ⬜ |
+| C-WS-EVENTS | `WS /api/events` | `crates/luban_server/src/server.rs:ws_events` | `web/lib/luban-transport.ts:useLubanTransport` | Draft | ✅ | ✅ | ✅ |
 | C-WS-PTY | `WS /api/pty/{workspace_id}/{thread_id}` | `crates/luban_server/src/server.rs:ws_pty` | `web/components/pty-terminal.tsx` | Draft | ✅ | ✅ | ✅ |
 
 ## Feature contracts

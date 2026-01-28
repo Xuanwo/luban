@@ -129,6 +129,8 @@ export type LubanActions = {
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
+  setSidebarProjectOrder: (projectIds: ProjectId[]) => void
+  setSidebarWorktreeOrder: (projectId: ProjectId, workspaceIds: WorkspaceId[]) => void
 }
 
 export type LubanActionsInternal = LubanActions & {
@@ -755,6 +757,37 @@ export function createLubanActions(args: {
     args.sendAction({ type: "open_button_selection_changed", selection })
   }
 
+  function setSidebarProjectOrder(projectIds: ProjectId[]) {
+    store.setApp((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        ui: {
+          ...prev.ui,
+          sidebar_project_order: projectIds,
+        },
+      }
+    })
+    args.sendAction({ type: "sidebar_project_order_changed", project_ids: projectIds })
+  }
+
+  function setSidebarWorktreeOrder(projectId: ProjectId, workspaceIds: WorkspaceId[]) {
+    store.setApp((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        ui: {
+          ...prev.ui,
+          sidebar_worktree_order: {
+            ...(prev.ui.sidebar_worktree_order ?? {}),
+            [projectId]: workspaceIds,
+          },
+        },
+      }
+    })
+    args.sendAction({ type: "sidebar_worktree_order_changed", project_id: projectId, workspace_ids: workspaceIds })
+  }
+
   return {
     pickProjectPath,
     addProject,
@@ -815,5 +848,7 @@ export function createLubanActions(args: {
     setAppearanceFonts,
     setGlobalZoom,
     setOpenButtonSelection,
+    setSidebarProjectOrder,
+    setSidebarWorktreeOrder,
   }
 }

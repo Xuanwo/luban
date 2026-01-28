@@ -3278,7 +3278,7 @@ impl Engine {
             rev: self.rev,
             event: Box::new(luban_api::ServerEvent::AppChanged {
                 rev: self.rev,
-                snapshot: self.app_snapshot(),
+                snapshot: Box::new(self.app_snapshot()),
             }),
         });
     }
@@ -3324,7 +3324,9 @@ impl Engine {
         if let Ok(snapshot) = self.conversation_snapshot(api_wid, api_tid, None, None) {
             let _ = self.events.send(WsServerMessage::Event {
                 rev: self.rev,
-                event: Box::new(luban_api::ServerEvent::ConversationChanged { snapshot }),
+                event: Box::new(luban_api::ServerEvent::ConversationChanged {
+                    snapshot: Box::new(snapshot),
+                }),
             });
         }
     }
@@ -3488,6 +3490,28 @@ impl Engine {
                     active_thread_id: active_thread_id
                         .map(|id| luban_api::WorkspaceThreadId(id.as_u64())),
                     open_button_selection: self.state.open_button_selection.clone(),
+                    sidebar_project_order: self
+                        .state
+                        .sidebar_project_order
+                        .iter()
+                        .cloned()
+                        .map(luban_api::ProjectId)
+                        .collect(),
+                    sidebar_worktree_order: self
+                        .state
+                        .sidebar_worktree_order
+                        .iter()
+                        .map(|(project_id, workspace_ids)| {
+                            (
+                                luban_api::ProjectId(project_id.clone()),
+                                workspace_ids
+                                    .iter()
+                                    .copied()
+                                    .map(|id| luban_api::WorkspaceId(id.as_u64()))
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
                 }
             },
         }
@@ -4415,6 +4439,21 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         luban_api::ClientAction::OpenButtonSelectionChanged { selection } => {
             Some(Action::OpenButtonSelectionChanged { selection })
         }
+        luban_api::ClientAction::SidebarProjectOrderChanged { project_ids } => {
+            Some(Action::SidebarProjectOrderChanged {
+                project_ids: project_ids.into_iter().map(|id| id.0).collect(),
+            })
+        }
+        luban_api::ClientAction::SidebarWorktreeOrderChanged {
+            project_id,
+            workspace_ids,
+        } => Some(Action::SidebarWorktreeOrderChanged {
+            project_id: project_id.0,
+            workspace_ids: workspace_ids
+                .into_iter()
+                .map(|id| WorkspaceId::from_u64(id.0))
+                .collect(),
+        }),
         luban_api::ClientAction::AppearanceThemeChanged { theme } => {
             Some(Action::AppearanceThemeChanged {
                 theme: match theme {
@@ -4756,6 +4795,8 @@ mod tests {
                 agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
+                sidebar_project_order: Vec::new(),
+                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -5291,6 +5332,8 @@ mod tests {
             agent_amp_enabled: Some(true),
             last_open_workspace_id: Some(10),
             open_button_selection: None,
+            sidebar_project_order: Vec::new(),
+            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::from([(10, 2)]),
             workspace_open_tabs: HashMap::from([(10, vec![1, 2])]),
             workspace_archived_tabs: HashMap::new(),
@@ -5458,6 +5501,8 @@ mod tests {
                 agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
+                sidebar_project_order: Vec::new(),
+                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -5823,6 +5868,8 @@ mod tests {
                 agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
+                sidebar_project_order: Vec::new(),
+                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -6147,6 +6194,8 @@ mod tests {
                 agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
+                sidebar_project_order: Vec::new(),
+                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -6358,6 +6407,8 @@ mod tests {
                 agent_amp_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
+                sidebar_project_order: Vec::new(),
+                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),

@@ -46,6 +46,17 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         agent_amp_enabled: Some(state.agent_amp_enabled),
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         open_button_selection: state.open_button_selection.clone(),
+        sidebar_project_order: state.sidebar_project_order.clone(),
+        sidebar_worktree_order: state
+            .sidebar_worktree_order
+            .iter()
+            .map(|(project_id, workspace_ids)| {
+                (
+                    project_id.clone(),
+                    workspace_ids.iter().map(|id| id.0).collect(),
+                )
+            })
+            .collect(),
         workspace_active_thread_id: state
             .workspace_tabs
             .iter()
