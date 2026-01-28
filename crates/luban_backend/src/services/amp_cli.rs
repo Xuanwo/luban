@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use super::ansi::strip_ansi_control_sequences;
 use super::stream_json::{
     extract_content_array, extract_string_field, parse_tool_result_content, tool_name_key,
     value_as_string,
@@ -23,32 +24,6 @@ pub(super) struct AmpTurnParams {
     pub(super) worktree_path: PathBuf,
     pub(super) prompt: String,
     pub(super) mode: Option<String>,
-}
-
-fn strip_ansi_control_sequences(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            out.push(ch);
-            continue;
-        }
-
-        // Skip CSI and other escape sequences: ESC [ ... <final byte>
-        if matches!(chars.peek(), Some('[')) {
-            let _ = chars.next();
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        // Skip the next character for non-CSI sequences.
-        let _ = chars.next();
-    }
-    out
 }
 
 fn resolve_amp_exec() -> PathBuf {

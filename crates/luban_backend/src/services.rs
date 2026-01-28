@@ -23,6 +23,7 @@ use crate::time::unix_epoch_nanos_now;
 
 mod amp_cli;
 mod amp_mode;
+mod ansi;
 mod claude_cli;
 pub mod claude_process;
 mod cli_check;
