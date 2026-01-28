@@ -180,27 +180,26 @@ impl GitWorkspaceService {
                 continue;
             }
             for workspace in &mut project.workspaces {
-                if workspace.status == WorkspaceStatus::Active
-                    && workspace.workspace_name != "main"
-                    && !workspace.worktree_path.exists()
-                {
+                let should_auto_archive = workspace.status == WorkspaceStatus::Active
+                    && workspace.workspace_name != "main";
+                if should_auto_archive && !workspace.worktree_path.exists() {
                     workspace.status = WorkspaceStatus::Archived;
                     dirty = true;
                     continue;
                 }
 
-                let resolved = self.run_git(
+                let resolved = match self.run_git(
                     &workspace.worktree_path,
                     ["rev-parse", "--abbrev-ref", "HEAD"],
-                );
-                let Ok(resolved) = resolved else {
-                    if workspace.status == WorkspaceStatus::Active
-                        && workspace.workspace_name != "main"
-                    {
-                        workspace.status = WorkspaceStatus::Archived;
-                        dirty = true;
+                ) {
+                    Ok(resolved) => resolved,
+                    Err(_) => {
+                        if should_auto_archive {
+                            workspace.status = WorkspaceStatus::Archived;
+                            dirty = true;
+                        }
+                        continue;
                     }
-                    continue;
                 };
                 let trimmed = resolved.trim();
                 if trimmed.is_empty() {
