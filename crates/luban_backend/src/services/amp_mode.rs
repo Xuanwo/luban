@@ -1,5 +1,13 @@
 use std::path::Path;
 
+fn strip_prefix_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = s.get(..prefix.len())?;
+    if !head.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    s.get(prefix.len()..)
+}
+
 fn parse_amp_mode_from_config_text(contents: &str) -> Option<String> {
     for raw_line in contents.lines() {
         let line = raw_line.trim();
@@ -10,13 +18,11 @@ fn parse_amp_mode_from_config_text(contents: &str) -> Option<String> {
             continue;
         }
 
-        let lowered = line.to_ascii_lowercase();
-
-        let value = if let Some(rest) = lowered.strip_prefix("mode") {
+        let value = if let Some(rest) = strip_prefix_ascii_case(line, "mode") {
             let rest = rest.trim_start();
             let rest = rest.strip_prefix(':').or_else(|| rest.strip_prefix('='));
             rest.map(str::trim)
-        } else if let Some(rest) = lowered.strip_prefix("\"mode\"") {
+        } else if let Some(rest) = strip_prefix_ascii_case(line, "\"mode\"") {
             let rest = rest.trim_start();
             let rest = rest.strip_prefix(':');
             rest.map(str::trim)
@@ -39,8 +45,11 @@ fn parse_amp_mode_from_config_text(contents: &str) -> Option<String> {
             continue;
         }
 
-        if value == "smart" || value == "rush" {
-            return Some(value.to_owned());
+        if value.eq_ignore_ascii_case("smart") {
+            return Some("smart".to_owned());
+        }
+        if value.eq_ignore_ascii_case("rush") {
+            return Some("rush".to_owned());
         }
     }
     None
@@ -84,4 +93,56 @@ pub(super) fn detect_amp_mode_from_config_root(root: &Path) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_prefix_ascii_case_handles_short_strings() {
+        assert_eq!(strip_prefix_ascii_case("", "mode"), None);
+        assert_eq!(strip_prefix_ascii_case("mo", "mode"), None);
+        assert_eq!(strip_prefix_ascii_case("MODE", "mode"), Some(""));
+    }
+
+    #[test]
+    fn parse_amp_mode_accepts_yaml_like_syntax() {
+        assert_eq!(
+            parse_amp_mode_from_config_text("mode: smart\n"),
+            Some("smart".to_owned())
+        );
+        assert_eq!(
+            parse_amp_mode_from_config_text("Mode: SMART\n"),
+            Some("smart".to_owned())
+        );
+        assert_eq!(
+            parse_amp_mode_from_config_text("mode = rush\n"),
+            Some("rush".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_amp_mode_accepts_json_like_syntax() {
+        assert_eq!(
+            parse_amp_mode_from_config_text("\"mode\": \"rush\""),
+            Some("rush".to_owned())
+        );
+        assert_eq!(
+            parse_amp_mode_from_config_text("\"Mode\": \"RUSH\""),
+            Some("rush".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_amp_mode_ignores_comments_and_noise() {
+        let contents = r#"
+            # mode: smart
+            // mode: rush
+            something_else: smart
+            mode:
+            mode: ""
+        "#;
+        assert_eq!(parse_amp_mode_from_config_text(contents), None);
+    }
 }
