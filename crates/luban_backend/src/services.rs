@@ -2321,10 +2321,12 @@ impl GitWorkspaceService {
 mod tests {
     use super::prompt::PromptAttachment;
     use super::pull_request::is_merge_ready;
-    use super::test_support::{assert_git_success, lock_env, run_git};
+    use super::test_support::{
+        assert_git_success, git_rev_parse, lock_env, run_git, stored_blob_path,
+    };
     use super::*;
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[test]
     fn transient_reconnect_notice_detection_is_stable() {
@@ -3390,17 +3392,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base_dir);
     }
 
-    fn git_rev_parse(repo_path: &Path, rev: &str) -> String {
-        let out = run_git(repo_path, &["rev-parse", "--verify", rev]);
-        assert!(
-            out.status.success(),
-            "git rev-parse {rev} failed:\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    }
-
     #[test]
     fn load_app_state_archives_missing_worktrees() {
         let unique = unix_epoch_nanos_now();
@@ -3638,17 +3629,6 @@ mod tests {
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
-    }
-
-    fn stored_blob_path(
-        service: &GitWorkspaceService,
-        project_slug: &str,
-        workspace_name: &str,
-        attachment: &AttachmentRef,
-    ) -> PathBuf {
-        service
-            .context_blobs_dir(project_slug, workspace_name)
-            .join(format!("{}.{}", attachment.id, attachment.extension))
     }
 
     #[test]
