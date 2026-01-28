@@ -17,12 +17,15 @@ fn normalize_thread_tabs(
     mut open_tabs: Vec<WorkspaceThreadId>,
     mut archived_tabs: Vec<WorkspaceThreadId>,
 ) -> (Vec<WorkspaceThreadId>, Vec<WorkspaceThreadId>) {
-    archived_tabs.retain(|id| !open_tabs.contains(id));
+    let mut open_set: HashSet<WorkspaceThreadId> = open_tabs.iter().copied().collect();
+    archived_tabs.retain(|id| !open_set.contains(id));
     if open_tabs.is_empty() {
         open_tabs.push(active);
+        open_set.insert(active);
     }
-    if !open_tabs.contains(&active) {
+    if !open_set.contains(&active) {
         open_tabs.push(active);
+        open_set.insert(active);
     }
     archived_tabs.retain(|id| *id != active);
     (open_tabs, archived_tabs)
@@ -621,5 +624,14 @@ mod tests {
         );
         assert_eq!(open, vec![WorkspaceThreadId(2), active]);
         assert!(archived.is_empty());
+    }
+
+    #[test]
+    fn normalize_thread_tabs_keeps_open_tab_duplicates() {
+        let active = WorkspaceThreadId(1);
+        let (open, archived) =
+            normalize_thread_tabs(active, vec![active, active], vec![WorkspaceThreadId(2)]);
+        assert_eq!(open, vec![active, active]);
+        assert_eq!(archived, vec![WorkspaceThreadId(2)]);
     }
 }
