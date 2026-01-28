@@ -33,11 +33,13 @@ mod conversations;
 mod feedback;
 mod git;
 mod prompt;
+mod pull_request;
 mod task;
 use amp_cli::AmpTurnParams;
 use claude_cli::ClaudeTurnParams;
 use codex_cli::CodexTurnParams;
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
+use pull_request::pull_request_ci_state_from_check_buckets;
 
 fn contains_attempt_fraction(text: &str) -> bool {
     let mut chars = text.chars().peekable();
@@ -687,36 +689,6 @@ fn is_executable_file(path: &Path) -> bool {
     {
         path.is_file()
     }
-}
-
-fn pull_request_ci_state_from_check_buckets<'a>(
-    buckets: impl IntoIterator<Item = &'a str>,
-) -> Option<PullRequestCiState> {
-    let mut any_pending = false;
-    let mut any_fail = false;
-    let mut any_pass = false;
-    let mut any_skip = false;
-
-    for bucket in buckets {
-        match bucket {
-            "fail" | "cancel" => any_fail = true,
-            "pending" => any_pending = true,
-            "pass" => any_pass = true,
-            "skipping" => any_skip = true,
-            _ => {}
-        }
-    }
-
-    if any_fail {
-        return Some(PullRequestCiState::Failure);
-    }
-    if any_pending {
-        return Some(PullRequestCiState::Pending);
-    }
-    if any_pass || any_skip {
-        return Some(PullRequestCiState::Success);
-    }
-    None
 }
 
 impl ProjectWorkspaceService for GitWorkspaceService {
@@ -2053,28 +2025,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             review_decision: String,
         }
 
-        fn is_merge_ready(
-            pr_state: PullRequestState,
-            is_draft: bool,
-            merge_state_status: &str,
-            review_decision: &str,
-            ci_state: Option<PullRequestCiState>,
-        ) -> bool {
-            if pr_state != PullRequestState::Open {
-                return false;
-            }
-            if is_draft {
-                return false;
-            }
-            if review_decision != "APPROVED" {
-                return false;
-            }
-            if ci_state != Some(PullRequestCiState::Success) {
-                return false;
-            }
-            matches!(merge_state_status, "CLEAN" | "HAS_HOOKS")
-        }
-
         let output = Command::new("gh")
             .args([
                 "pr",
@@ -2149,7 +2099,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 checks.iter().map(|check| check.bucket.as_str()),
             )
         };
-        let merge_ready = is_merge_ready(
+        let merge_ready = pull_request::is_merge_ready(
             state,
             value.is_draft,
             &value.merge_state_status,
@@ -3496,6 +3446,7 @@ impl GitWorkspaceService {
 #[cfg(test)]
 mod tests {
     use super::prompt::PromptAttachment;
+    use super::pull_request::is_merge_ready;
     use super::*;
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
     use std::path::{Path, PathBuf};
@@ -3602,6 +3553,60 @@ mod tests {
             Some(PullRequestCiState::Failure)
         );
         assert_eq!(pull_request_ci_state_from_check_buckets(["unknown"]), None);
+    }
+
+    #[test]
+    fn gh_pr_merge_ready_logic_is_stable() {
+        assert!(is_merge_ready(
+            PullRequestState::Open,
+            false,
+            "CLEAN",
+            "APPROVED",
+            Some(PullRequestCiState::Success),
+        ));
+        assert!(is_merge_ready(
+            PullRequestState::Open,
+            false,
+            "HAS_HOOKS",
+            "APPROVED",
+            Some(PullRequestCiState::Success),
+        ));
+
+        assert!(!is_merge_ready(
+            PullRequestState::Merged,
+            false,
+            "CLEAN",
+            "APPROVED",
+            Some(PullRequestCiState::Success),
+        ));
+        assert!(!is_merge_ready(
+            PullRequestState::Open,
+            true,
+            "CLEAN",
+            "APPROVED",
+            Some(PullRequestCiState::Success),
+        ));
+        assert!(!is_merge_ready(
+            PullRequestState::Open,
+            false,
+            "DIRTY",
+            "APPROVED",
+            Some(PullRequestCiState::Success),
+        ));
+        assert!(!is_merge_ready(
+            PullRequestState::Open,
+            false,
+            "CLEAN",
+            "CHANGES_REQUESTED",
+            Some(PullRequestCiState::Success),
+        ));
+        assert!(!is_merge_ready(
+            PullRequestState::Open,
+            false,
+            "CLEAN",
+            "APPROVED",
+            Some(PullRequestCiState::Pending),
+        ));
     }
 
     #[test]
