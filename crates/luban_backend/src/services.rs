@@ -28,6 +28,7 @@ pub mod claude_process;
 mod codex_bin;
 mod codex_cli;
 mod codex_thread;
+mod config_path;
 mod config_tree;
 mod context_blobs;
 mod conversations;
@@ -2157,23 +2158,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 return Ok(Vec::new());
             }
 
-            let rel = path.trim();
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            if !rel.is_empty() {
-                for segment in rel.split('/') {
-                    if segment.is_empty() || segment == "." || segment == ".." {
-                        return Err(anyhow!("invalid path segment"));
-                    }
-                    rel_path.push(segment);
-                }
-            }
+            let rel_path = config_path::parse_strict_relative_list_dir_path(&path)?;
 
             let abs = root.join(&rel_path);
             let meta = std::fs::metadata(&abs)
@@ -2402,23 +2387,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 return Ok(Vec::new());
             }
 
-            let rel = path.trim();
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            if !rel.is_empty() {
-                for segment in rel.split('/') {
-                    if segment.is_empty() || segment == "." || segment == ".." {
-                        return Err(anyhow!("invalid path segment"));
-                    }
-                    rel_path.push(segment);
-                }
-            }
+            let rel_path = config_path::parse_strict_relative_list_dir_path(&path)?;
 
             let abs = root.join(&rel_path);
             let meta = std::fs::metadata(&abs)
@@ -2642,24 +2611,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 return Ok(Vec::new());
             }
 
-            let rel = path.trim();
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() {
-                    continue;
-                }
-                if segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_lenient_relative_list_dir_path(&path)?;
 
             let abs = root.join(&rel_path);
             let meta = std::fs::metadata(&abs)
