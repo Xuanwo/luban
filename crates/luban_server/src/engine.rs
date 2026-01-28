@@ -3215,6 +3215,19 @@ impl Engine {
                 }
             }
             Effect::ArchiveWorkspace { workspace_id } => {
+                if let Some(scope) = workspace_scope(&self.state, workspace_id) {
+                    for (wid, thread_id) in self.state.conversations.keys() {
+                        if *wid != workspace_id {
+                            continue;
+                        }
+                        self.services.cleanup_claude_process(
+                            &scope.project_slug,
+                            &scope.workspace_name,
+                            thread_id.as_u64(),
+                        );
+                    }
+                }
+
                 let mut project_path: Option<PathBuf> = None;
                 let mut worktree_path: Option<PathBuf> = None;
 
@@ -4543,7 +4556,7 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::sync::OnceLock;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     struct TestServices;
@@ -5422,6 +5435,7 @@ mod tests {
 
     struct ArchiveOkServices {
         calls: Arc<std::sync::Mutex<Vec<(PathBuf, PathBuf)>>>,
+        cancel_flag: Option<Arc<AtomicBool>>,
     }
 
     impl ProjectWorkspaceService for ArchiveOkServices {
@@ -5477,6 +5491,11 @@ mod tests {
             project_path: PathBuf,
             worktree_path: PathBuf,
         ) -> Result<(), String> {
+            if let Some(cancel_flag) = &self.cancel_flag
+                && !cancel_flag.load(Ordering::SeqCst)
+            {
+                return Err("archive workspace called before agent cancel".to_owned());
+            }
             self.calls
                 .lock()
                 .expect("mutex poisoned")
@@ -5639,6 +5658,7 @@ mod tests {
         let calls = Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, PathBuf)>::new()));
         let services: Arc<dyn ProjectWorkspaceService> = Arc::new(ArchiveOkServices {
             calls: calls.clone(),
+            cancel_flag: None,
         });
 
         let mut state = AppState::new();
@@ -5690,6 +5710,87 @@ mod tests {
         assert_eq!(workspace.status, luban_domain::WorkspaceStatus::Archived);
         assert_eq!(engine.state.main_pane, luban_domain::MainPane::None);
         assert_eq!(engine.state.right_pane, luban_domain::RightPane::None);
+
+        let calls = calls.lock().expect("mutex poisoned");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, project_path);
+        assert_eq!(calls[0].1, worktree_path);
+    }
+
+    #[tokio::test]
+    async fn archive_workspace_cancels_agent_turns_before_archiving() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, PathBuf)>::new()));
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(ArchiveOkServices {
+            calls: calls.clone(),
+            cancel_flag: Some(cancel_flag.clone()),
+        });
+
+        let mut state = AppState::new();
+        let project_path = PathBuf::from("/tmp/luban-server-archive-cancel-test");
+        let _ = state.apply(Action::AddProject {
+            path: project_path.clone(),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+
+        let worktree_path = PathBuf::from("/tmp/luban-server-archive-cancel-test-wt");
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "wt".to_owned(),
+            branch_name: "feature".to_owned(),
+            worktree_path: worktree_path.clone(),
+        });
+
+        let workspace_id = state
+            .projects
+            .iter()
+            .flat_map(|p| p.workspaces.iter())
+            .find(|w| w.worktree_path == worktree_path)
+            .expect("workspace should exist")
+            .id;
+
+        let thread_id = state
+            .workspace_tabs
+            .get(&workspace_id)
+            .expect("workspace tabs should exist")
+            .active_tab;
+
+        let run_id = 7u64;
+        {
+            let conversation = state
+                .conversations
+                .get_mut(&(workspace_id, thread_id))
+                .expect("conversation should exist");
+            conversation.run_status = OperationStatus::Running;
+            conversation.active_run_id = Some(run_id);
+        }
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services,
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::from([(
+                (workspace_id, thread_id),
+                CancelFlagEntry {
+                    run_id,
+                    flag: cancel_flag.clone(),
+                },
+            )]),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+        };
+
+        engine
+            .process_action_queue(Action::ArchiveWorkspace { workspace_id })
+            .await;
+
+        assert!(cancel_flag.load(Ordering::SeqCst));
 
         let calls = calls.lock().expect("mutex poisoned");
         assert_eq!(calls.len(), 1);

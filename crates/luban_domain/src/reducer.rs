@@ -18,6 +18,22 @@ use std::{
     path::PathBuf,
 };
 
+fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> {
+    if conversation.run_status != OperationStatus::Running {
+        return None;
+    }
+    let run_id = conversation.active_run_id?;
+    conversation.run_status = OperationStatus::Idle;
+    conversation.current_run_config = None;
+    conversation.active_run_id = None;
+    flush_in_progress_items(conversation);
+    conversation.in_progress_items.clear();
+    conversation.in_progress_order.clear();
+    conversation.queue_paused = true;
+    conversation.push_entry(ConversationEntry::TurnCanceled);
+    Some(run_id)
+}
+
 impl AppState {
     const MAIN_WORKSPACE_NAME: &'static str = "main";
     const MAIN_WORKSPACE_BRANCH: &'static str = "main";
@@ -330,6 +346,8 @@ impl AppState {
                 Vec::new()
             }
             Action::ArchiveWorkspace { workspace_id } => {
+                let mut cancel_effects = Vec::new();
+
                 if let Some((project_idx, workspace_idx)) =
                     self.find_workspace_indices(workspace_id)
                 {
@@ -342,16 +360,34 @@ impl AppState {
                         return Vec::new();
                     }
 
-                    let project = &mut self.projects[project_idx];
-                    let workspace = &mut project.workspaces[workspace_idx];
+                    {
+                        let project = &mut self.projects[project_idx];
+                        let workspace = &mut project.workspaces[workspace_idx];
 
-                    if workspace.archive_status == OperationStatus::Running {
-                        return Vec::new();
+                        if workspace.archive_status == OperationStatus::Running {
+                            return Vec::new();
+                        }
+                        workspace.archive_status = OperationStatus::Running;
+                        project.expanded = true;
                     }
-                    workspace.archive_status = OperationStatus::Running;
-                    project.expanded = true;
+
+                    for ((wid, thread_id), conversation) in self.conversations.iter_mut() {
+                        if *wid != workspace_id {
+                            continue;
+                        }
+                        if let Some(run_id) = cancel_running_turn(conversation) {
+                            cancel_effects.push(Effect::CancelAgentTurn {
+                                workspace_id,
+                                thread_id: *thread_id,
+                                run_id,
+                            });
+                        }
+                    }
                 }
-                vec![Effect::ArchiveWorkspace { workspace_id }]
+                cancel_effects
+                    .into_iter()
+                    .chain(std::iter::once(Effect::ArchiveWorkspace { workspace_id }))
+                    .collect()
             }
             Action::WorkspaceArchived { workspace_id } => {
                 if let Some((project_idx, workspace_idx)) =
@@ -1120,20 +1156,9 @@ impl AppState {
                 else {
                     return Vec::new();
                 };
-                if conversation.run_status != OperationStatus::Running {
-                    return Vec::new();
-                }
-                let Some(run_id) = conversation.active_run_id else {
+                let Some(run_id) = cancel_running_turn(conversation) else {
                     return Vec::new();
                 };
-                conversation.run_status = OperationStatus::Idle;
-                conversation.current_run_config = None;
-                conversation.active_run_id = None;
-                flush_in_progress_items(conversation);
-                conversation.in_progress_items.clear();
-                conversation.in_progress_order.clear();
-                conversation.queue_paused = true;
-                conversation.push_entry(ConversationEntry::TurnCanceled);
                 vec![Effect::CancelAgentTurn {
                     workspace_id,
                     thread_id,
@@ -3147,6 +3172,82 @@ mod tests {
         assert_eq!(workspace.archive_status, OperationStatus::Idle);
         assert_eq!(workspace.status, WorkspaceStatus::Active);
         assert_eq!(workspace.worktree_path, project.path);
+    }
+
+    #[test]
+    fn archiving_a_running_workspace_cancels_agent_turns_first() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+
+        let worktree_path = PathBuf::from("/tmp/repo/worktrees/wt");
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "wt".to_owned(),
+            branch_name: "feature".to_owned(),
+            worktree_path: worktree_path.clone(),
+        });
+
+        let workspace_id = state.projects[0]
+            .workspaces
+            .iter()
+            .find(|w| w.worktree_path == worktree_path)
+            .expect("missing workspace")
+            .id;
+        let thread_id = state
+            .workspace_tabs
+            .get(&workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+
+        {
+            let conversation = state
+                .conversations
+                .get_mut(&(workspace_id, thread_id))
+                .expect("missing conversation");
+            conversation.run_status = OperationStatus::Running;
+            conversation.active_run_id = Some(99);
+        }
+
+        let effects = state.apply(Action::ArchiveWorkspace { workspace_id });
+        assert_eq!(effects.len(), 2);
+
+        match &effects[0] {
+            Effect::CancelAgentTurn {
+                workspace_id: wid,
+                thread_id: tid,
+                run_id,
+            } => {
+                assert_eq!(*wid, workspace_id);
+                assert_eq!(*tid, thread_id);
+                assert_eq!(*run_id, 99);
+            }
+            other => panic!("expected CancelAgentTurn, got {other:?}"),
+        }
+        assert!(matches!(
+            &effects[1],
+            Effect::ArchiveWorkspace { workspace_id: wid } if *wid == workspace_id
+        ));
+
+        let conversation = state
+            .conversations
+            .get(&(workspace_id, thread_id))
+            .expect("missing conversation");
+        assert_eq!(conversation.run_status, OperationStatus::Idle);
+        assert_eq!(conversation.active_run_id, None);
+        assert!(conversation.queue_paused);
+        assert!(matches!(
+            conversation.entries.last(),
+            Some(ConversationEntry::TurnCanceled)
+        ));
+
+        let workspace = state
+            .workspace(workspace_id)
+            .expect("missing workspace after archive request");
+        assert_eq!(workspace.archive_status, OperationStatus::Running);
     }
 
     #[test]
