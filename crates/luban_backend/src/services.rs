@@ -36,6 +36,7 @@ mod feedback;
 mod git;
 mod prompt;
 mod pull_request;
+mod reconnect_notice;
 mod roots;
 mod task;
 use amp_cli::AmpTurnParams;
@@ -45,46 +46,8 @@ use codex_cli::CodexTurnParams;
 use codex_thread::{codex_item_id, qualify_codex_item, qualify_event};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
+use reconnect_notice::is_transient_reconnect_notice;
 use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
-
-fn contains_attempt_fraction(text: &str) -> bool {
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if !ch.is_ascii_digit() {
-            continue;
-        }
-
-        while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
-            let _ = chars.next();
-        }
-
-        if !matches!(chars.peek(), Some('/')) {
-            continue;
-        }
-        let _ = chars.next();
-
-        if !matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
-            continue;
-        }
-        return true;
-    }
-
-    false
-}
-
-fn is_transient_reconnect_notice(message: &str) -> bool {
-    let message = message.trim();
-    if message.is_empty() {
-        return false;
-    }
-
-    let lower = message.to_ascii_lowercase();
-    if !lower.contains("reconnecting") {
-        return false;
-    }
-
-    contains_attempt_fraction(&lower)
-}
 
 fn generate_turn_scope_id() -> String {
     let micros = unix_epoch_micros_now();
