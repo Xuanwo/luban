@@ -459,12 +459,7 @@ pub struct DraftAttachment {
     pub failed: bool,
 }
 
-pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, new_text: &str) {
-    let old_text = conversation.draft.as_str();
-    if old_text == new_text {
-        return;
-    }
-
+fn draft_text_diff_window(old_text: &str, new_text: &str) -> (usize, usize, usize) {
     let old_bytes = old_text.as_bytes();
     let new_bytes = new_text.as_bytes();
 
@@ -481,7 +476,19 @@ pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, ne
         new_end -= 1;
     }
 
+    (start, old_end, new_end)
+}
+
+pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, new_text: &str) {
+    let old_text = conversation.draft.as_str();
+    if old_text == new_text {
+        return;
+    }
+
+    let (start, old_end, new_end) = draft_text_diff_window(old_text, new_text);
+
     let delta = new_end as isize - old_end as isize;
+    let new_len = new_text.len();
     for attachment in &mut conversation.draft_attachments {
         let anchor = attachment.anchor;
         if anchor <= start {
@@ -494,7 +501,7 @@ pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, ne
             // Preference A: snap to the start of the deleted/replaced region.
             attachment.anchor = start;
         }
-        attachment.anchor = attachment.anchor.min(new_text.len());
+        attachment.anchor = attachment.anchor.min(new_len);
     }
 
     conversation.draft = new_text.to_owned();
@@ -511,6 +518,64 @@ mod tests {
         assert_eq!(tabs.active_tab, WorkspaceThreadId(2));
         assert!(tabs.open_tabs.contains(&WorkspaceThreadId(2)));
         assert!(!tabs.archived_tabs.contains(&WorkspaceThreadId(2)));
+    }
+
+    fn conversation_with_draft(draft: &str, anchors: &[usize]) -> WorkspaceConversation {
+        let state = crate::AppState::new();
+        let mut conversation = state.default_conversation(WorkspaceThreadId(1));
+        conversation.draft = draft.to_owned();
+        conversation.draft_attachments = anchors
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, anchor)| DraftAttachment {
+                id: idx as u64 + 1,
+                kind: crate::ContextTokenKind::File,
+                anchor,
+                attachment: None,
+                failed: false,
+            })
+            .collect();
+        conversation
+    }
+
+    #[test]
+    fn draft_diff_shifts_anchors_after_insertion() {
+        let mut conversation = conversation_with_draft("hello", &[0, 2, 3, 5]);
+        apply_draft_text_diff(&mut conversation, "heXllo");
+
+        let anchors: Vec<usize> = conversation
+            .draft_attachments
+            .iter()
+            .map(|a| a.anchor)
+            .collect();
+        assert_eq!(anchors, vec![0, 2, 4, 6]);
+    }
+
+    #[test]
+    fn draft_diff_shifts_anchors_after_deletion() {
+        let mut conversation = conversation_with_draft("hello", &[0, 1, 2, 4]);
+        apply_draft_text_diff(&mut conversation, "hllo");
+
+        let anchors: Vec<usize> = conversation
+            .draft_attachments
+            .iter()
+            .map(|a| a.anchor)
+            .collect();
+        assert_eq!(anchors, vec![0, 1, 1, 3]);
+    }
+
+    #[test]
+    fn draft_diff_snaps_anchors_inside_replaced_region() {
+        let mut conversation = conversation_with_draft("hello", &[1, 3, 4]);
+        apply_draft_text_diff(&mut conversation, "heLLo");
+
+        let anchors: Vec<usize> = conversation
+            .draft_attachments
+            .iter()
+            .map(|a| a.anchor)
+            .collect();
+        assert_eq!(anchors, vec![1, 2, 4]);
     }
 }
 
