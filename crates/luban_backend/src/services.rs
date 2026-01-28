@@ -58,6 +58,10 @@ use pull_request::pull_request_ci_state_from_check_buckets;
 use reconnect_notice::is_transient_reconnect_notice;
 use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
 
+fn anyhow_error_to_string(e: anyhow::Error) -> String {
+    format!("{e:#}")
+}
+
 fn codex_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<CodexConfigEntry> {
     entries
         .into_iter()
@@ -404,12 +408,13 @@ impl GitWorkspaceService {
 
 impl ProjectWorkspaceService for GitWorkspaceService {
     fn load_app_state(&self) -> Result<PersistedAppState, String> {
-        self.load_app_state_internal().map_err(|e| format!("{e:#}"))
+        self.load_app_state_internal()
+            .map_err(anyhow_error_to_string)
     }
 
     fn save_app_state(&self, snapshot: PersistedAppState) -> Result<(), String> {
         self.save_app_state_internal(snapshot)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn create_workspace(
@@ -583,7 +588,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             ))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn open_workspace_in_ide(&self, worktree_path: PathBuf) -> Result<(), String> {
@@ -664,7 +669,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             }
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn archive_workspace(
@@ -682,7 +687,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 })?;
             Ok(())
         })();
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn rename_workspace_branch(
@@ -818,7 +823,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Err(anyhow!("failed to find a free branch name after retries"))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn ensure_conversation(
@@ -828,7 +833,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         thread_id: u64,
     ) -> Result<(), String> {
         self.ensure_conversation_internal(project_slug, workspace_name, thread_id)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn list_conversation_threads(
@@ -838,7 +843,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     ) -> Result<Vec<luban_domain::ConversationThreadMeta>, String> {
         self.sqlite
             .list_conversation_threads(project_slug, workspace_name)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn load_conversation(
@@ -848,7 +853,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         thread_id: u64,
     ) -> Result<ConversationSnapshot, String> {
         self.load_conversation_internal(project_slug, workspace_name, thread_id)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn load_conversation_page(
@@ -868,7 +873,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 before,
                 limit,
             )
-            .map_err(|e| format!("{e:#}"))?;
+            .map_err(anyhow_error_to_string)?;
 
         if thread_id == 1 && snapshot.entries_total == 0 && snapshot.thread_id.is_none() {
             return self
@@ -891,7 +896,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     repaired.entries_start = start as u64;
                     repaired
                 })
-                .map_err(|e| format!("{e:#}"));
+                .map_err(anyhow_error_to_string);
         }
 
         Ok(snapshot)
@@ -917,7 +922,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 run_finished_at_unix_ms,
                 pending_prompts,
             )
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn save_conversation_run_config(
@@ -936,7 +941,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 model_id,
                 thinking_effort,
             )
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn store_context_image(
@@ -952,7 +957,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             &image.bytes,
             &image.extension,
         );
-        let (id, stored_path) = stored.map_err(|e| format!("{e:#}"))?;
+        let (id, stored_path) = stored.map_err(anyhow_error_to_string)?;
         let _ = self.maybe_store_context_image_thumbnail(
             &project_slug,
             &workspace_name,
@@ -985,7 +990,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let byte_len = bytes.len() as u64;
         let result: anyhow::Result<(String, PathBuf)> =
             self.store_context_bytes(&project_slug, &workspace_name, &bytes, &extension);
-        let (id, stored_path) = result.map_err(|e| format!("{e:#}"))?;
+        let (id, stored_path) = result.map_err(anyhow_error_to_string)?;
         let extension = stored_path
             .extension()
             .and_then(|s| s.to_str())
@@ -1014,7 +1019,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .to_owned();
         let result: anyhow::Result<(String, String, u64, PathBuf)> =
             self.store_context_file_internal(&project_slug, &workspace_name, &source_path);
-        let (id, extension, byte_len, _path) = result.map_err(|e| format!("{e:#}"))?;
+        let (id, extension, byte_len, _path) = result.map_err(anyhow_error_to_string)?;
         Ok(AttachmentRef {
             id,
             kind: AttachmentKind::File,
@@ -1034,7 +1039,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     ) -> Result<u64, String> {
         self.sqlite
             .insert_context_item(project_slug, workspace_name, attachment, created_at_unix_ms)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn list_context_items(
@@ -1044,7 +1049,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     ) -> Result<Vec<luban_domain::ContextItem>, String> {
         self.sqlite
             .list_context_items(project_slug, workspace_name)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn delete_context_item(
@@ -1055,7 +1060,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     ) -> Result<(), String> {
         self.sqlite
             .delete_context_item(project_slug, workspace_name, context_id)
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn run_agent_turn_streamed(
@@ -1702,7 +1707,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             );
         }
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn gh_is_authorized(&self) -> Result<bool, String> {
@@ -1910,15 +1915,15 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             }
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn task_preview(&self, input: String) -> Result<luban_domain::TaskDraft, String> {
-        task::task_preview(self, input).map_err(|e| format!("{e:#}"))
+        task::task_preview(self, input).map_err(anyhow_error_to_string)
     }
 
     fn task_prepare_project(&self, spec: luban_domain::TaskProjectSpec) -> Result<PathBuf, String> {
-        task::task_prepare_project(self, spec).map_err(|e| format!("{e:#}"))
+        task::task_prepare_project(self, spec).map_err(anyhow_error_to_string)
     }
 
     fn feedback_create_issue(
@@ -1927,7 +1932,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         body: String,
         labels: Vec<String>,
     ) -> Result<luban_domain::TaskIssueInfo, String> {
-        feedback::feedback_create_issue(title, body, labels).map_err(|e| format!("{e:#}"))
+        feedback::feedback_create_issue(title, body, labels).map_err(anyhow_error_to_string)
     }
 
     fn feedback_task_draft(
@@ -1935,7 +1940,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         issue: luban_domain::TaskIssueInfo,
         intent_kind: TaskIntentKind,
     ) -> Result<luban_domain::TaskDraft, String> {
-        feedback::feedback_task_draft(self, issue, intent_kind).map_err(|e| format!("{e:#}"))
+        feedback::feedback_task_draft(self, issue, intent_kind).map_err(anyhow_error_to_string)
     }
 
     fn task_prompt_templates_load(
@@ -1966,7 +1971,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(out)
         }
 
-        inner(self).map_err(|e| format!("{e:#}"))
+        inner(self).map_err(anyhow_error_to_string)
     }
 
     fn task_prompt_template_store(
@@ -2016,7 +2021,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(())
         }
 
-        inner(self, intent_kind, template).map_err(|e| format!("{e:#}"))
+        inner(self, intent_kind, template).map_err(anyhow_error_to_string)
     }
 
     fn task_prompt_template_delete(&self, intent_kind: TaskIntentKind) -> Result<(), String> {
@@ -2059,7 +2064,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(out)
         }
 
-        inner(self).map_err(|e| format!("{e:#}"))
+        inner(self).map_err(anyhow_error_to_string)
     }
 
     fn system_prompt_template_store(
@@ -2110,7 +2115,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(())
         }
 
-        inner(self, kind, template).map_err(|e| format!("{e:#}"))
+        inner(self, kind, template).map_err(anyhow_error_to_string)
     }
 
     fn system_prompt_template_delete(&self, kind: SystemTaskKind) -> Result<(), String> {
@@ -2126,11 +2131,11 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     }
 
     fn task_suggest_branch_name(&self, draft: luban_domain::TaskDraft) -> Result<String, String> {
-        task::task_suggest_branch_name(self, draft).map_err(|e| format!("{e:#}"))
+        task::task_suggest_branch_name(self, draft).map_err(anyhow_error_to_string)
     }
 
     fn task_suggest_thread_title(&self, input: String) -> Result<String, String> {
-        task::task_suggest_thread_title(self, input).map_err(|e| format!("{e:#}"))
+        task::task_suggest_thread_title(self, input).map_err(anyhow_error_to_string)
     }
 
     fn conversation_update_title_if_matches(
@@ -2149,7 +2154,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 expected_current_title,
                 new_title,
             )
-            .map_err(|e| format!("{e:#}"))
+            .map_err(anyhow_error_to_string)
     }
 
     fn codex_check(&self) -> Result<(), String> {
@@ -2158,7 +2163,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             cli_check::check_cli_version(&codex, "codex")
         };
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn codex_config_tree(&self) -> Result<Vec<CodexConfigEntry>, String> {
@@ -2174,7 +2179,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(codex_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn codex_config_list_dir(&self, path: String) -> Result<Vec<CodexConfigEntry>, String> {
@@ -2199,7 +2204,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(codex_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn codex_config_read_file(&self, path: String) -> Result<String, String> {
@@ -2212,7 +2217,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::read_small_utf8_file(&abs)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn codex_config_write_file(&self, path: String, contents: String) -> Result<(), String> {
@@ -2225,7 +2230,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn amp_check(&self) -> Result<(), String> {
@@ -2236,7 +2241,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             cli_check::check_cli_version(&amp, "amp")
         };
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn amp_config_tree(&self) -> Result<Vec<luban_domain::AmpConfigEntry>, String> {
@@ -2252,7 +2257,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(amp_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn amp_config_list_dir(
@@ -2280,7 +2285,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(amp_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn amp_config_read_file(&self, path: String) -> Result<String, String> {
@@ -2293,7 +2298,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::read_small_utf8_file(&abs)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn amp_config_write_file(&self, path: String, contents: String) -> Result<(), String> {
@@ -2306,7 +2311,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn claude_check(&self) -> Result<(), String> {
@@ -2317,7 +2322,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             cli_check::check_cli_version(&claude, "claude")
         };
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn claude_config_tree(&self) -> Result<Vec<ClaudeConfigEntry>, String> {
@@ -2333,7 +2338,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(claude_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn claude_config_list_dir(&self, path: String) -> Result<Vec<ClaudeConfigEntry>, String> {
@@ -2358,7 +2363,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             Ok(claude_entries_from_shallow(entries))
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn claude_config_read_file(&self, path: String) -> Result<String, String> {
@@ -2371,7 +2376,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::read_small_utf8_file(&abs)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn claude_config_write_file(&self, path: String, contents: String) -> Result<(), String> {
@@ -2384,7 +2389,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 
     fn project_identity(&self, path: PathBuf) -> Result<luban_domain::ProjectIdentity, String> {
@@ -2424,7 +2429,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             })
         })();
 
-        result.map_err(|e| format!("{e:#}"))
+        result.map_err(anyhow_error_to_string)
     }
 }
 
