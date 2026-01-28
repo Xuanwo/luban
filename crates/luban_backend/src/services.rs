@@ -2515,10 +2515,8 @@ mod tests {
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
     use std::path::{Path, PathBuf};
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+        crate::env::lock_env_for_tests()
     }
 
     fn run_git(repo_path: &Path, args: &[&str]) -> std::process::Output {

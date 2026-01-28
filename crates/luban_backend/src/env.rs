@@ -1,6 +1,17 @@
 use anyhow::anyhow;
 use std::path::PathBuf;
 
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+#[cfg(test)]
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn lock_env_for_tests() -> MutexGuard<'static, ()> {
+    ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
 pub(crate) fn home_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
     Ok(PathBuf::from(home))
@@ -23,19 +34,13 @@ pub(crate) fn optional_trimmed_path_from_env(name: &str) -> anyhow::Result<Optio
 
 #[cfg(test)]
 mod tests {
+    use super::lock_env_for_tests;
     use super::{home_dir, optional_trimmed_path_from_env};
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn lock_env() -> MutexGuard<'static, ()> {
-        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
 
     #[test]
     fn home_dir_errors_when_unset() {
-        let _guard = lock_env();
+        let _guard = lock_env_for_tests();
 
         let prev = std::env::var_os("HOME");
         unsafe {
@@ -61,7 +66,7 @@ mod tests {
 
     #[test]
     fn home_dir_returns_value() {
-        let _guard = lock_env();
+        let _guard = lock_env_for_tests();
 
         let prev = std::env::var_os("HOME");
         unsafe {
@@ -84,7 +89,7 @@ mod tests {
 
     #[test]
     fn optional_trimmed_path_from_env_returns_none_when_unset() {
-        let _guard = lock_env();
+        let _guard = lock_env_for_tests();
 
         let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
         unsafe {
@@ -108,7 +113,7 @@ mod tests {
 
     #[test]
     fn optional_trimmed_path_from_env_errors_on_empty() {
-        let _guard = lock_env();
+        let _guard = lock_env_for_tests();
 
         let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
         unsafe {
@@ -136,7 +141,7 @@ mod tests {
 
     #[test]
     fn optional_trimmed_path_from_env_trims_value() {
-        let _guard = lock_env();
+        let _guard = lock_env_for_tests();
 
         let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
         unsafe {
