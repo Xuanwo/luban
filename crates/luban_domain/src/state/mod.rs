@@ -1,0 +1,29 @@
+mod agent;
+mod appearance;
+mod attachments;
+mod conversation;
+mod ids;
+mod layout;
+mod persisted;
+mod tabs;
+mod workspace;
+
+pub use agent::{AgentRunConfig, QueuedPrompt};
+pub use appearance::{AppearanceFonts, AppearanceTheme};
+pub use attachments::{AttachmentKind, AttachmentRef, ContextItem};
+pub use conversation::{
+    ChatScrollAnchor, ConversationEntry, ConversationSnapshot, ConversationThreadMeta,
+    DraftAttachment, WorkspaceConversation,
+};
+pub use ids::{ProjectId, WorkspaceId, WorkspaceThreadId};
+pub use layout::{MainPane, OperationStatus, RightPane, WorkspaceStatus};
+pub use persisted::{PersistedAppState, PersistedProject, PersistedWorkspace};
+pub use tabs::WorkspaceTabs;
+pub use workspace::{AppState, Project, Workspace};
+
+pub(crate) const MAX_CONVERSATION_ENTRIES_IN_MEMORY: usize = 5000;
+
+pub(crate) use conversation::{
+    apply_draft_text_diff, codex_item_id, entries_is_prefix, entries_is_suffix,
+    flush_in_progress_items,
+};

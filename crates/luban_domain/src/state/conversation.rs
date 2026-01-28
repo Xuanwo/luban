@@ -1,121 +1,11 @@
-use crate::{
-    CodexThreadItem, CodexUsage, ContextTokenKind, SystemTaskKind, TaskIntentKind, ThinkingEffort,
+use super::{
+    MAX_CONVERSATION_ENTRIES_IN_MEMORY, WorkspaceThreadId,
+    agent::{AgentRunConfig, QueuedPrompt},
+    attachments::AttachmentRef,
+    layout::OperationStatus,
 };
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    path::PathBuf,
-};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct ProjectId(pub(crate) u64);
-
-impl ProjectId {
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub fn from_u64(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct WorkspaceId(pub(crate) u64);
-
-impl WorkspaceId {
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub fn from_u64(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct WorkspaceThreadId(pub(crate) u64);
-
-impl WorkspaceThreadId {
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub fn from_u64(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MainPane {
-    None,
-    Dashboard,
-    ProjectSettings(ProjectId),
-    Workspace(WorkspaceId),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RightPane {
-    None,
-    Terminal,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WorkspaceStatus {
-    Active,
-    Archived,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OperationStatus {
-    Idle,
-    Running,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum AppearanceTheme {
-    Light,
-    Dark,
-    #[default]
-    System,
-}
-
-impl AppearanceTheme {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Light => "light",
-            Self::Dark => "dark",
-            Self::System => "system",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "light" => Some(Self::Light),
-            "dark" => Some(Self::Dark),
-            "system" => Some(Self::System),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppearanceFonts {
-    pub ui_font: String,
-    pub chat_font: String,
-    pub code_font: String,
-    pub terminal_font: String,
-}
-
-impl Default for AppearanceFonts {
-    fn default() -> Self {
-        Self {
-            ui_font: "Inter".to_owned(),
-            chat_font: "Inter".to_owned(),
-            code_font: "Geist Mono".to_owned(),
-            terminal_font: "Geist Mono".to_owned(),
-        }
-    }
-}
+use crate::{CodexThreadItem, CodexUsage, ContextTokenKind, ThinkingEffort};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -138,31 +28,6 @@ pub enum ConversationEntry {
     TurnError {
         message: String,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AttachmentKind {
-    Image,
-    Text,
-    File,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AttachmentRef {
-    pub id: String,
-    pub kind: AttachmentKind,
-    pub name: String,
-    pub extension: String,
-    pub mime: Option<String>,
-    pub byte_len: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ContextItem {
-    pub id: u64,
-    pub attachment: AttachmentRef,
-    pub created_at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -308,8 +173,6 @@ pub struct WorkspaceConversation {
     pub queue_paused: bool,
 }
 
-pub(crate) const MAX_CONVERSATION_ENTRIES_IN_MEMORY: usize = 5000;
-
 impl WorkspaceConversation {
     pub(crate) fn reset_entries_from_snapshot(&mut self, snapshot: ConversationSnapshot) {
         self.entries = snapshot.entries;
@@ -327,6 +190,7 @@ impl WorkspaceConversation {
 
     pub(crate) fn rebuild_codex_item_ids(&mut self) {
         self.codex_item_ids.clear();
+        self.codex_item_ids.reserve(self.entries.len());
         for entry in &self.entries {
             if let ConversationEntry::CodexItem { item } = entry {
                 self.codex_item_ids
@@ -378,85 +242,6 @@ impl WorkspaceConversation {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct WorkspaceTabs {
-    pub open_tabs: Vec<WorkspaceThreadId>,
-    pub archived_tabs: Vec<WorkspaceThreadId>,
-    pub active_tab: WorkspaceThreadId,
-    pub next_thread_id: u64,
-}
-
-impl WorkspaceTabs {
-    pub fn new_with_initial(thread_id: WorkspaceThreadId) -> Self {
-        Self {
-            open_tabs: vec![thread_id],
-            archived_tabs: Vec::new(),
-            active_tab: thread_id,
-            next_thread_id: thread_id.0 + 1,
-        }
-    }
-
-    pub fn activate(&mut self, thread_id: WorkspaceThreadId) {
-        self.active_tab = thread_id;
-        self.archived_tabs.retain(|id| *id != thread_id);
-        if !self.open_tabs.contains(&thread_id) {
-            self.open_tabs.push(thread_id);
-        }
-    }
-
-    pub fn archive_tab(&mut self, thread_id: WorkspaceThreadId) {
-        let mut active_fallback: Option<WorkspaceThreadId> = None;
-        if self.active_tab == thread_id
-            && let Some(idx) = self.open_tabs.iter().position(|id| *id == thread_id)
-        {
-            if idx > 0 {
-                active_fallback = Some(self.open_tabs[idx - 1]);
-            } else if idx + 1 < self.open_tabs.len() {
-                active_fallback = Some(self.open_tabs[idx + 1]);
-            }
-        }
-        self.open_tabs.retain(|id| *id != thread_id);
-        if !self.archived_tabs.contains(&thread_id) {
-            self.archived_tabs.push(thread_id);
-        }
-        if let Some(next) = active_fallback.or_else(|| self.open_tabs.first().copied()) {
-            self.active_tab = next;
-        }
-    }
-
-    pub fn restore_tab(&mut self, thread_id: WorkspaceThreadId, activate: bool) {
-        self.archived_tabs.retain(|id| *id != thread_id);
-        if !self.open_tabs.contains(&thread_id) {
-            self.open_tabs.push(thread_id);
-        }
-        if activate {
-            self.active_tab = thread_id;
-        }
-    }
-
-    pub fn allocate_thread_id(&mut self) -> WorkspaceThreadId {
-        let id = WorkspaceThreadId(self.next_thread_id);
-        self.next_thread_id += 1;
-        id
-    }
-
-    pub fn reorder_tab(&mut self, thread_id: WorkspaceThreadId, to_index: usize) -> bool {
-        let Some(from_index) = self.open_tabs.iter().position(|id| *id == thread_id) else {
-            return false;
-        };
-        if from_index == to_index {
-            return false;
-        }
-        let tab = self.open_tabs.remove(from_index);
-        let mut target = to_index.min(self.open_tabs.len());
-        if from_index < to_index {
-            target = target.saturating_sub(1);
-        }
-        self.open_tabs.insert(target, tab);
-        true
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DraftAttachment {
     pub id: u64,
@@ -505,7 +290,6 @@ pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, ne
             let shifted = anchor as isize + delta;
             attachment.anchor = shifted.max(0) as usize;
         } else {
-            // Preference A: snap to the start of the deleted/replaced region.
             attachment.anchor = start;
         }
         attachment.anchor = attachment.anchor.min(new_len);
@@ -517,15 +301,6 @@ pub(crate) fn apply_draft_text_diff(conversation: &mut WorkspaceConversation, ne
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn restore_tab_opens_even_when_not_archived() {
-        let mut tabs = WorkspaceTabs::new_with_initial(WorkspaceThreadId(1));
-        tabs.restore_tab(WorkspaceThreadId(2), true);
-        assert_eq!(tabs.active_tab, WorkspaceThreadId(2));
-        assert!(tabs.open_tabs.contains(&WorkspaceThreadId(2)));
-        assert!(!tabs.archived_tabs.contains(&WorkspaceThreadId(2)));
-    }
 
     fn conversation_with_draft(draft: &str, anchors: &[usize]) -> WorkspaceConversation {
         let state = crate::AppState::new();
@@ -696,154 +471,4 @@ mod tests {
         };
         assert_eq!(first_entry_id, "item-a");
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AgentRunConfig {
-    #[serde(default = "crate::default_agent_runner_kind")]
-    pub runner: crate::AgentRunnerKind,
-    pub model_id: String,
-    pub thinking_effort: ThinkingEffort,
-    #[serde(default)]
-    pub amp_mode: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct QueuedPrompt {
-    pub id: u64,
-    pub text: String,
-    pub attachments: Vec<AttachmentRef>,
-    pub run_config: AgentRunConfig,
-}
-
-#[derive(Clone, Debug)]
-pub struct Workspace {
-    pub id: WorkspaceId,
-    pub workspace_name: String,
-    pub branch_name: String,
-    pub worktree_path: PathBuf,
-    pub status: WorkspaceStatus,
-    pub last_activity_at: Option<std::time::SystemTime>,
-    pub archive_status: OperationStatus,
-    pub branch_rename_status: OperationStatus,
-}
-
-#[derive(Clone, Debug)]
-pub struct Project {
-    pub id: ProjectId,
-    pub name: String,
-    pub path: PathBuf,
-    pub slug: String,
-    pub is_git: bool,
-    pub expanded: bool,
-    pub create_workspace_status: OperationStatus,
-    pub workspaces: Vec<Workspace>,
-}
-
-#[derive(Clone, Debug)]
-pub struct AppState {
-    pub(crate) next_project_id: u64,
-    pub(crate) next_workspace_id: u64,
-
-    pub projects: Vec<Project>,
-    pub main_pane: MainPane,
-    pub right_pane: RightPane,
-    pub sidebar_width: Option<u16>,
-    pub terminal_pane_width: Option<u16>,
-    pub global_zoom_percent: u16,
-    pub appearance_theme: AppearanceTheme,
-    pub appearance_fonts: AppearanceFonts,
-    pub(crate) agent_default_model_id: String,
-    pub(crate) agent_default_thinking_effort: ThinkingEffort,
-    pub(crate) agent_default_runner: crate::AgentRunnerKind,
-    pub(crate) agent_amp_mode: String,
-    pub(crate) agent_codex_enabled: bool,
-    pub(crate) agent_amp_enabled: bool,
-    pub conversations: HashMap<(WorkspaceId, WorkspaceThreadId), WorkspaceConversation>,
-    pub workspace_tabs: HashMap<WorkspaceId, WorkspaceTabs>,
-    pub dashboard_preview_workspace_id: Option<WorkspaceId>,
-    pub last_open_workspace_id: Option<WorkspaceId>,
-    pub open_button_selection: Option<String>,
-    pub last_error: Option<String>,
-    pub workspace_chat_scroll_y10: HashMap<(WorkspaceId, WorkspaceThreadId), i32>,
-    pub workspace_chat_scroll_anchor: HashMap<(WorkspaceId, WorkspaceThreadId), ChatScrollAnchor>,
-    pub workspace_unread_completions: HashSet<WorkspaceId>,
-    pub task_prompt_templates: HashMap<TaskIntentKind, String>,
-    pub system_prompt_templates: HashMap<SystemTaskKind, String>,
-}
-
-impl AppState {
-    pub fn agent_codex_enabled(&self) -> bool {
-        self.agent_codex_enabled
-    }
-
-    pub fn agent_amp_enabled(&self) -> bool {
-        self.agent_amp_enabled
-    }
-
-    pub fn agent_default_model_id(&self) -> &str {
-        &self.agent_default_model_id
-    }
-
-    pub fn agent_default_thinking_effort(&self) -> ThinkingEffort {
-        self.agent_default_thinking_effort
-    }
-
-    pub fn agent_default_runner(&self) -> crate::AgentRunnerKind {
-        self.agent_default_runner
-    }
-
-    pub fn agent_amp_mode(&self) -> &str {
-        &self.agent_amp_mode
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PersistedAppState {
-    pub projects: Vec<PersistedProject>,
-    pub sidebar_width: Option<u16>,
-    pub terminal_pane_width: Option<u16>,
-    pub global_zoom_percent: Option<u16>,
-    pub appearance_theme: Option<String>,
-    pub appearance_ui_font: Option<String>,
-    pub appearance_chat_font: Option<String>,
-    pub appearance_code_font: Option<String>,
-    pub appearance_terminal_font: Option<String>,
-    pub agent_default_model_id: Option<String>,
-    pub agent_default_thinking_effort: Option<String>,
-    pub agent_default_runner: Option<String>,
-    pub agent_amp_mode: Option<String>,
-    pub agent_codex_enabled: Option<bool>,
-    pub agent_amp_enabled: Option<bool>,
-    pub last_open_workspace_id: Option<u64>,
-    pub open_button_selection: Option<String>,
-    pub workspace_active_thread_id: HashMap<u64, u64>,
-    pub workspace_open_tabs: HashMap<u64, Vec<u64>>,
-    pub workspace_archived_tabs: HashMap<u64, Vec<u64>>,
-    pub workspace_next_thread_id: HashMap<u64, u64>,
-    pub workspace_chat_scroll_y10: HashMap<(u64, u64), i32>,
-    pub workspace_chat_scroll_anchor: HashMap<(u64, u64), ChatScrollAnchor>,
-    pub workspace_unread_completions: HashMap<u64, bool>,
-    pub task_prompt_templates: HashMap<String, String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PersistedProject {
-    pub id: u64,
-    pub name: String,
-    pub path: PathBuf,
-    pub slug: String,
-    pub is_git: bool,
-    pub expanded: bool,
-    pub workspaces: Vec<PersistedWorkspace>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PersistedWorkspace {
-    pub id: u64,
-    pub workspace_name: String,
-    pub branch_name: String,
-    pub worktree_path: PathBuf,
-    pub status: WorkspaceStatus,
-    pub last_activity_at_unix_seconds: Option<u64>,
 }
