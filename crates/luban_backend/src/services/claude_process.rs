@@ -113,15 +113,10 @@ impl ClaudeThreadProcess {
 
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let turn_completed = Arc::new(AtomicBool::new(false));
-        let shutdown = Arc::new(AtomicBool::new(false));
 
         // Spawn stdout reader thread
-        let reader_handle = Self::spawn_stdout_reader(
-            stdout,
-            event_queue.clone(),
-            turn_completed.clone(),
-            shutdown.clone(),
-        );
+        let reader_handle =
+            Self::spawn_stdout_reader(stdout, event_queue.clone(), turn_completed.clone());
 
         let process = Self {
             child: Arc::new(Mutex::new(child)),
@@ -142,17 +137,12 @@ impl ClaudeThreadProcess {
         stdout: ChildStdout,
         event_queue: Arc<Mutex<VecDeque<AgentThreadEvent>>>,
         turn_completed: Arc<AtomicBool>,
-        shutdown: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut state = ClaudeStreamState::new();
 
             for line in reader.lines() {
-                if shutdown.load(Ordering::SeqCst) {
-                    break;
-                }
-
                 let line = match line {
                     Ok(l) => l,
                     Err(_) => break,
