@@ -190,16 +190,14 @@ pub(crate) fn codex_item_id(item: &CodexThreadItem) -> &str {
 }
 
 pub(crate) fn flush_in_progress_items(conversation: &mut WorkspaceConversation) {
-    let pending = conversation
-        .in_progress_order
-        .iter()
-        .filter_map(|id| conversation.in_progress_items.get(id))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    for item in pending {
-        conversation.push_codex_item_if_new(item);
+    let order = std::mem::take(&mut conversation.in_progress_order);
+    for id in order.iter() {
+        let item = conversation.in_progress_items.get(id).cloned();
+        if let Some(item) = item {
+            conversation.push_codex_item_if_new(item);
+        }
     }
+    conversation.in_progress_order = order;
 }
 
 fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
@@ -628,6 +626,35 @@ mod tests {
             other => panic!("expected codex item entry, got {other:?}"),
         };
         assert_eq!(first_entry_id, "item-c");
+    }
+
+    #[test]
+    fn flush_in_progress_items_preserves_order_and_avoids_duplicates() {
+        let state = crate::AppState::new();
+        let mut conversation = state.default_conversation(WorkspaceThreadId(1));
+
+        for (id, text) in [("item-a", "a"), ("item-b", "b")] {
+            let id = id.to_owned();
+            conversation.in_progress_items.insert(
+                id.clone(),
+                CodexThreadItem::AgentMessage {
+                    id: id.clone(),
+                    text: text.to_owned(),
+                },
+            );
+            conversation.in_progress_order.push_back(id);
+        }
+        let expected_order = conversation.in_progress_order.clone();
+
+        flush_in_progress_items(&mut conversation);
+        assert_eq!(conversation.in_progress_order, expected_order);
+        assert_eq!(conversation.entries.len(), 2);
+        assert!(conversation.codex_item_ids.contains("item-a"));
+        assert!(conversation.codex_item_ids.contains("item-b"));
+
+        flush_in_progress_items(&mut conversation);
+        assert_eq!(conversation.in_progress_order, expected_order);
+        assert_eq!(conversation.entries.len(), 2);
     }
 }
 
