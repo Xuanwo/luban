@@ -2240,24 +2240,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<String> = (|| {
             let root = resolve_codex_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let meta = std::fs::metadata(&abs)
@@ -2282,24 +2265,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<()> = (|| {
             let root = resolve_codex_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let parent = abs
@@ -2471,24 +2437,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<String> = (|| {
             let root = resolve_amp_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let meta = std::fs::metadata(&abs)
@@ -2513,24 +2462,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<()> = (|| {
             let root = resolve_amp_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let parent = abs
@@ -2690,24 +2622,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<String> = (|| {
             let root = resolve_claude_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let meta = std::fs::metadata(&abs)
@@ -2732,24 +2647,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<()> = (|| {
             let root = resolve_claude_root()?;
 
-            let rel = path.trim();
-            if rel.is_empty() {
-                return Err(anyhow!("path is empty"));
-            }
-            if rel.starts_with('/') {
-                return Err(anyhow!("path must be relative"));
-            }
-            if rel.contains('\\') {
-                return Err(anyhow!("invalid path separator"));
-            }
-
-            let mut rel_path = PathBuf::new();
-            for segment in rel.split('/') {
-                if segment.is_empty() || segment == "." || segment == ".." {
-                    return Err(anyhow!("invalid path segment"));
-                }
-                rel_path.push(segment);
-            }
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
             let parent = abs

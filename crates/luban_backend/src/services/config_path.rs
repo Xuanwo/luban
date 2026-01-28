@@ -44,9 +44,20 @@ pub(super) fn parse_lenient_relative_list_dir_path(path: &str) -> anyhow::Result
     Ok(rel_path)
 }
 
+pub(super) fn parse_strict_relative_file_path(path: &str) -> anyhow::Result<PathBuf> {
+    let rel = path.trim();
+    if rel.is_empty() {
+        return Err(anyhow!("path is empty"));
+    }
+    parse_strict_relative_list_dir_path(rel)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_lenient_relative_list_dir_path, parse_strict_relative_list_dir_path};
+    use super::{
+        parse_lenient_relative_list_dir_path, parse_strict_relative_file_path,
+        parse_strict_relative_list_dir_path,
+    };
 
     #[test]
     fn strict_accepts_empty_as_root() {
@@ -137,6 +148,20 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "invalid path separator"
+        );
+    }
+
+    #[test]
+    fn file_path_requires_non_empty() {
+        assert_eq!(
+            parse_strict_relative_file_path("").unwrap_err().to_string(),
+            "path is empty"
+        );
+        assert_eq!(
+            parse_strict_relative_file_path("   ")
+                .unwrap_err()
+                .to_string(),
+            "path is empty"
         );
     }
 }
