@@ -20,7 +20,6 @@ use std::{
 
 use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
-use crate::env::{home_dir, optional_trimmed_path_from_env};
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
 use crate::time::{unix_epoch_micros_now, unix_epoch_nanos_now};
 
@@ -36,6 +35,7 @@ mod feedback;
 mod git;
 mod prompt;
 mod pull_request;
+mod roots;
 mod task;
 use amp_cli::AmpTurnParams;
 use claude_cli::ClaudeTurnParams;
@@ -43,6 +43,7 @@ use codex_cli::CodexTurnParams;
 use codex_thread::{codex_item_id, qualify_codex_item, qualify_event};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
+use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
 
 fn contains_attempt_fraction(text: &str) -> bool {
     let mut chars = text.chars().peekable();
@@ -87,64 +88,6 @@ fn generate_turn_scope_id() -> String {
     let micros = unix_epoch_micros_now();
     let rand: u64 = OsRng.r#gen();
     format!("turn-{micros:x}-{rand:x}")
-}
-
-fn resolve_luban_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_ROOT_ENV)? {
-        return Ok(root);
-    }
-
-    if cfg!(test) {
-        let nanos = unix_epoch_nanos_now();
-        let pid = std::process::id();
-        return Ok(std::env::temp_dir().join(format!("luban-test-{pid}-{nanos}")));
-    }
-
-    Ok(home_dir()?.join("luban"))
-}
-
-fn resolve_codex_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_CODEX_ROOT_ENV)? {
-        return Ok(root);
-    }
-
-    if cfg!(test) {
-        return Ok(PathBuf::from(".codex"));
-    }
-
-    Ok(home_dir()?.join(".codex"))
-}
-
-fn resolve_amp_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_AMP_ROOT_ENV)? {
-        return Ok(root);
-    }
-
-    if cfg!(test) {
-        return Ok(PathBuf::from(".amp"));
-    }
-
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        let xdg = xdg.to_string_lossy();
-        let trimmed = xdg.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed).join("amp"));
-        }
-    }
-
-    Ok(home_dir()?.join(".config").join("amp"))
-}
-
-fn resolve_claude_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_CLAUDE_ROOT_ENV)? {
-        return Ok(root);
-    }
-
-    if cfg!(test) {
-        return Ok(PathBuf::from(".claude"));
-    }
-
-    Ok(home_dir()?.join(".claude"))
 }
 
 fn parse_amp_mode_from_config_text(contents: &str) -> Option<String> {
