@@ -1,6 +1,7 @@
 use super::fonts::normalize_font;
 use super::strings::normalize_optional_string;
 use crate::agent_settings::{parse_agent_runner_kind, parse_thinking_effort};
+use crate::time::system_time_from_unix_seconds;
 use crate::{
     AppState, AppearanceFonts, AppearanceTheme, Effect, MainPane, OperationStatus,
     PersistedAppState, PersistedProject, Project, ProjectId, RightPane, TaskIntentKind, Workspace,
@@ -10,7 +11,6 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, UNIX_EPOCH};
 
 fn normalize_thread_tabs(
     active: WorkspaceThreadId,
@@ -278,7 +278,7 @@ fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
                     status: w.status,
                     last_activity_at: w
                         .last_activity_at_unix_seconds
-                        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs)),
+                        .map(system_time_from_unix_seconds),
                     archive_status: OperationStatus::Idle,
                     branch_rename_status: OperationStatus::Idle,
                 })
