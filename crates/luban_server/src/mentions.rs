@@ -1,20 +1,21 @@
 use anyhow::Context as _;
 use luban_api::{MentionItemKind, MentionItemSnapshot};
 
-fn escape_glob_fragment(fragment: &str) -> String {
-    fragment
-        .chars()
-        .flat_map(|ch| match ch {
-            '*' | '?' | '[' | ']' | '{' | '}' | '!' => vec!['\\', ch],
-            other => vec![other],
-        })
-        .collect()
+fn append_escaped_glob_char(out: &mut String, ch: char) {
+    match ch {
+        '*' | '?' | '[' | ']' | '{' | '}' | '!' => {
+            out.push('\\');
+            out.push(ch);
+        }
+        other => out.push(other),
+    }
 }
 
 fn fuzzy_glob_pattern(query: &str) -> String {
-    let mut out = String::from("**/*");
+    let mut out = String::with_capacity("**/*".len() + query.len() * 2);
+    out.push_str("**/*");
     for ch in query.chars() {
-        out.push_str(&escape_glob_fragment(&ch.to_string()));
+        append_escaped_glob_char(&mut out, ch);
         out.push('*');
     }
     out
@@ -63,7 +64,7 @@ pub fn search_workspace_mentions(
 
     let max_rg_lines = 2000usize;
     let max_files = 200usize;
-    let mut candidate_paths = Vec::new();
+    let mut candidate_paths = Vec::with_capacity(max_rg_lines.min(256));
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -78,26 +79,29 @@ pub fn search_workspace_mentions(
     let needle_lower = trimmed.to_ascii_lowercase();
     let needle_bytes = needle_lower.as_bytes();
 
-    let mut file_paths = Vec::new();
+    let mut file_paths: Vec<(String, String)> = Vec::with_capacity(max_files.min(64));
     for file in candidate_paths.into_iter() {
-        let name = file.rsplit('/').next().unwrap_or(&file);
-        if !fuzzy_match_ascii(needle_bytes, name.as_bytes()) {
-            continue;
-        }
-        file_paths.push(file);
+        let name_lower = {
+            let name = file.rsplit('/').next().unwrap_or(file.as_str());
+            if !fuzzy_match_ascii(needle_bytes, name.as_bytes()) {
+                continue;
+            }
+            name.to_ascii_lowercase()
+        };
+        file_paths.push((file, name_lower));
         if file_paths.len() >= max_files {
             break;
         }
     }
 
-    file_paths.sort_by(|a, b| {
-        let an = a.rsplit('/').next().unwrap_or(a).to_ascii_lowercase();
-        let bn = b.rsplit('/').next().unwrap_or(b).to_ascii_lowercase();
-        an.cmp(&bn).then_with(|| a.cmp(b))
+    file_paths.sort_by(|(a_path, a_name_lower), (b_path, b_name_lower)| {
+        a_name_lower
+            .cmp(b_name_lower)
+            .then_with(|| a_path.cmp(b_path))
     });
 
     let mut folder_paths = std::collections::BTreeSet::new();
-    for file in &file_paths {
+    for (file, _) in &file_paths {
         let path = std::path::Path::new(file);
         let mut parent = path.parent();
         while let Some(dir) = parent {
@@ -132,7 +136,7 @@ pub fn search_workspace_mentions(
         }
     }
 
-    for file in file_paths.into_iter() {
+    for (file, _) in file_paths.into_iter() {
         let name = file.rsplit('/').next().unwrap_or(&file).to_owned();
         items.push(MentionItemSnapshot {
             id: format!("file:{file}"),
@@ -158,5 +162,10 @@ mod tests {
         assert!(fuzzy_match_ascii(needle, b"README.md"));
         assert!(fuzzy_match_ascii(needle, b"readme.md"));
         assert!(!fuzzy_match_ascii(needle, b"mdrea"));
+    }
+
+    #[test]
+    fn fuzzy_glob_pattern_escapes_glob_chars() {
+        assert_eq!(fuzzy_glob_pattern("*?[!]"), "**/*\\**\\?*\\[*\\!*\\]*");
     }
 }
