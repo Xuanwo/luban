@@ -2322,7 +2322,8 @@ mod tests {
     use super::prompt::PromptAttachment;
     use super::pull_request::is_merge_ready;
     use super::test_support::{
-        assert_git_success, git_rev_parse, lock_env, run_git, stored_blob_path, temp_services_dir,
+        EnvVarGuard, assert_git_success, git_rev_parse, lock_env, run_git, stored_blob_path,
+        temp_services_dir,
     };
     use super::*;
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
@@ -2471,33 +2472,29 @@ mod tests {
             unique
         ));
         std::fs::create_dir_all(&root).expect("temp dir should be created");
-        unsafe {
-            std::env::set_var(paths::LUBAN_ROOT_ENV, root.as_os_str());
-        }
+        {
+            let _env = EnvVarGuard::set(paths::LUBAN_ROOT_ENV, root.as_os_str());
 
-        let service = GitWorkspaceService::new().expect("service should init");
-        service
-            .task_prompt_template_store(TaskIntentKind::Fix, "hello".to_owned())
-            .expect("store should succeed");
+            let service = GitWorkspaceService::new().expect("service should init");
+            service
+                .task_prompt_template_store(TaskIntentKind::Fix, "hello".to_owned())
+                .expect("store should succeed");
 
-        let loaded = service
-            .task_prompt_templates_load()
-            .expect("load should succeed");
-        assert_eq!(
-            loaded.get(&TaskIntentKind::Fix).map(String::as_str),
-            Some("hello")
-        );
+            let loaded = service
+                .task_prompt_templates_load()
+                .expect("load should succeed");
+            assert_eq!(
+                loaded.get(&TaskIntentKind::Fix).map(String::as_str),
+                Some("hello")
+            );
 
-        service
-            .task_prompt_template_delete(TaskIntentKind::Fix)
-            .expect("delete should succeed");
-        let loaded = service
-            .task_prompt_templates_load()
-            .expect("load should succeed");
-        assert!(!loaded.contains_key(&TaskIntentKind::Fix));
-
-        unsafe {
-            std::env::remove_var(paths::LUBAN_ROOT_ENV);
+            service
+                .task_prompt_template_delete(TaskIntentKind::Fix)
+                .expect("delete should succeed");
+            let loaded = service
+                .task_prompt_templates_load()
+                .expect("load should succeed");
+            assert!(!loaded.contains_key(&TaskIntentKind::Fix));
         }
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2527,11 +2524,6 @@ mod tests {
         std::fs::create_dir_all(&prompts_dir).expect("prompts dir should be created");
         std::fs::write(prompts_dir.join("hello.md"), "# Hello\n").expect("write prompt");
 
-        let prev = std::env::var_os(paths::LUBAN_CODEX_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2544,26 +2536,23 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::codex_config_tree(&service)
-            .expect("codex_config_tree should succeed");
+        let tree = {
+            let _env = EnvVarGuard::set(paths::LUBAN_CODEX_ROOT_ENV, &root);
 
-        let entries = ProjectWorkspaceService::codex_config_list_dir(&service, "cache".to_owned())
-            .expect("codex_config_list_dir should succeed");
-        assert!(
-            entries.len() >= 3000,
-            "expected list_dir to include all files (got {})",
-            entries.len()
-        );
+            let tree = ProjectWorkspaceService::codex_config_tree(&service)
+                .expect("codex_config_tree should succeed");
 
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_CODEX_ROOT_ENV);
-            }
-        }
+            let entries =
+                ProjectWorkspaceService::codex_config_list_dir(&service, "cache".to_owned())
+                    .expect("codex_config_list_dir should succeed");
+            assert!(
+                entries.len() >= 3000,
+                "expected list_dir to include all files (got {})",
+                entries.len()
+            );
+
+            tree
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[CodexConfigEntry]) {
@@ -2610,11 +2599,6 @@ mod tests {
         std::fs::write(root.join("AGENTS-target.md"), "hello").expect("write target");
         symlink("AGENTS-target.md", root.join("AGENTS.md")).expect("symlink should be created");
 
-        let prev = std::env::var_os(paths::LUBAN_CODEX_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2627,8 +2611,15 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::codex_config_tree(&service)
-            .expect("codex_config_tree should succeed");
+        let (tree, contents) = {
+            let _env = EnvVarGuard::set(paths::LUBAN_CODEX_ROOT_ENV, &root);
+            let tree = ProjectWorkspaceService::codex_config_tree(&service)
+                .expect("codex_config_tree should succeed");
+            let contents =
+                ProjectWorkspaceService::codex_config_read_file(&service, "AGENTS.md".to_owned())
+                    .expect("read should succeed");
+            (tree, contents)
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[CodexConfigEntry]) {
@@ -2643,20 +2634,7 @@ mod tests {
             "tree should include AGENTS.md symlink"
         );
 
-        let contents =
-            ProjectWorkspaceService::codex_config_read_file(&service, "AGENTS.md".to_owned())
-                .expect("read should succeed");
         assert_eq!(contents, "hello");
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_CODEX_ROOT_ENV);
-            }
-        }
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
@@ -2687,11 +2665,6 @@ mod tests {
         std::fs::create_dir_all(&prompts_dir).expect("prompts dir should be created");
         std::fs::write(prompts_dir.join("hello.md"), "# Hello\n").expect("write prompt");
 
-        let prev = std::env::var_os(paths::LUBAN_AMP_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2704,46 +2677,44 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::amp_config_tree(&service)
-            .expect("amp_config_tree should succeed");
+        let tree = {
+            let _env = EnvVarGuard::set(paths::LUBAN_AMP_ROOT_ENV, &root);
 
-        let entries = ProjectWorkspaceService::amp_config_list_dir(&service, "cache".to_owned())
-            .expect("amp_config_list_dir should succeed");
-        assert!(
-            entries.len() >= 3000,
-            "expected list_dir to include all files (got {})",
-            entries.len()
-        );
+            let tree = ProjectWorkspaceService::amp_config_tree(&service)
+                .expect("amp_config_tree should succeed");
 
-        let root_entries = ProjectWorkspaceService::amp_config_list_dir(&service, "".to_owned())
-            .expect("amp_config_list_dir root should succeed");
-        assert!(
-            root_entries.iter().any(|e| e.path == "config.yaml"),
-            "root list_dir should include config.yaml"
-        );
+            let entries =
+                ProjectWorkspaceService::amp_config_list_dir(&service, "cache".to_owned())
+                    .expect("amp_config_list_dir should succeed");
+            assert!(
+                entries.len() >= 3000,
+                "expected list_dir to include all files (got {})",
+                entries.len()
+            );
 
-        ProjectWorkspaceService::amp_config_write_file(
-            &service,
-            "nested/example.txt".to_owned(),
-            "hello".to_owned(),
-        )
-        .expect("amp_config_write_file should succeed");
-        let loaded = ProjectWorkspaceService::amp_config_read_file(
-            &service,
-            "nested/example.txt".to_owned(),
-        )
-        .expect("amp_config_read_file should succeed");
-        assert_eq!(loaded, "hello");
+            let root_entries =
+                ProjectWorkspaceService::amp_config_list_dir(&service, "".to_owned())
+                    .expect("amp_config_list_dir root should succeed");
+            assert!(
+                root_entries.iter().any(|e| e.path == "config.yaml"),
+                "root list_dir should include config.yaml"
+            );
 
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_AMP_ROOT_ENV);
-            }
-        }
+            ProjectWorkspaceService::amp_config_write_file(
+                &service,
+                "nested/example.txt".to_owned(),
+                "hello".to_owned(),
+            )
+            .expect("amp_config_write_file should succeed");
+            let loaded = ProjectWorkspaceService::amp_config_read_file(
+                &service,
+                "nested/example.txt".to_owned(),
+            )
+            .expect("amp_config_read_file should succeed");
+            assert_eq!(loaded, "hello");
+
+            tree
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[luban_domain::AmpConfigEntry]) {
@@ -2790,11 +2761,6 @@ mod tests {
         std::fs::write(root.join("config-target.yaml"), "model: amp\n").expect("write target");
         symlink("config-target.yaml", root.join("config.yaml")).expect("symlink should be created");
 
-        let prev = std::env::var_os(paths::LUBAN_AMP_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2807,8 +2773,15 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::amp_config_tree(&service)
-            .expect("amp_config_tree should succeed");
+        let (tree, contents) = {
+            let _env = EnvVarGuard::set(paths::LUBAN_AMP_ROOT_ENV, &root);
+            let tree = ProjectWorkspaceService::amp_config_tree(&service)
+                .expect("amp_config_tree should succeed");
+            let contents =
+                ProjectWorkspaceService::amp_config_read_file(&service, "config.yaml".to_owned())
+                    .expect("read should succeed");
+            (tree, contents)
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[luban_domain::AmpConfigEntry]) {
@@ -2823,20 +2796,7 @@ mod tests {
             "tree should include config.yaml symlink"
         );
 
-        let contents =
-            ProjectWorkspaceService::amp_config_read_file(&service, "config.yaml".to_owned())
-                .expect("read should succeed");
         assert_eq!(contents, "model: amp\n");
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_AMP_ROOT_ENV);
-            }
-        }
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
@@ -2868,11 +2828,6 @@ mod tests {
         )
         .expect("write settings.json");
 
-        let prev = std::env::var_os(paths::LUBAN_CLAUDE_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2885,26 +2840,23 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::claude_config_tree(&service)
-            .expect("claude_config_tree should succeed");
+        let tree = {
+            let _env = EnvVarGuard::set(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
 
-        let entries = ProjectWorkspaceService::claude_config_list_dir(&service, "cache".to_owned())
-            .expect("claude_config_list_dir should succeed");
-        assert!(
-            entries.len() >= 512,
-            "expected list_dir to include all files (got {})",
-            entries.len()
-        );
+            let tree = ProjectWorkspaceService::claude_config_tree(&service)
+                .expect("claude_config_tree should succeed");
 
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_CLAUDE_ROOT_ENV);
-            }
-        }
+            let entries =
+                ProjectWorkspaceService::claude_config_list_dir(&service, "cache".to_owned())
+                    .expect("claude_config_list_dir should succeed");
+            assert!(
+                entries.len() >= 512,
+                "expected list_dir to include all files (got {})",
+                entries.len()
+            );
+
+            tree
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[ClaudeConfigEntry]) {
@@ -2949,11 +2901,6 @@ mod tests {
         symlink("settings-target.json", root.join("settings.json"))
             .expect("symlink should be created");
 
-        let prev = std::env::var_os(paths::LUBAN_CLAUDE_ROOT_ENV);
-        unsafe {
-            std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
-        }
-
         let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
@@ -2966,8 +2913,17 @@ mod tests {
             claude_processes: Mutex::new(HashMap::new()),
         };
 
-        let tree = ProjectWorkspaceService::claude_config_tree(&service)
-            .expect("claude_config_tree should succeed");
+        let (tree, contents) = {
+            let _env = EnvVarGuard::set(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
+            let tree = ProjectWorkspaceService::claude_config_tree(&service)
+                .expect("claude_config_tree should succeed");
+            let contents = ProjectWorkspaceService::claude_config_read_file(
+                &service,
+                "settings.json".to_owned(),
+            )
+            .expect("read should succeed");
+            (tree, contents)
+        };
 
         let mut paths = Vec::new();
         fn collect(out: &mut Vec<String>, entries: &[ClaudeConfigEntry]) {
@@ -2982,20 +2938,7 @@ mod tests {
             "tree should include settings.json symlink"
         );
 
-        let contents =
-            ProjectWorkspaceService::claude_config_read_file(&service, "settings.json".to_owned())
-                .expect("read should succeed");
         assert_eq!(contents, "{ \"ok\": true }\n");
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_CLAUDE_ROOT_ENV);
-            }
-        }
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
@@ -3047,33 +2990,29 @@ mod tests {
             unique
         ));
         std::fs::create_dir_all(&root).expect("temp dir should be created");
-        unsafe {
-            std::env::set_var(paths::LUBAN_ROOT_ENV, root.as_os_str());
-        }
+        {
+            let _env = EnvVarGuard::set(paths::LUBAN_ROOT_ENV, root.as_os_str());
 
-        let service = GitWorkspaceService::new().expect("service should init");
-        service
-            .system_prompt_template_store(SystemTaskKind::InferType, "hello".to_owned())
-            .expect("store should succeed");
+            let service = GitWorkspaceService::new().expect("service should init");
+            service
+                .system_prompt_template_store(SystemTaskKind::InferType, "hello".to_owned())
+                .expect("store should succeed");
 
-        let loaded = service
-            .system_prompt_templates_load()
-            .expect("load should succeed");
-        assert_eq!(
-            loaded.get(&SystemTaskKind::InferType).map(String::as_str),
-            Some("hello")
-        );
+            let loaded = service
+                .system_prompt_templates_load()
+                .expect("load should succeed");
+            assert_eq!(
+                loaded.get(&SystemTaskKind::InferType).map(String::as_str),
+                Some("hello")
+            );
 
-        service
-            .system_prompt_template_delete(SystemTaskKind::InferType)
-            .expect("delete should succeed");
-        let loaded = service
-            .system_prompt_templates_load()
-            .expect("load should succeed");
-        assert!(!loaded.contains_key(&SystemTaskKind::InferType));
-
-        unsafe {
-            std::env::remove_var(paths::LUBAN_ROOT_ENV);
+            service
+                .system_prompt_template_delete(SystemTaskKind::InferType)
+                .expect("delete should succeed");
+            let loaded = service
+                .system_prompt_templates_load()
+                .expect("load should succeed");
+            assert!(!loaded.contains_key(&SystemTaskKind::InferType));
         }
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3091,9 +3030,7 @@ mod tests {
         std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
 
         let missing_codex = base_dir.join("missing-codex-bin");
-        unsafe {
-            std::env::set_var(paths::LUBAN_CODEX_BIN_ENV, missing_codex.as_os_str());
-        }
+        let _env = EnvVarGuard::set(paths::LUBAN_CODEX_BIN_ENV, missing_codex.as_os_str());
 
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -3121,10 +3058,7 @@ mod tests {
             )
             .expect_err("missing codex executable should fail");
 
-        unsafe {
-            std::env::remove_var(paths::LUBAN_CODEX_BIN_ENV);
-        }
-
+        drop(_env);
         assert!(err.to_string().contains("missing codex executable"));
 
         drop(service);
@@ -3171,9 +3105,7 @@ mod tests {
             std::fs::set_permissions(&fake_codex, perms).expect("fake codex should be executable");
         }
 
-        unsafe {
-            std::env::set_var(paths::LUBAN_CODEX_BIN_ENV, fake_codex.as_os_str());
-        }
+        let _env = EnvVarGuard::set(paths::LUBAN_CODEX_BIN_ENV, fake_codex.as_os_str());
 
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -3205,10 +3137,7 @@ mod tests {
             )
             .expect_err("missing final message should be treated as an error");
 
-        unsafe {
-            std::env::remove_var(paths::LUBAN_CODEX_BIN_ENV);
-        }
-
+        drop(_env);
         assert!(
             err.contains("without a final message"),
             "unexpected error: {err}"
@@ -3234,10 +3163,7 @@ mod tests {
     fn tests_do_not_use_production_db_by_default() {
         let _guard = lock_env();
 
-        let prev = std::env::var_os(paths::LUBAN_ROOT_ENV);
-        unsafe {
-            std::env::remove_var(paths::LUBAN_ROOT_ENV);
-        }
+        let _env = EnvVarGuard::remove(paths::LUBAN_ROOT_ENV);
 
         let root = resolve_luban_root().expect("test root should resolve");
         assert!(
@@ -3245,51 +3171,36 @@ mod tests {
             "expected test root under temp dir, got {}",
             root.display()
         );
-
-        if let Some(prev) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_ROOT_ENV, prev);
-            }
-        }
+        drop(_env);
     }
 
     #[test]
     fn luban_root_env_overrides_default_root() {
         let _guard = lock_env();
 
-        let prev = std::env::var_os(paths::LUBAN_ROOT_ENV);
         let unique = unix_epoch_nanos_now();
         let base_dir =
             std::env::temp_dir().join(format!("luban-root-env-{}-{}", std::process::id(), unique));
         std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
 
-        unsafe {
-            std::env::set_var(paths::LUBAN_ROOT_ENV, base_dir.as_os_str());
-        }
+        {
+            let _env = EnvVarGuard::set(paths::LUBAN_ROOT_ENV, base_dir.as_os_str());
 
-        let service = GitWorkspaceService::new_with_options(SqliteStoreOptions::default())
-            .expect("service should init");
-        service
-            .sqlite
-            .load_app_state()
-            .expect("sqlite queries should work");
+            let service = GitWorkspaceService::new_with_options(SqliteStoreOptions::default())
+                .expect("service should init");
+            service
+                .sqlite
+                .load_app_state()
+                .expect("sqlite queries should work");
 
-        let expected_db = paths::sqlite_path(&base_dir);
-        assert!(
-            expected_db.exists(),
-            "expected sqlite db at {}, but it was not created",
-            expected_db.display()
-        );
+            let expected_db = paths::sqlite_path(&base_dir);
+            assert!(
+                expected_db.exists(),
+                "expected sqlite db at {}, but it was not created",
+                expected_db.display()
+            );
 
-        drop(service);
-        if let Some(prev) = prev {
-            unsafe {
-                std::env::set_var(paths::LUBAN_ROOT_ENV, prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var(paths::LUBAN_ROOT_ENV);
-            }
+            drop(service);
         }
         let _ = std::fs::remove_dir_all(&base_dir);
     }
