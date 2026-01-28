@@ -59,7 +59,9 @@ impl AuthState {
 
         let mut bootstrap = self.bootstrap_token.lock().await;
         let Some(expected) = bootstrap.as_deref() else {
-            return false;
+            drop(bootstrap);
+            let session = self.session_token.read().await;
+            return session.as_deref() == Some(token);
         };
         if expected != token {
             return false;
@@ -151,4 +153,73 @@ pub(crate) async fn auth_bootstrap(
 
 pub(crate) fn router() -> Router<crate::server::AppStateHolder> {
     Router::new().route("/auth", get(auth_bootstrap))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::header::COOKIE;
+    use axum::http::{HeaderMap, HeaderValue};
+    use tokio::task::JoinSet;
+
+    #[test]
+    fn cookie_value_parses_standard_cookie_header() {
+        assert_eq!(cookie_value("a=1; b=2", "a"), Some("1"));
+        assert_eq!(cookie_value("a=1; b=2", "b"), Some("2"));
+        assert_eq!(cookie_value("a=1; b=2", "c"), None);
+    }
+
+    #[test]
+    fn cookie_value_trims_spaces() {
+        assert_eq!(cookie_value("  a = 1  ;  b= 2 ", "a"), Some("1"));
+        assert_eq!(cookie_value("  a = 1  ;  b= 2 ", "b"), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn consume_bootstrap_token_is_idempotent_for_same_token() {
+        let state = AuthState::new(crate::AuthConfig {
+            mode: crate::AuthMode::SingleUser,
+            bootstrap_token: Some("t".to_owned()),
+        });
+
+        let mut set = JoinSet::new();
+        for _ in 0..2 {
+            let state = state.clone();
+            set.spawn(async move { state.consume_bootstrap_token("t").await });
+        }
+
+        let mut oks = 0usize;
+        while let Some(result) = set.join_next().await {
+            if result.expect("task panicked") {
+                oks += 1;
+            }
+        }
+        assert_eq!(oks, 2);
+    }
+
+    #[tokio::test]
+    async fn consume_bootstrap_token_rejects_wrong_token() {
+        let state = AuthState::new(crate::AuthConfig {
+            mode: crate::AuthMode::SingleUser,
+            bootstrap_token: Some("t".to_owned()),
+        });
+
+        assert!(!state.consume_bootstrap_token("wrong").await);
+        assert!(state.consume_bootstrap_token("t").await);
+        assert!(!state.consume_bootstrap_token("wrong").await);
+    }
+
+    #[tokio::test]
+    async fn is_authorized_accepts_session_cookie_after_bootstrap() {
+        let state = AuthState::new(crate::AuthConfig {
+            mode: crate::AuthMode::SingleUser,
+            bootstrap_token: Some("t".to_owned()),
+        });
+
+        assert!(state.consume_bootstrap_token("t").await);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(COOKIE, HeaderValue::from_static("luban_session=t"));
+        assert!(state.is_authorized(&headers).await);
+    }
 }
