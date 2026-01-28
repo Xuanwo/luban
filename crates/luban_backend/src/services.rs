@@ -1,5 +1,4 @@
 use anyhow::{Context as _, anyhow};
-use bip39::Language;
 use luban_domain::paths;
 use luban_domain::{
     AgentThreadEvent, AttachmentKind, AttachmentRef, ClaudeConfigEntry, ClaudeConfigEntryKind,
@@ -8,7 +7,6 @@ use luban_domain::{
     ProjectWorkspaceService, PullRequestCiState, PullRequestInfo, PullRequestState,
     RunAgentTurnRequest, SystemTaskKind, TaskIntentKind,
 };
-use rand::{Rng as _, rngs::OsRng};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -39,6 +37,7 @@ mod pull_request;
 mod reconnect_notice;
 mod roots;
 mod task;
+mod workspace_name;
 use amp_cli::AmpTurnParams;
 use amp_mode::detect_amp_mode_from_config_root;
 use claude_cli::ClaudeTurnParams;
@@ -98,11 +97,7 @@ impl GitWorkspaceService {
     }
 
     fn generate_workspace_name(&self) -> anyhow::Result<String> {
-        let words = Language::English.word_list();
-        let mut rng = OsRng;
-        let w1 = words[rng.gen_range(0..words.len())];
-        let w2 = words[rng.gen_range(0..words.len())];
-        Ok(format!("{w1}-{w2}"))
+        workspace_name::generate_workspace_name()
     }
 
     fn worktree_path(&self, project_slug: &str, workspace_name: &str) -> PathBuf {
