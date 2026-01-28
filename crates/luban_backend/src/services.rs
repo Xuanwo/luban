@@ -2322,7 +2322,7 @@ mod tests {
     use super::prompt::PromptAttachment;
     use super::pull_request::is_merge_ready;
     use super::test_support::{
-        assert_git_success, git_rev_parse, lock_env, run_git, stored_blob_path,
+        assert_git_success, git_rev_parse, lock_env, run_git, stored_blob_path, temp_services_dir,
     };
     use super::*;
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
@@ -2532,8 +2532,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -2616,8 +2615,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_CODEX_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -2694,8 +2692,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -2798,8 +2795,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_AMP_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -2877,8 +2873,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
@@ -2959,8 +2954,7 @@ mod tests {
             std::env::set_var(paths::LUBAN_CLAUDE_ROOT_ENV, &root);
         }
 
-        let base_dir =
-            std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique));
+        let base_dir = temp_services_dir(unique);
         std::fs::create_dir_all(&base_dir).expect("luban root should exist");
         let sqlite =
             SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");

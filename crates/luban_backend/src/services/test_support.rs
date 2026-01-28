@@ -10,6 +10,10 @@ pub(super) fn lock_env() -> MutexGuard<'static, ()> {
     crate::env::lock_env_for_tests()
 }
 
+pub(super) fn temp_services_dir(unique: u128) -> PathBuf {
+    std::env::temp_dir().join(format!("luban-services-{}-{}", std::process::id(), unique))
+}
+
 pub(super) fn run_git(repo_path: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
