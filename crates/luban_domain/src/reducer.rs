@@ -18,8 +18,10 @@ use std::{
     path::PathBuf,
 };
 
+mod slug;
 mod title;
 
+use slug::sanitize_slug;
 pub use title::derive_thread_title;
 
 fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> {
@@ -1909,42 +1911,6 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn sanitize_slug(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut prev_dash = false;
-
-    for ch in input.chars() {
-        let mapped = match ch {
-            'a'..='z' | '0'..='9' => Some(ch),
-            'A'..='Z' => Some(ch.to_ascii_lowercase()),
-            _ => None,
-        };
-
-        match mapped {
-            Some(ch) => {
-                out.push(ch);
-                prev_dash = false;
-            }
-            None => {
-                if !prev_dash && !out.is_empty() {
-                    out.push('-');
-                    prev_dash = true;
-                }
-            }
-        }
-    }
-
-    while out.ends_with('-') {
-        out.pop();
-    }
-
-    if out.is_empty() {
-        "project".to_owned()
-    } else {
-        out
     }
 }
 
