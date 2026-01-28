@@ -39,6 +39,7 @@ mod conversations;
 mod feedback;
 mod gh_cli;
 mod git;
+mod github_url;
 mod prompt;
 mod pull_request;
 mod reconnect_notice;

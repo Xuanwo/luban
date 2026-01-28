@@ -1,5 +1,6 @@
 use super::GitWorkspaceService;
 use super::gh_cli::{ensure_gh_cli, run_gh_json};
+use super::github_url::extract_first_github_url;
 use anyhow::{Context as _, anyhow};
 use luban_domain::{
     ProjectWorkspaceService, TaskDraft, TaskIntentKind, TaskIssueInfo, TaskProjectSpec,
@@ -23,19 +24,6 @@ fn write_temp_file(prefix: &str, suffix: &str, contents: &str) -> anyhow::Result
     std::fs::write(&path, contents.as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(path)
-}
-
-fn extract_first_github_url(input: &str) -> Option<String> {
-    let needle = "https://github.com/";
-    let start = input.find(needle)?;
-    let rest = &input[start..];
-    let end = rest
-        .find(|c: char| {
-            c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']' || c == '>'
-        })
-        .unwrap_or(rest.len());
-    let url = rest[..end].trim_end_matches('/').to_owned();
-    Some(url)
 }
 
 #[derive(Deserialize)]

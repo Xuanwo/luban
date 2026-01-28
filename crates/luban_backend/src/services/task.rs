@@ -1,4 +1,5 @@
 use super::gh_cli::{ensure_gh_cli, run_gh_json};
+use super::github_url::extract_first_github_url;
 use crate::env::home_dir;
 use crate::services::GitWorkspaceService;
 use anyhow::{Context as _, anyhow};
@@ -21,19 +22,6 @@ enum ParsedTaskInput {
     GitHubRepo { full_name: String },
     GitHubIssue { full_name: String, number: u64 },
     GitHubPullRequest { full_name: String, number: u64 },
-}
-
-fn extract_first_github_url(input: &str) -> Option<String> {
-    let needle = "https://github.com/";
-    let start = input.find(needle)?;
-    let rest = &input[start..];
-    let end = rest
-        .find(|c: char| {
-            c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']' || c == '>'
-        })
-        .unwrap_or(rest.len());
-    let url = rest[..end].trim_end_matches('/').to_owned();
-    Some(url)
 }
 
 fn parse_github_url(url: &str) -> Option<ParsedTaskInput> {
