@@ -33,11 +33,10 @@ pub struct ContextToken {
     pub range: Range<usize>,
 }
 
-pub fn find_context_tokens(text: &str) -> Vec<ContextToken> {
-    const PREFIX: &str = "<<context:";
-    const SUFFIX: &str = ">>>";
+const PREFIX: &str = "<<context:";
+const SUFFIX: &str = ">>>";
 
-    let mut out = Vec::new();
+fn scan_context_tokens(text: &str, mut on_token: impl FnMut(ContextTokenKind, &str, Range<usize>)) {
     let mut cursor = 0usize;
 
     while let Some(rel_start) = text[cursor..].find(PREFIX) {
@@ -67,29 +66,32 @@ pub fn find_context_tokens(text: &str) -> Vec<ContextToken> {
             continue;
         }
 
+        on_token(kind, path, start..end);
+        cursor = end;
+    }
+}
+
+pub fn find_context_tokens(text: &str) -> Vec<ContextToken> {
+    let mut out = Vec::new();
+    scan_context_tokens(text, |kind, path, range| {
         out.push(ContextToken {
             kind,
             path: PathBuf::from(path),
-            range: start..end,
+            range,
         });
-
-        cursor = end;
-    }
+    });
 
     out
 }
 
 pub fn extract_context_image_paths_in_order(text: &str) -> Vec<PathBuf> {
-    find_context_tokens(text)
-        .into_iter()
-        .filter_map(|token| {
-            if token.kind == ContextTokenKind::Image {
-                Some(token.path)
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut out = Vec::new();
+    scan_context_tokens(text, |kind, path, _| {
+        if kind == ContextTokenKind::Image {
+            out.push(PathBuf::from(path));
+        }
+    });
+    out
 }
 
 #[cfg(test)]
@@ -123,5 +125,26 @@ mod tests {
     fn unknown_kinds_are_ignored() {
         let text = "<<context:unknown:/x>>>";
         assert!(find_context_tokens(text).is_empty());
+    }
+
+    #[test]
+    fn context_token_parsing_trims_kind_and_path() {
+        let text = "<<context:  ImAgE  :  /a.png  >>>";
+        let tokens = find_context_tokens(text);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, ContextTokenKind::Image);
+        assert_eq!(tokens[0].path, PathBuf::from("/a.png"));
+    }
+
+    #[test]
+    fn context_token_ranges_cover_full_token() {
+        let text = "x <<context:image:/a.png>>> y";
+        let tokens = find_context_tokens(text);
+        assert_eq!(tokens.len(), 1);
+        let start = text.find("<<context:").expect("missing token start");
+        let expected = "<<context:image:/a.png>>>";
+        let end = start + expected.len();
+        assert_eq!(tokens[0].range, start..end);
+        assert_eq!(&text[tokens[0].range.clone()], expected);
     }
 }
