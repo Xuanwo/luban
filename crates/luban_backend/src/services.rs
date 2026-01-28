@@ -40,6 +40,7 @@ mod prompt;
 mod pull_request;
 mod reconnect_notice;
 mod roots;
+mod stream_json;
 mod task;
 mod workspace_name;
 use amp_cli::AmpTurnParams;

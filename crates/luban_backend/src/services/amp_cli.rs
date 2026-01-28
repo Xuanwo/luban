@@ -13,6 +13,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use super::stream_json::{
+    extract_content_array, extract_string_field, parse_tool_result_content, tool_name_key,
+    value_as_string,
+};
+
 pub(super) struct AmpTurnParams {
     pub(super) thread_id: Option<String>,
     pub(super) worktree_path: PathBuf,
@@ -123,48 +128,6 @@ enum AmpToolSummary {
     Command { command: String },
     FileChange { changes: Vec<(String, String)> },
     WebSearch { query: String },
-}
-
-fn value_as_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        other => Some(other.to_string()),
-    }
-}
-
-fn extract_content_array(value: &Value) -> Option<&Vec<Value>> {
-    value
-        .pointer("/message/content")
-        .and_then(|v| v.as_array())
-        .or_else(|| value.get("content").and_then(|v| v.as_array()))
-}
-
-fn parse_tool_result_content(content: &Value) -> Value {
-    if let Some(s) = content.as_str() {
-        return Value::String(s.to_owned());
-    }
-    content.clone()
-}
-
-fn tool_name_key(name: &str) -> String {
-    name.trim().to_ascii_lowercase()
-}
-
-fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(v) = value.get(*key)
-            && let Some(s) = v.as_str()
-        {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_owned());
-            }
-        }
-    }
-    None
 }
 
 fn summarize_tool_use(name: &str, input: &Value) -> (AmpToolKind, AmpToolSummary) {
