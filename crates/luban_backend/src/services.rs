@@ -48,6 +48,8 @@ mod reconnect_notice;
 mod roots;
 mod stream_json;
 mod task;
+#[cfg(test)]
+mod test_support;
 mod thread_io;
 mod workspace_name;
 use amp_cli::AmpTurnParams;
@@ -2319,33 +2321,10 @@ impl GitWorkspaceService {
 mod tests {
     use super::prompt::PromptAttachment;
     use super::pull_request::is_merge_ready;
+    use super::test_support::{assert_git_success, lock_env, run_git};
     use super::*;
     use luban_domain::{PersistedProject, PersistedWorkspace, WorkspaceStatus};
     use std::path::{Path, PathBuf};
-
-    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        crate::env::lock_env_for_tests()
-    }
-
-    fn run_git(repo_path: &Path, args: &[&str]) -> std::process::Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(repo_path)
-            .output()
-            .expect("git should spawn")
-    }
-
-    fn assert_git_success(repo_path: &Path, args: &[&str]) {
-        let output = run_git(repo_path, args);
-        if !output.status.success() {
-            panic!(
-                "git failed ({:?}):\nstdout:\n{}\nstderr:\n{}",
-                args,
-                String::from_utf8_lossy(&output.stdout).trim(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-    }
 
     #[test]
     fn transient_reconnect_notice_detection_is_stable() {
