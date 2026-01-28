@@ -15,12 +15,13 @@ use std::{
     process::Command,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
 use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
+use crate::time::{unix_epoch_micros_now, unix_epoch_nanos_now};
 
 mod amp_cli;
 mod claude_cli;
@@ -243,20 +244,6 @@ fn qualify_event(turn_scope_id: &str, event: CodexThreadEvent) -> CodexThreadEve
         },
         other => other,
     }
-}
-
-fn unix_epoch_micros_now() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros()
-}
-
-fn unix_epoch_nanos_now() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
 }
 
 fn generate_turn_scope_id() -> String {
