@@ -604,6 +604,31 @@ test("terminal scrollbar is styled via app CSS", async ({ page }) => {
   expect(hasStyle).toBe(true)
 })
 
+test("terminal cmd/ctrl-click opens links in a new tab", async ({ page }) => {
+  const token = `terminal-link-${Math.random().toString(16).slice(2)}`
+  const url = `https://example.com/${token}`
+  const output = waitForPtyOutput(page, new RegExp(escapeRegExp(url)), 20_000)
+
+  await ensureWorkspace(page)
+  const startUrl = page.url()
+
+  const terminal = page.getByTestId("pty-terminal")
+  await waitForTerminalReady(terminal)
+
+  await terminal.click({ force: true })
+  await page.keyboard.type(`printf '\\033[2J\\033[H%s\\n' '${url}'`)
+  await page.keyboard.press("Enter")
+  await output
+
+  const modifier = process.platform === "darwin" ? "Meta" : "Control"
+  const popupPromise = page.waitForEvent("popup", { timeout: 10_000 })
+  await terminal.locator("canvas").first().click({ modifiers: [modifier], position: { x: 24, y: 24 } })
+  const popup = await popupPromise
+  await popup.close()
+
+  expect(page.url()).toBe(startUrl)
+})
+
 test("terminal restarts after the shell exits", async ({ page }) => {
   let ptySocketCount = 0
   let receivedInitialOutput = false

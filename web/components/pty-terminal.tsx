@@ -3,10 +3,12 @@
 import { useEffect, useRef } from "react"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
+import { WebLinksAddon } from "@xterm/addon-web-links"
 import { WebglAddon } from "@xterm/addon-webgl"
 import { useTheme } from "next-themes"
 
 import { useLuban } from "@/lib/luban-context"
+import { openExternalUrl } from "@/lib/open-external-url"
 import { useAppearance } from "@/components/appearance-provider"
 import { isMockMode } from "@/lib/luban-mode"
 
@@ -441,6 +443,12 @@ export function PtyTerminal() {
     termRef.current = term
 
     term.loadAddon(fitAddon)
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault()
+        void openExternalUrl(uri)
+      }),
+    )
     if (webglAddon) {
       try {
         term.loadAddon(webglAddon)
