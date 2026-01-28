@@ -77,7 +77,8 @@ pub fn dashboard_cards(
     state: &AppState,
     pull_requests: &HashMap<WorkspaceId, Option<PullRequestInfo>>,
 ) -> Vec<DashboardCardModel> {
-    let mut cards = Vec::new();
+    let estimated_workspaces: usize = state.projects.iter().map(|p| p.workspaces.len()).sum();
+    let mut cards = Vec::with_capacity(estimated_workspaces);
 
     for (project_index, project) in state.projects.iter().enumerate() {
         for workspace in &project.workspaces {
@@ -118,7 +119,7 @@ pub fn dashboard_preview(
     pr_info: Option<PullRequestInfo>,
 ) -> Option<DashboardPreviewModel> {
     let mut project_name = None;
-    let mut workspace = None;
+    let mut workspace_name = None;
     let mut stage = None;
 
     for project in &state.projects {
@@ -132,14 +133,14 @@ pub fn dashboard_preview(
             }
 
             project_name = Some(project.name.clone());
-            workspace = Some(found.clone());
+            workspace_name = Some(found.workspace_name.clone());
             stage = Some(stage_for_workspace(state, project, found, pr_info));
             break;
         }
     }
 
     let project_name = project_name?;
-    let workspace = workspace?;
+    let workspace_name = workspace_name?;
     let stage = stage?;
     let conversation = state.workspace_conversation(workspace_id);
 
@@ -167,7 +168,7 @@ pub fn dashboard_preview(
 
     Some(DashboardPreviewModel {
         workspace_id,
-        workspace_name: workspace.workspace_name,
+        workspace_name,
         project_name,
         stage,
         pr_info,
@@ -235,17 +236,47 @@ fn latest_message_snippet(entries: &[ConversationEntry]) -> Option<String> {
 }
 
 fn normalize_snippet(input: &str) -> Option<String> {
-    let text = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() {
+    const LIMIT: usize = 120;
+
+    let mut out = String::new();
+    let mut is_first_word = true;
+    let mut truncated = false;
+    let mut written_chars = 0usize;
+
+    for word in input.split_whitespace() {
+        if !is_first_word {
+            if written_chars < LIMIT {
+                out.push(' ');
+            } else {
+                truncated = true;
+                break;
+            }
+            written_chars += 1;
+        }
+        is_first_word = false;
+
+        for ch in word.chars() {
+            if written_chars < LIMIT {
+                out.push(ch);
+                written_chars += 1;
+            } else {
+                truncated = true;
+                break;
+            }
+        }
+
+        if truncated {
+            break;
+        }
+    }
+
+    if out.is_empty() {
         return None;
     }
-    let limit = 120usize;
-    let out = if text.chars().count() > limit {
-        let clipped: String = text.chars().take(limit).collect();
-        format!("{clipped}…")
-    } else {
-        text
-    };
+
+    if truncated {
+        out.push('…');
+    }
     Some(out)
 }
 
@@ -304,5 +335,22 @@ mod tests {
             .find(|c| c.workspace_id == workspace_id)
             .expect("missing card");
         assert_eq!(card.stage, DashboardStage::Finished);
+    }
+
+    #[test]
+    fn normalize_snippet_returns_none_for_whitespace() {
+        assert_eq!(normalize_snippet("   \n\t  "), None);
+    }
+
+    #[test]
+    fn normalize_snippet_collapses_whitespace() {
+        assert_eq!(normalize_snippet("  a  b\tc\n"), Some("a b c".to_owned()));
+    }
+
+    #[test]
+    fn normalize_snippet_truncates_to_limit() {
+        let input = "a".repeat(121);
+        let expected = format!("{}…", "a".repeat(120));
+        assert_eq!(normalize_snippet(&input), Some(expected));
     }
 }
