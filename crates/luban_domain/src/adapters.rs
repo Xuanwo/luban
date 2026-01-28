@@ -91,13 +91,20 @@ impl TaskIntentKind {
     }
 
     pub fn parse_key(raw: &str) -> TaskIntentKind {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "fix" | "fix_issue" => TaskIntentKind::Fix,
-            "implement" | "implement_feature" => TaskIntentKind::Implement,
-            "review" | "review_pull_request" => TaskIntentKind::Review,
-            "discuss" => TaskIntentKind::Discuss,
-            _ => TaskIntentKind::Other,
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("fix") || raw.eq_ignore_ascii_case("fix_issue") {
+            return TaskIntentKind::Fix;
         }
+        if raw.eq_ignore_ascii_case("implement") || raw.eq_ignore_ascii_case("implement_feature") {
+            return TaskIntentKind::Implement;
+        }
+        if raw.eq_ignore_ascii_case("review") || raw.eq_ignore_ascii_case("review_pull_request") {
+            return TaskIntentKind::Review;
+        }
+        if raw.eq_ignore_ascii_case("discuss") {
+            return TaskIntentKind::Discuss;
+        }
+        TaskIntentKind::Other
     }
 
     pub fn label(self) -> &'static str {
@@ -108,6 +115,44 @@ impl TaskIntentKind {
             TaskIntentKind::Discuss => "Discuss",
             TaskIntentKind::Other => "Other",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_intent_kind_parse_key_is_ascii_case_insensitive_and_trimmed() {
+        assert_eq!(TaskIntentKind::parse_key(" fix "), TaskIntentKind::Fix);
+        assert_eq!(TaskIntentKind::parse_key("FIX"), TaskIntentKind::Fix);
+        assert_eq!(TaskIntentKind::parse_key("Fix_Issue"), TaskIntentKind::Fix);
+
+        assert_eq!(
+            TaskIntentKind::parse_key(" Implement "),
+            TaskIntentKind::Implement
+        );
+        assert_eq!(
+            TaskIntentKind::parse_key("IMPLEMENT_FEATURE"),
+            TaskIntentKind::Implement
+        );
+
+        assert_eq!(TaskIntentKind::parse_key("review"), TaskIntentKind::Review);
+        assert_eq!(
+            TaskIntentKind::parse_key("Review_Pull_Request"),
+            TaskIntentKind::Review
+        );
+
+        assert_eq!(
+            TaskIntentKind::parse_key("  discuss  "),
+            TaskIntentKind::Discuss
+        );
+    }
+
+    #[test]
+    fn task_intent_kind_parse_key_defaults_to_other() {
+        assert_eq!(TaskIntentKind::parse_key(""), TaskIntentKind::Other);
+        assert_eq!(TaskIntentKind::parse_key("unknown"), TaskIntentKind::Other);
     }
 }
 
