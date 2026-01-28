@@ -28,6 +28,7 @@ pub mod claude_process;
 mod codex_bin;
 mod codex_cli;
 mod codex_thread;
+mod config_tree;
 mod context_blobs;
 mod conversations;
 mod feedback;
@@ -2125,79 +2126,24 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<Vec<CodexConfigEntry>> = (|| {
             let root = resolve_codex_root()?;
 
-            if !root.exists() {
-                return Ok(Vec::new());
-            }
+            let entries = config_tree::read_optional_root_shallow_entries(
+                &root,
+                "failed to stat codex config root",
+                "codex config root",
+            )?;
 
-            let meta = std::fs::metadata(&root).context("failed to stat codex config root")?;
-            if !meta.is_dir() {
-                return Err(anyhow!(
-                    "codex config root is not a directory: {}",
-                    root.display()
-                ));
-            }
-
-            fn rel_to_string(rel: &std::path::Path) -> String {
-                rel.to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/")
-            }
-
-            let mut entries = std::fs::read_dir(&root)
-                .with_context(|| format!("failed to read directory {}", root.display()))?
-                .filter_map(|entry| entry.ok())
-                .collect::<Vec<_>>();
-
-            entries.sort_by_key(|entry| entry.file_name());
-
-            let mut out = Vec::new();
-            for entry in entries {
-                let file_type = entry.file_type().context("failed to stat entry")?;
-
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.is_empty() {
-                    continue;
-                }
-
-                let rel_child = std::path::Path::new("").join(&name);
-                let path = rel_to_string(&rel_child);
-
-                let (is_dir, is_file) = if file_type.is_symlink() {
-                    match std::fs::metadata(entry.path()) {
-                        Ok(meta) => (meta.is_dir(), meta.is_file()),
-                        Err(_) => (false, true),
-                    }
-                } else {
-                    (file_type.is_dir(), file_type.is_file())
-                };
-
-                if is_dir {
-                    out.push(CodexConfigEntry {
-                        path,
-                        name,
-                        kind: CodexConfigEntryKind::Folder,
-                        children: Vec::new(),
-                    });
-                } else if is_file {
-                    out.push(CodexConfigEntry {
-                        path,
-                        name,
-                        kind: CodexConfigEntryKind::File,
-                        children: Vec::new(),
-                    });
-                }
-            }
-
-            out.sort_by(|a, b| match (a.kind, b.kind) {
-                (CodexConfigEntryKind::Folder, CodexConfigEntryKind::File) => {
-                    std::cmp::Ordering::Less
-                }
-                (CodexConfigEntryKind::File, CodexConfigEntryKind::Folder) => {
-                    std::cmp::Ordering::Greater
-                }
-                _ => a.name.cmp(&b.name),
-            });
-
-            Ok(out)
+            Ok(entries
+                .into_iter()
+                .map(|entry| CodexConfigEntry {
+                    path: entry.path,
+                    name: entry.name,
+                    kind: match entry.kind {
+                        config_tree::ShallowEntryKind::Folder => CodexConfigEntryKind::Folder,
+                        config_tree::ShallowEntryKind::File => CodexConfigEntryKind::File,
+                    },
+                    children: Vec::new(),
+                })
+                .collect())
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2418,81 +2364,28 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<Vec<luban_domain::AmpConfigEntry>> = (|| {
             let root = resolve_amp_root()?;
 
-            if !root.exists() {
-                return Ok(Vec::new());
-            }
+            let entries = config_tree::read_optional_root_shallow_entries(
+                &root,
+                "failed to stat amp config root",
+                "amp config root",
+            )?;
 
-            let meta = std::fs::metadata(&root).context("failed to stat amp config root")?;
-            if !meta.is_dir() {
-                return Err(anyhow!(
-                    "amp config root is not a directory: {}",
-                    root.display()
-                ));
-            }
-
-            fn rel_to_string(rel: &std::path::Path) -> String {
-                rel.to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/")
-            }
-
-            let mut entries = std::fs::read_dir(&root)
-                .with_context(|| format!("failed to read directory {}", root.display()))?
-                .filter_map(|entry| entry.ok())
-                .collect::<Vec<_>>();
-
-            entries.sort_by_key(|entry| entry.file_name());
-
-            let mut out = Vec::new();
-            for entry in entries {
-                let file_type = entry.file_type().context("failed to stat entry")?;
-
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.is_empty() {
-                    continue;
-                }
-
-                let rel_child = std::path::Path::new("").join(&name);
-                let path = rel_to_string(&rel_child);
-
-                let (is_dir, is_file) = if file_type.is_symlink() {
-                    match std::fs::metadata(entry.path()) {
-                        Ok(meta) => (meta.is_dir(), meta.is_file()),
-                        Err(_) => (false, true),
-                    }
-                } else {
-                    (file_type.is_dir(), file_type.is_file())
-                };
-
-                if is_dir {
-                    out.push(luban_domain::AmpConfigEntry {
-                        path,
-                        name,
-                        kind: luban_domain::AmpConfigEntryKind::Folder,
-                        children: Vec::new(),
-                    });
-                } else if is_file {
-                    out.push(luban_domain::AmpConfigEntry {
-                        path,
-                        name,
-                        kind: luban_domain::AmpConfigEntryKind::File,
-                        children: Vec::new(),
-                    });
-                }
-            }
-
-            out.sort_by(|a, b| match (a.kind, b.kind) {
-                (
-                    luban_domain::AmpConfigEntryKind::Folder,
-                    luban_domain::AmpConfigEntryKind::File,
-                ) => std::cmp::Ordering::Less,
-                (
-                    luban_domain::AmpConfigEntryKind::File,
-                    luban_domain::AmpConfigEntryKind::Folder,
-                ) => std::cmp::Ordering::Greater,
-                _ => a.name.cmp(&b.name),
-            });
-
-            Ok(out)
+            Ok(entries
+                .into_iter()
+                .map(|entry| luban_domain::AmpConfigEntry {
+                    path: entry.path,
+                    name: entry.name,
+                    kind: match entry.kind {
+                        config_tree::ShallowEntryKind::Folder => {
+                            luban_domain::AmpConfigEntryKind::Folder
+                        }
+                        config_tree::ShallowEntryKind::File => {
+                            luban_domain::AmpConfigEntryKind::File
+                        }
+                    },
+                    children: Vec::new(),
+                })
+                .collect())
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2718,79 +2611,24 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let result: anyhow::Result<Vec<ClaudeConfigEntry>> = (|| {
             let root = resolve_claude_root()?;
 
-            if !root.exists() {
-                return Ok(Vec::new());
-            }
+            let entries = config_tree::read_optional_root_shallow_entries(
+                &root,
+                "failed to stat claude config root",
+                "claude config root",
+            )?;
 
-            let meta = std::fs::metadata(&root).context("failed to stat claude config root")?;
-            if !meta.is_dir() {
-                return Err(anyhow!(
-                    "claude config root is not a directory: {}",
-                    root.display()
-                ));
-            }
-
-            fn rel_to_string(rel: &std::path::Path) -> String {
-                rel.to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/")
-            }
-
-            let mut entries = std::fs::read_dir(&root)
-                .with_context(|| format!("failed to read directory {}", root.display()))?
-                .filter_map(|entry| entry.ok())
-                .collect::<Vec<_>>();
-
-            entries.sort_by_key(|entry| entry.file_name());
-
-            let mut out = Vec::new();
-            for entry in entries {
-                let file_type = entry.file_type().context("failed to stat entry")?;
-
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.is_empty() {
-                    continue;
-                }
-
-                let rel_child = std::path::Path::new("").join(&name);
-                let path = rel_to_string(&rel_child);
-
-                let (is_dir, is_file) = if file_type.is_symlink() {
-                    match std::fs::metadata(entry.path()) {
-                        Ok(meta) => (meta.is_dir(), meta.is_file()),
-                        Err(_) => (false, true),
-                    }
-                } else {
-                    (file_type.is_dir(), file_type.is_file())
-                };
-
-                if is_dir {
-                    out.push(ClaudeConfigEntry {
-                        path,
-                        name,
-                        kind: ClaudeConfigEntryKind::Folder,
-                        children: Vec::new(),
-                    });
-                } else if is_file {
-                    out.push(ClaudeConfigEntry {
-                        path,
-                        name,
-                        kind: ClaudeConfigEntryKind::File,
-                        children: Vec::new(),
-                    });
-                }
-            }
-
-            out.sort_by(|a, b| match (a.kind, b.kind) {
-                (ClaudeConfigEntryKind::Folder, ClaudeConfigEntryKind::File) => {
-                    std::cmp::Ordering::Less
-                }
-                (ClaudeConfigEntryKind::File, ClaudeConfigEntryKind::Folder) => {
-                    std::cmp::Ordering::Greater
-                }
-                _ => a.name.cmp(&b.name),
-            });
-
-            Ok(out)
+            Ok(entries
+                .into_iter()
+                .map(|entry| ClaudeConfigEntry {
+                    path: entry.path,
+                    name: entry.name,
+                    kind: match entry.kind {
+                        config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
+                        config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
+                    },
+                    children: Vec::new(),
+                })
+                .collect())
         })();
 
         result.map_err(|e| format!("{e:#}"))
