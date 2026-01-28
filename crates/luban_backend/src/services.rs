@@ -43,6 +43,7 @@ mod reconnect_notice;
 mod roots;
 mod stream_json;
 mod task;
+mod thread_io;
 mod workspace_name;
 use amp_cli::AmpTurnParams;
 use amp_mode::detect_amp_mode_from_config_root;

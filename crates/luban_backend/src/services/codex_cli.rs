@@ -1,8 +1,9 @@
+use super::thread_io::spawn_read_to_string;
 use anyhow::{Context as _, anyhow};
 use luban_domain::CodexThreadEvent;
 use std::{
     ffi::OsString,
-    io::{BufRead as _, BufReader, Read as _, Write as _},
+    io::{BufRead as _, BufReader, Write as _},
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
@@ -217,12 +218,7 @@ pub(super) fn run_codex_turn_streamed_via_cli(
         })
     };
 
-    let stderr_handle = std::thread::spawn(move || -> String {
-        let mut buf = Vec::new();
-        let mut reader = BufReader::new(stderr);
-        let _ = reader.read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).to_string()
-    });
+    let stderr_handle = spawn_read_to_string(stderr);
 
     let stdout_reader = BufReader::new(stdout);
     let mut stdout_noise: Vec<String> = Vec::new();

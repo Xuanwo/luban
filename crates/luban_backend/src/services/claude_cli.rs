@@ -7,7 +7,7 @@ use luban_domain::{
 };
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use super::stream_json::{
     extract_content_array, extract_string_field, parse_tool_result_content, tool_name_key,
     value_as_string,
 };
+use super::thread_io::spawn_read_to_string;
 
 pub(super) struct ClaudeTurnParams {
     pub(super) thread_id: Option<String>,
@@ -663,12 +664,7 @@ pub(super) fn run_claude_turn_streamed_via_cli(
         })
     };
 
-    let stderr_handle = std::thread::spawn(move || -> String {
-        let mut buf = Vec::new();
-        let mut reader = BufReader::new(stderr);
-        let _ = reader.read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).to_string()
-    });
+    let stderr_handle = spawn_read_to_string(stderr);
 
     let mut state = ClaudeStreamState::new();
     let stdout_reader = BufReader::new(stdout);
