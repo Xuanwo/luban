@@ -2,6 +2,16 @@ use super::GitWorkspaceService;
 use anyhow::{Context as _, anyhow};
 use std::{ffi::OsStr, path::Path, path::PathBuf, process::Command};
 
+fn push_ascii_lowercase(dst: &mut String, s: &str) {
+    for ch in s.chars() {
+        if ch.is_ascii_uppercase() {
+            dst.push(ch.to_ascii_lowercase());
+        } else {
+            dst.push(ch);
+        }
+    }
+}
+
 impl GitWorkspaceService {
     pub(super) fn run_git<I, S>(&self, repo_path: &Path, args: I) -> anyhow::Result<String>
     where
@@ -95,11 +105,12 @@ impl GitWorkspaceService {
         let owner = iter.next()?;
         let repo = iter.next()?;
 
-        Some(format!(
-            "github.com/{}/{}",
-            owner.to_ascii_lowercase(),
-            repo.to_ascii_lowercase()
-        ))
+        let mut out = String::with_capacity("github.com/".len() + owner.len() + 1 + repo.len());
+        out.push_str("github.com/");
+        push_ascii_lowercase(&mut out, owner);
+        out.push('/');
+        push_ascii_lowercase(&mut out, repo);
+        Some(out)
     }
 }
 
@@ -146,6 +157,22 @@ mod tests {
                 "https://gitlab.com/apache/opendal"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn github_repo_id_from_remote_url_lowercases_owner_and_repo() {
+        assert_eq!(
+            GitWorkspaceService::github_repo_id_from_remote_url(
+                "https://github.com/ApAcHe/OpEnDaL/"
+            ),
+            Some("github.com/apache/opendal".to_owned())
+        );
+        assert_eq!(
+            GitWorkspaceService::github_repo_id_from_remote_url(
+                "git@github.com:ApAcHe/OpEnDaL.git"
+            ),
+            Some("github.com/apache/opendal".to_owned())
         );
     }
 }
