@@ -1,8 +1,9 @@
 "use client"
 
 import type React from "react"
+import { useState, useCallback } from "react"
 
-import { Brain, Clock, Copy, FileCode, FileText, Wrench } from "lucide-react"
+import { Brain, Check, Clock, Copy, FileCode, FileText, Wrench } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { Message } from "@/lib/conversation-ui"
@@ -11,9 +12,10 @@ import { Markdown } from "@/components/markdown"
 import { ActivityStream } from "@/components/activity-stream"
 import { attachmentHref } from "@/lib/attachment-href"
 
-async function copyToClipboard(text: string): Promise<void> {
+async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
+    return true
   } catch {
     const el = document.createElement("textarea")
     el.value = text
@@ -22,9 +24,49 @@ async function copyToClipboard(text: string): Promise<void> {
     document.body.appendChild(el)
     el.focus()
     el.select()
-    document.execCommand("copy")
+    const success = document.execCommand("copy")
     document.body.removeChild(el)
+    return success
   }
+}
+
+function CopyButton({
+  text,
+  className,
+  "data-testid": testId,
+}: {
+  text: string
+  className?: string
+  "data-testid"?: string
+}): React.ReactElement {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(async () => {
+    const success = await copyToClipboard(text)
+    if (success) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }, [text])
+
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      className={cn(
+        "transition-opacity hover:text-foreground p-1 -m-1 text-muted-foreground/70",
+        className
+      )}
+      onClick={() => void handleCopy()}
+      aria-label={copied ? "Copied" : "Copy message"}
+    >
+      {copied ? (
+        <Check className="w-3 h-3 text-green-500" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </button>
+  )
 }
 
 export function ConversationMessage({
@@ -89,33 +131,19 @@ export function ConversationMessage({
                   {message.metadata.duration}
                 </span>
               )}
-              <button
-                className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground p-1 -m-1"
-                onClick={() => void copyToClipboard(message.content)}
-                aria-label="Copy message"
-              >
-                <Copy className="w-3 h-3" />
-              </button>
+              <CopyButton
+                text={message.content}
+                className="ml-auto opacity-0 group-hover:opacity-100"
+              />
             </div>
           )}
         </div>
       ) : (
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end">
           <div
             data-testid="user-message-bubble"
-            className="relative max-w-[85%] border border-border rounded-lg px-3 pr-9 py-2.5 bg-muted/30 luban-font-chat"
+            className="relative max-w-[85%] border border-border rounded-lg px-3 py-2.5 bg-muted/30 luban-font-chat"
           >
-            {message.content && message.content.trim().length > 0 && (
-              <button
-                type="button"
-                data-testid="user-message-copy"
-                className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground p-1 -m-1 text-muted-foreground/70"
-                onClick={() => void copyToClipboard(message.content)}
-                aria-label="Copy message"
-              >
-                <Copy className="w-3 h-3" />
-              </button>
-            )}
             {message.attachments && message.attachments.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {message.attachments.map((attachment) => {
@@ -167,6 +195,15 @@ export function ConversationMessage({
               ))}
             </div>
           </div>
+          {message.content && message.content.trim().length > 0 && (
+            <div className="flex justify-end pt-1">
+              <CopyButton
+                text={message.content}
+                data-testid="user-message-copy"
+                className="opacity-0 group-hover:opacity-100"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
