@@ -9,6 +9,20 @@ use std::{
 const CONTEXT_IMAGE_THUMB_MAX_WIDTH: u32 = 360;
 const CONTEXT_IMAGE_THUMB_MAX_HEIGHT: u32 = 220;
 
+fn finalize_atomic_rename(tmp: &Path, dest: &Path) -> std::io::Result<()> {
+    match std::fs::rename(tmp, dest) {
+        Ok(()) => Ok(()),
+        Err(_err) if dest.exists() => {
+            let _ = std::fs::remove_file(tmp);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(tmp);
+            Err(err)
+        }
+    }
+}
+
 impl GitWorkspaceService {
     pub(super) fn context_root_dir(&self, project_slug: &str, workspace_name: &str) -> PathBuf {
         self.conversation_dir(project_slug, workspace_name)
@@ -74,23 +88,14 @@ impl GitWorkspaceService {
                 .with_context(|| format!("failed to sync {}", tmp.display()))?;
         }
 
-        match std::fs::rename(&tmp, &dest) {
-            Ok(()) => Ok((hash, dest)),
-            Err(_err) if dest.exists() => {
-                let _ = std::fs::remove_file(&tmp);
-                Ok((hash, dest))
-            }
-            Err(err) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err(err).with_context(|| {
-                    format!(
-                        "failed to move context blob {} -> {}",
-                        tmp.display(),
-                        dest.display()
-                    )
-                })
-            }
-        }
+        finalize_atomic_rename(&tmp, &dest).with_context(|| {
+            format!(
+                "failed to move context blob {} -> {}",
+                tmp.display(),
+                dest.display()
+            )
+        })?;
+        Ok((hash, dest))
     }
 
     pub(super) fn maybe_store_context_image_thumbnail(
@@ -123,23 +128,14 @@ impl GitWorkspaceService {
             .save_with_format(&tmp, ImageFormat::Png)
             .with_context(|| format!("failed to write thumbnail {}", tmp.display()))?;
 
-        match std::fs::rename(&tmp, &thumbnail_path) {
-            Ok(()) => Ok(Some(thumbnail_path)),
-            Err(_err) if thumbnail_path.exists() => {
-                let _ = std::fs::remove_file(&tmp);
-                Ok(Some(thumbnail_path))
-            }
-            Err(err) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err(err).with_context(|| {
-                    format!(
-                        "failed to move thumbnail {} -> {}",
-                        tmp.display(),
-                        thumbnail_path.display()
-                    )
-                })
-            }
-        }
+        finalize_atomic_rename(&tmp, &thumbnail_path).with_context(|| {
+            format!(
+                "failed to move thumbnail {} -> {}",
+                tmp.display(),
+                thumbnail_path.display()
+            )
+        })?;
+        Ok(Some(thumbnail_path))
     }
 
     fn context_image_thumbnail_path(original_path: &Path) -> PathBuf {
@@ -199,22 +195,13 @@ impl GitWorkspaceService {
             return Ok((hash, extension, byte_len, dest));
         }
 
-        match std::fs::rename(&tmp, &dest) {
-            Ok(()) => Ok((hash, extension, byte_len, dest)),
-            Err(_err) if dest.exists() => {
-                let _ = std::fs::remove_file(&tmp);
-                Ok((hash, extension, byte_len, dest))
-            }
-            Err(err) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err(err).with_context(|| {
-                    format!(
-                        "failed to move context blob {} -> {}",
-                        tmp.display(),
-                        dest.display()
-                    )
-                })
-            }
-        }
+        finalize_atomic_rename(&tmp, &dest).with_context(|| {
+            format!(
+                "failed to move context blob {} -> {}",
+                tmp.display(),
+                dest.display()
+            )
+        })?;
+        Ok((hash, extension, byte_len, dest))
     }
 }
