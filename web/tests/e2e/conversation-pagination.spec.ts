@@ -108,6 +108,7 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
 
   const tabTitles = page.getByTestId("thread-tab-title")
   const beforeTabs = await tabTitles.count()
+  const existingTab = tabTitles.first().locator("..")
   await page.getByTitle("New tab").click()
   await expect(tabTitles).toHaveCount(beforeTabs + 1, { timeout: 20_000 })
   const newTab = tabTitles.last().locator("..")
@@ -132,57 +133,75 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
       const res = await page.request.get(
         `/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=1`,
       )
+      if (!res.ok()) return { run_status: "idle", queue_paused: false }
+      const snap = (await res.json()) as { run_status?: string; queue_paused?: boolean }
+      return {
+        run_status: String(snap.run_status ?? "idle"),
+        queue_paused: Boolean(snap.queue_paused ?? false),
+      }
+    }, { timeout: 90_000 })
+    .toMatchObject({ run_status: "idle", queue_paused: true })
+
+  await expect
+    .poll(async () => {
+      const res = await page.request.get(
+        `/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=1`,
+      )
       if (!res.ok()) return 0
       const snap = (await res.json()) as { entries_total?: number }
       return snap.entries_total ?? 0
     }, { timeout: 60_000 })
     .toBeGreaterThan(2000)
 
-  await expect
-    .poll(async () => {
-      const res = await page.request.get(
-        `/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=2000`,
-      )
-      if (!res.ok()) return 0
-      const snap = (await res.json()) as { entries_start?: number }
-      return snap.entries_start ?? 0
-    }, { timeout: 60_000 })
-    .toBeGreaterThan(0)
-
   // Force the UI to refresh the conversation via HTTP so the client-side state has
   // `entries_start` populated before we attempt to load older pages.
-  const refreshTab = page.getByTestId("thread-tab-title").last().locator("..")
-  await refreshTab.scrollIntoViewIfNeeded()
-  await refreshTab.click()
-
   const container = page.getByTestId("chat-scroll-container")
-  await page.waitForTimeout(750)
+  await expect(container).toBeVisible()
 
-  const expectedBefore = await page.request
-    .get(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=2000`)
-    .then(async (res) => {
-      const snap = (await res.json()) as { entries_start?: number }
-      return snap.entries_start ?? 0
-    })
+  const refreshResponse = page.waitForResponse((res) => {
+    if (res.request().method() !== "GET") return false
+    const url = res.url()
+    if (!url.includes(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}`)) return false
+    try {
+      const parsed = new URL(url)
+      return parsed.searchParams.get("limit") === "2000" && !parsed.searchParams.has("before") && res.status() === 200
+    } catch {
+      return false
+    }
+  })
+
+  await existingTab.scrollIntoViewIfNeeded()
+  await existingTab.click()
+  await newTab.scrollIntoViewIfNeeded()
+  await newTab.click()
+
+  const entriesStart = await refreshResponse.then(async (res) => {
+    const snap = (await res.json()) as { entries_start?: number }
+    return snap.entries_start ?? 0
+  })
+  expect(entriesStart).toBeGreaterThan(0)
 
   const beforeRequest = page.waitForRequest((req) => {
+    if (req.method() !== "GET") return false
     const url = req.url()
-    return (
-      url.includes(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}`) &&
-      url.includes(`before=${expectedBefore}`)
-    )
+    if (!url.includes(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}`)) return false
+    try {
+      const parsed = new URL(url)
+      return parsed.searchParams.get("limit") === "2000" && parsed.searchParams.has("before")
+    } catch {
+      return false
+    }
   })
 
+  await container.hover()
   await container.evaluate((el) => {
-    el.scrollTop = el.scrollHeight
-    el.dispatchEvent(new Event("scroll", { bubbles: true }))
-    el.scrollTop = 10
-    el.dispatchEvent(new Event("scroll", { bubbles: true }))
     el.scrollTop = 0
-    el.dispatchEvent(new Event("scroll", { bubbles: true }))
   })
+  await page.mouse.wheel(0, -2000)
 
-  await beforeRequest
+  const req = await beforeRequest
+  const before = Number(new URL(req.url()).searchParams.get("before") ?? NaN)
+  expect(Number.isFinite(before) && before > 0).toBeTruthy()
 
   await expect(page.getByTestId("chat-input")).toBeVisible()
   await expect(page.getByText("Application error:", { exact: false })).toHaveCount(0)

@@ -1128,6 +1128,18 @@ export function ChatPanel({
             data-testid="chat-scroll-container"
             className="flex-1 overflow-y-auto relative"
             ref={setScrollContainer}
+            onWheel={(e) => {
+              const el = e.currentTarget
+              const start = conversation?.entries_start ?? 0
+              if (
+                !loadingOlderRef.current &&
+                start > 0 &&
+                e.deltaY < 0 &&
+                el.scrollTop <= 0
+              ) {
+                void requestOlderConversationPage()
+              }
+            }}
             onScroll={(e) => {
               if (activeWorkspaceId == null || activeThreadId == null) return
               const el = e.target as HTMLDivElement

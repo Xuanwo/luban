@@ -179,7 +179,7 @@
   --status-info: var(--base0e);
 
   --terminal-bright-mix: var(--base07);
-  --terminal-ansi-black: var(--base00);
+  --terminal-ansi-black: #0a0a0a;
   --terminal-ansi-cyan: var(--base0c);
   --terminal-ansi-white: var(--base05);
   --terminal-ansi-bright-black: var(--base03);
