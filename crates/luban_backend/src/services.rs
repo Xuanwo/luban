@@ -1,11 +1,10 @@
 use anyhow::{Context as _, anyhow};
 use luban_domain::paths;
 use luban_domain::{
-    AgentThreadEvent, AttachmentKind, AttachmentRef, ClaudeConfigEntry, ClaudeConfigEntryKind,
-    CodexConfigEntry, CodexConfigEntryKind, CodexThreadEvent, CodexThreadItem, ContextImage,
-    ConversationEntry, ConversationSnapshot, CreatedWorkspace, OpenTarget, PersistedAppState,
-    ProjectWorkspaceService, PullRequestCiState, PullRequestInfo, PullRequestState,
-    RunAgentTurnRequest, SystemTaskKind, TaskIntentKind,
+    AgentThreadEvent, AttachmentKind, AttachmentRef, ClaudeConfigEntry, CodexConfigEntry,
+    CodexThreadEvent, CodexThreadItem, ContextImage, ConversationEntry, ConversationSnapshot,
+    CreatedWorkspace, OpenTarget, PersistedAppState, ProjectWorkspaceService, PullRequestCiState,
+    PullRequestInfo, PullRequestState, RunAgentTurnRequest, SystemTaskKind, TaskIntentKind,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -31,6 +30,7 @@ mod cli_check;
 mod codex_bin;
 mod codex_cli;
 mod codex_thread;
+mod config_entries;
 mod config_file_io;
 mod config_path;
 mod config_tree;
@@ -55,6 +55,9 @@ use amp_mode::detect_amp_mode_from_config_root;
 use claude_cli::ClaudeTurnParams;
 use codex_cli::CodexTurnParams;
 use codex_thread::{codex_item_id, generate_turn_scope_id, qualify_codex_item, qualify_event};
+use config_entries::{
+    amp_entries_from_shallow, claude_entries_from_shallow, codex_entries_from_shallow,
+};
 use git_branch::{branch_exists, normalize_branch_suffix};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
@@ -63,53 +66,6 @@ use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_l
 
 fn anyhow_error_to_string(e: anyhow::Error) -> String {
     format!("{e:#}")
-}
-
-fn codex_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<CodexConfigEntry> {
-    entries
-        .into_iter()
-        .map(|entry| CodexConfigEntry {
-            path: entry.path,
-            name: entry.name,
-            kind: match entry.kind {
-                config_tree::ShallowEntryKind::Folder => CodexConfigEntryKind::Folder,
-                config_tree::ShallowEntryKind::File => CodexConfigEntryKind::File,
-            },
-            children: Vec::new(),
-        })
-        .collect()
-}
-
-fn amp_entries_from_shallow(
-    entries: Vec<config_tree::ShallowEntry>,
-) -> Vec<luban_domain::AmpConfigEntry> {
-    entries
-        .into_iter()
-        .map(|entry| luban_domain::AmpConfigEntry {
-            path: entry.path,
-            name: entry.name,
-            kind: match entry.kind {
-                config_tree::ShallowEntryKind::Folder => luban_domain::AmpConfigEntryKind::Folder,
-                config_tree::ShallowEntryKind::File => luban_domain::AmpConfigEntryKind::File,
-            },
-            children: Vec::new(),
-        })
-        .collect()
-}
-
-fn claude_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<ClaudeConfigEntry> {
-    entries
-        .into_iter()
-        .map(|entry| ClaudeConfigEntry {
-            path: entry.path,
-            name: entry.name,
-            kind: match entry.kind {
-                config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
-                config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
-            },
-            children: Vec::new(),
-        })
-        .collect()
 }
 
 /// Git workspace service with persistent Claude process management.
