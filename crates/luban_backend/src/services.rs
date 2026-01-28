@@ -1336,6 +1336,25 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(|e| format!("{e:#}"))
     }
 
+    fn save_conversation_run_config(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+        model_id: String,
+        thinking_effort: luban_domain::ThinkingEffort,
+    ) -> Result<(), String> {
+        self.sqlite
+            .save_conversation_run_config(
+                project_slug,
+                workspace_name,
+                thread_id,
+                model_id,
+                thinking_effort,
+            )
+            .map_err(|e| format!("{e:#}"))
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,

@@ -2517,6 +2517,29 @@ impl Engine {
                 .await;
                 Ok(VecDeque::new())
             }
+            Effect::StoreConversationRunConfig {
+                workspace_id,
+                thread_id,
+                model_id,
+                thinking_effort,
+            } => {
+                let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+                    return Ok(VecDeque::new());
+                };
+                let services = self.services.clone();
+                let thread_local_id = thread_id.as_u64();
+                let _ = tokio::task::spawn_blocking(move || {
+                    services.save_conversation_run_config(
+                        scope.project_slug,
+                        scope.workspace_name,
+                        thread_local_id,
+                        model_id,
+                        thinking_effort,
+                    )
+                })
+                .await;
+                Ok(VecDeque::new())
+            }
             Effect::RunAgentTurn {
                 workspace_id,
                 thread_id,

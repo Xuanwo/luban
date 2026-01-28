@@ -521,9 +521,26 @@ impl AppState {
                 snapshot,
             } => {
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                let snapshot_model_id = snapshot
+                    .agent_model_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(ToOwned::to_owned);
+                let snapshot_thinking_effort = snapshot.thinking_effort;
 
                 if conversation.thread_id.is_none() {
                     conversation.thread_id = snapshot.thread_id.clone();
+                }
+
+                if let Some(model_id) = snapshot_model_id {
+                    let effort = snapshot_thinking_effort.unwrap_or(conversation.thinking_effort);
+                    let normalized = normalize_thinking_effort(&model_id, effort);
+                    conversation.agent_model_id = model_id;
+                    conversation.thinking_effort = normalized;
+                } else if let Some(effort) = snapshot_thinking_effort {
+                    conversation.thinking_effort =
+                        normalize_thinking_effort(&conversation.agent_model_id, effort);
                 }
 
                 let should_apply_queue_snapshot = conversation.entries.is_empty()
@@ -724,28 +741,40 @@ impl AppState {
                 thread_id,
                 model_id,
             } => {
-                {
+                let thinking_effort = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     let normalized =
                         normalize_thinking_effort(&model_id, conversation.thinking_effort);
-                    conversation.agent_model_id = model_id;
+                    conversation.agent_model_id = model_id.clone();
                     conversation.thinking_effort = normalized;
-                }
-                Vec::new()
+                    normalized
+                };
+                vec![Effect::StoreConversationRunConfig {
+                    workspace_id,
+                    thread_id,
+                    model_id,
+                    thinking_effort,
+                }]
             }
             Action::ThinkingEffortChanged {
                 workspace_id,
                 thread_id,
                 thinking_effort,
             } => {
-                {
+                let model_id = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     if !thinking_effort_supported(&conversation.agent_model_id, thinking_effort) {
                         return Vec::new();
                     }
                     conversation.thinking_effort = thinking_effort;
-                }
-                Vec::new()
+                    conversation.agent_model_id.clone()
+                };
+                vec![Effect::StoreConversationRunConfig {
+                    workspace_id,
+                    thread_id,
+                    model_id,
+                    thinking_effort,
+                }]
             }
             Action::ChatDraftChanged {
                 workspace_id,
@@ -2378,6 +2407,8 @@ mod tests {
 
         let snapshot = ConversationSnapshot {
             thread_id: None,
+            agent_model_id: None,
+            thinking_effort: None,
             entries: (1..=8)
                 .map(|idx| ConversationEntry::UserMessage {
                     text: format!("Message {idx}"),
@@ -3309,6 +3340,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -3467,6 +3500,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: Some("thread_0".to_owned()),
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -3518,6 +3553,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
                     attachments: Vec::new(),
@@ -3554,6 +3591,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
                     attachments: Vec::new(),
@@ -3572,6 +3611,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: vec![
                     ConversationEntry::UserMessage {
                         text: "Hello".to_owned(),
@@ -3609,6 +3650,8 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                agent_model_id: None,
+                thinking_effort: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -3634,6 +3677,36 @@ mod tests {
         assert_eq!(conversation.pending_prompts.len(), 1);
         assert_eq!(conversation.pending_prompts[0].id, 3);
         assert_eq!(conversation.next_queued_prompt_id, 4);
+    }
+
+    #[test]
+    fn conversation_loaded_applies_persisted_run_config() {
+        let mut state = AppState::demo();
+        let workspace_id = first_non_main_workspace_id(&state);
+        let thread_id = default_thread_id();
+
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            thread_id,
+            snapshot: ConversationSnapshot {
+                thread_id: None,
+                agent_model_id: Some("gpt-5.2-codex".to_owned()),
+                thinking_effort: Some(ThinkingEffort::High),
+                entries: Vec::new(),
+                entries_total: 0,
+                entries_start: 0,
+                pending_prompts: Vec::new(),
+                queue_paused: false,
+                run_started_at_unix_ms: None,
+                run_finished_at_unix_ms: None,
+            },
+        });
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
+        assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
     }
 
     #[test]

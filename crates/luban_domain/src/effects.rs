@@ -55,6 +55,12 @@ pub enum Effect {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
     },
+    StoreConversationRunConfig {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        model_id: String,
+        thinking_effort: crate::ThinkingEffort,
+    },
     LoadConversation {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,

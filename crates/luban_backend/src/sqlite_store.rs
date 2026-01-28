@@ -1,15 +1,15 @@
 use anyhow::{Context as _, anyhow};
 use luban_domain::{
     AttachmentKind, AttachmentRef, ChatScrollAnchor, ContextItem, ConversationEntry,
-    ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt, WorkspaceStatus,
-    WorkspaceThreadId,
+    ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt, ThinkingEffort,
+    WorkspaceStatus, WorkspaceThreadId,
 };
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 13;
+const LATEST_SCHEMA_VERSION: u32 = 14;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -125,6 +125,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0013_conversation_run_timing.sql"
         )),
     ),
+    (
+        14,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0014_conversation_run_config.sql"
+        )),
+    ),
 ];
 
 pub struct SqliteStore {
@@ -237,6 +244,14 @@ enum DbCommand {
         run_started_at_unix_ms: Option<u64>,
         run_finished_at_unix_ms: Option<u64>,
         pending_prompts: Vec<QueuedPrompt>,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    SaveConversationRunConfig {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        model_id: String,
+        thinking_effort: ThinkingEffort,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
     InsertContextItem {
@@ -451,6 +466,25 @@ impl SqliteStore {
                                 run_started_at_unix_ms,
                                 run_finished_at_unix_ms,
                                 &pending_prompts,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::SaveConversationRunConfig {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                model_id,
+                                thinking_effort,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.save_conversation_run_config(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                &model_id,
+                                thinking_effort,
                             ));
                         }
                         (
@@ -754,6 +788,28 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn save_conversation_run_config(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        model_id: String,
+        thinking_effort: ThinkingEffort,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::SaveConversationRunConfig {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                model_id,
+                thinking_effort,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn insert_context_item(
         &self,
         project_slug: String,
@@ -852,6 +908,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::SaveConversationQueueState { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::SaveConversationRunConfig { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -2303,10 +2362,17 @@ impl SqliteDatabase {
         thread_local_id: u64,
     ) -> anyhow::Result<ConversationSnapshot> {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
-        let (thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms) = self
+        let (
+            thread_id,
+            queue_paused,
+            run_started_at_unix_ms,
+            run_finished_at_unix_ms,
+            agent_model_id,
+            thinking_effort,
+        ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms FROM conversations
+                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_model_id, thinking_effort FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
@@ -2315,20 +2381,27 @@ impl SqliteDatabase {
                         row.get::<_, i64>(1)?,
                         row.get::<_, Option<i64>>(2)?,
                         row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
             .optional()
             .context("failed to load conversation meta")?
-            .map(|(thread_id, queue_paused, started, finished)| {
+            .map(|(thread_id, queue_paused, started, finished, model_id, thinking_effort)| {
+                let thinking_effort = thinking_effort
+                    .as_deref()
+                    .and_then(luban_domain::parse_thinking_effort);
                 (
                     thread_id,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
+                    model_id,
+                    thinking_effort,
                 )
             })
-            .unwrap_or((None, false, None, None));
+            .unwrap_or((None, false, None, None, None, None));
 
         let mut stmt = self.conn.prepare(
             "SELECT payload_json
@@ -2371,6 +2444,8 @@ impl SqliteDatabase {
         let entries_total = entries.len() as u64;
         Ok(ConversationSnapshot {
             thread_id,
+            agent_model_id,
+            thinking_effort,
             entries,
             entries_total,
             entries_start: 0,
@@ -2391,10 +2466,17 @@ impl SqliteDatabase {
     ) -> anyhow::Result<ConversationSnapshot> {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
 
-        let (thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms) = self
+        let (
+            thread_id,
+            queue_paused,
+            run_started_at_unix_ms,
+            run_finished_at_unix_ms,
+            agent_model_id,
+            thinking_effort,
+        ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms FROM conversations
+                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_model_id, thinking_effort FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
@@ -2403,20 +2485,27 @@ impl SqliteDatabase {
                         row.get::<_, i64>(1)?,
                         row.get::<_, Option<i64>>(2)?,
                         row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
             .optional()
             .context("failed to load conversation meta")?
-            .map(|(thread_id, queue_paused, started, finished)| {
+            .map(|(thread_id, queue_paused, started, finished, model_id, thinking_effort)| {
+                let thinking_effort = thinking_effort
+                    .as_deref()
+                    .and_then(luban_domain::parse_thinking_effort);
                 (
                     thread_id,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
+                    model_id,
+                    thinking_effort,
                 )
             })
-            .unwrap_or((None, false, None, None));
+            .unwrap_or((None, false, None, None, None, None));
 
         let total_entries: u64 = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_entries
@@ -2486,6 +2575,8 @@ impl SqliteDatabase {
 
         Ok(ConversationSnapshot {
             thread_id,
+            agent_model_id,
+            thinking_effort,
             entries,
             entries_total: total_entries,
             entries_start: start as u64,
@@ -2567,6 +2658,34 @@ impl SqliteDatabase {
         )?;
         tx.commit()?;
 
+        Ok(())
+    }
+
+    fn save_conversation_run_config(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        model_id: &str,
+        thinking_effort: ThinkingEffort,
+    ) -> anyhow::Result<()> {
+        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
+        let now = now_unix_seconds();
+        self.conn.execute(
+            "UPDATE conversations
+             SET agent_model_id = ?4,
+                 thinking_effort = ?5,
+                 updated_at = ?6
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                model_id,
+                thinking_effort.as_str(),
+                now
+            ],
+        )?;
         Ok(())
     }
 
@@ -3141,6 +3260,25 @@ mod tests {
         let snapshot = db.load_conversation_page("p", "w", 1, None, 10).unwrap();
         assert_eq!(snapshot.run_started_at_unix_ms, Some(10));
         assert_eq!(snapshot.run_finished_at_unix_ms, Some(42));
+    }
+
+    #[test]
+    fn conversation_run_config_round_trip() {
+        let path = temp_db_path("conversation_run_config_round_trip");
+        let mut db = open_db(&path);
+
+        db.ensure_conversation("p", "w", 1).unwrap();
+
+        db.save_conversation_run_config("p", "w", 1, "gpt-5.2-codex", ThinkingEffort::High)
+            .unwrap();
+
+        let snapshot = db.load_conversation("p", "w", 1).unwrap();
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
+        assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
+
+        let snapshot = db.load_conversation_page("p", "w", 1, None, 10).unwrap();
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
+        assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
     }
 
     #[test]

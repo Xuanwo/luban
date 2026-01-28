@@ -255,6 +255,10 @@ pub(crate) fn entries_is_suffix(suffix: &[ConversationEntry], full: &[Conversati
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConversationSnapshot {
     pub thread_id: Option<String>,
+    #[serde(default)]
+    pub agent_model_id: Option<String>,
+    #[serde(default)]
+    pub thinking_effort: Option<crate::ThinkingEffort>,
     pub entries: Vec<ConversationEntry>,
     #[serde(default)]
     pub entries_total: u64,
