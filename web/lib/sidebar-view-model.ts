@@ -35,12 +35,16 @@ export function buildSidebarProjects(
     optimisticArchivingWorkspaceIds?: Set<number>
     pinnedProjectIds?: Set<ProjectId>
     pinnedWorktreeIds?: Set<number>
+    projectOrder?: ProjectId[]
+    worktreeOrder?: Map<ProjectId, number[]>
   },
 ): SidebarProjectVm[] {
   if (!app) return []
   const optimisticArchiving = args?.optimisticArchivingWorkspaceIds ?? null
   const pinnedProjectIds = args?.pinnedProjectIds ?? new Set<ProjectId>()
   const pinnedWorktreeIds = args?.pinnedWorktreeIds ?? new Set<number>()
+  const projectOrder = args?.projectOrder ?? []
+  const worktreeOrder = args?.worktreeOrder ?? new Map<ProjectId, number[]>()
 
   const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
 
@@ -65,13 +69,19 @@ export function buildSidebarProjects(
         }
         return { vm, index: worktreeIndex }
       })
-      // Sort worktrees: pinned first, then preserve original order.
-      .sort((a, b) => {
-        if (a.vm.pinned && !b.vm.pinned) return -1
-        if (!a.vm.pinned && b.vm.pinned) return 1
-        return a.index - b.index
-      })
       .map((x) => x.vm)
+
+    const projectWorktreeOrder = worktreeOrder.get(p.id) ?? []
+    const sortedWorktrees = sortWithCustomOrder(
+      worktrees,
+      (w) => w.workspaceId,
+      projectWorktreeOrder,
+      (a, b) => {
+        if (a.pinned && !b.pinned) return -1
+        if (!a.pinned && b.pinned) return 1
+        return 0
+      }
+    )
 
     const vm: SidebarProjectVm = {
       id: p.id,
@@ -81,17 +91,44 @@ export function buildSidebarProjects(
       expanded: p.expanded,
       createWorkspaceStatus: p.create_workspace_status,
       pinned: pinnedProjectIds.has(p.id),
-      worktrees,
+      worktrees: sortedWorktrees,
     }
-    return { vm, index: projectIndex }
+    return vm
   })
 
-  // Sort projects: pinned first, then preserve original order.
-  return projects
-    .sort((a, b) => {
-      if (a.vm.pinned && !b.vm.pinned) return -1
-      if (!a.vm.pinned && b.vm.pinned) return 1
-      return a.index - b.index
-    })
-    .map((x) => x.vm)
+  return sortWithCustomOrder(
+    projects,
+    (p) => p.id,
+    projectOrder,
+    (a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return 0
+    }
+  )
+}
+
+function sortWithCustomOrder<T, K>(
+  items: T[],
+  getKey: (item: T) => K,
+  order: K[],
+  fallbackCompare: (a: T, b: T) => number
+): T[] {
+  const orderMap = new Map<K, number>()
+  order.forEach((key, idx) => orderMap.set(key, idx))
+
+  return [...items].sort((a, b) => {
+    const fallback = fallbackCompare(a, b)
+    if (fallback !== 0) return fallback
+
+    const aOrder = orderMap.get(getKey(a))
+    const bOrder = orderMap.get(getKey(b))
+
+    if (aOrder !== undefined && bOrder !== undefined) {
+      return aOrder - bOrder
+    }
+    if (aOrder !== undefined) return -1
+    if (bOrder !== undefined) return 1
+    return 0
+  })
 }

@@ -34,7 +34,35 @@ import { SettingsPanel } from "@/components/settings-panel"
 import type { AgentStatus } from "@/lib/worktree-ui"
 import type { OpenSettingsDetail, SettingsSectionId } from "@/lib/open-settings"
 import type { ProjectId, WorkspaceId } from "@/lib/luban-api"
-import { PINNED_PROJECTS_KEY, PINNED_WORKTREES_KEY, loadJson, saveJson } from "@/lib/ui-prefs"
+import {
+  PINNED_PROJECTS_KEY,
+  PINNED_WORKTREES_KEY,
+  PROJECT_ORDER_KEY,
+  WORKTREE_ORDER_KEY,
+  loadJson,
+  saveJson,
+} from "@/lib/ui-prefs"
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragCancelEvent,
+  type UniqueIdentifier,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable"
+
+import { SortableProject, SortableWorktree, ProjectDragOverlay, WorktreeDragOverlay } from "./sidebar/index"
 
 interface SidebarProps {
   viewMode: "workspace" | "kanban"
@@ -115,6 +143,98 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
       saveJson(PINNED_WORKTREES_KEY, Array.from(next))
       return next
     })
+  }
+
+  const [projectOrder, setProjectOrder] = useState<ProjectId[]>(() => {
+    if (typeof window === "undefined") return []
+    return loadJson<ProjectId[]>(PROJECT_ORDER_KEY) ?? []
+  })
+
+  const [worktreeOrder, setWorktreeOrder] = useState<Map<ProjectId, number[]>>(() => {
+    if (typeof window === "undefined") return new Map()
+    const saved = loadJson<Record<ProjectId, number[]>>(WORKTREE_ORDER_KEY)
+    return saved ? new Map(Object.entries(saved) as [ProjectId, number[]][]) : new Map()
+  })
+
+  const [activeProjectDragId, setActiveProjectDragId] = useState<UniqueIdentifier | null>(null)
+  const [activeWorktreeDragId, setActiveWorktreeDragId] = useState<UniqueIdentifier | null>(null)
+  const [draggingProjectId, setDraggingProjectId] = useState<ProjectId | null>(null)
+
+  const projectSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  const handleProjectDragStart = (event: DragStartEvent) => {
+    setActiveProjectDragId(event.active.id)
+  }
+
+  const handleProjectDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    setActiveProjectDragId(null)
+
+    if (over && active.id !== over.id) {
+      setProjectOrder((prev) => {
+        const currentOrder = prev.length > 0 ? prev : projects.map((p) => p.id)
+        const oldIndex = currentOrder.indexOf(active.id as ProjectId)
+        const newIndex = currentOrder.indexOf(over.id as ProjectId)
+        if (oldIndex === -1 || newIndex === -1) {
+          const projectIds = projects.map((p) => p.id)
+          const oldIdx = projectIds.indexOf(active.id as ProjectId)
+          const newIdx = projectIds.indexOf(over.id as ProjectId)
+          if (oldIdx !== -1 && newIdx !== -1) {
+            const newOrder = arrayMove(projectIds, oldIdx, newIdx)
+            saveJson(PROJECT_ORDER_KEY, newOrder)
+            return newOrder
+          }
+          return prev
+        }
+        const newOrder = arrayMove(currentOrder, oldIndex, newIndex)
+        saveJson(PROJECT_ORDER_KEY, newOrder)
+        return newOrder
+      })
+    }
+  }
+
+  const handleProjectDragCancel = (_event: DragCancelEvent) => {
+    setActiveProjectDragId(null)
+  }
+
+  const handleWorktreeDragStart = (projectId: ProjectId) => (event: DragStartEvent) => {
+    setActiveWorktreeDragId(event.active.id)
+    setDraggingProjectId(projectId)
+  }
+
+  const handleWorktreeDragEnd = (projectId: ProjectId, worktrees: SidebarWorktreeVm[]) => (event: DragEndEvent) => {
+    const { active, over } = event
+    setActiveWorktreeDragId(null)
+    setDraggingProjectId(null)
+
+    if (over && active.id !== over.id) {
+      setWorktreeOrder((prev) => {
+        const currentOrder = prev.get(projectId) ?? worktrees.map((w) => w.workspaceId)
+        const oldIndex = currentOrder.indexOf(active.id as number)
+        const newIndex = currentOrder.indexOf(over.id as number)
+        if (oldIndex === -1 || newIndex === -1) {
+          const worktreeIds = worktrees.map((w) => w.workspaceId)
+          const oldIdx = worktreeIds.indexOf(active.id as number)
+          const newIdx = worktreeIds.indexOf(over.id as number)
+          if (oldIdx !== -1 && newIdx !== -1) {
+            const newOrder = arrayMove(worktreeIds, oldIdx, newIdx)
+            const next = new Map(prev)
+            next.set(projectId, newOrder)
+            saveJson(WORKTREE_ORDER_KEY, Object.fromEntries(next))
+            return next
+          }
+          return prev
+        }
+        const newOrder = arrayMove(currentOrder, oldIndex, newIndex)
+        const next = new Map(prev)
+        next.set(projectId, newOrder)
+        saveJson(WORKTREE_ORDER_KEY, Object.fromEntries(next))
+        return next
+      })
+    }
   }
 
   useEffect(() => {
@@ -278,6 +398,8 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
     optimisticArchivingWorkspaceIds,
     pinnedProjectIds,
     pinnedWorktreeIds,
+    projectOrder,
+    worktreeOrder,
   })
 
   const getActiveWorktreeCount = (worktrees: SidebarWorktreeVm[]) => {
@@ -341,6 +463,17 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
         data-testid="left-sidebar-scroll"
         className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1.5"
       >
+        <DndContext
+          sensors={projectSensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleProjectDragStart}
+          onDragEnd={handleProjectDragEnd}
+          onDragCancel={handleProjectDragCancel}
+        >
+          <SortableContext
+            items={projects.map((p) => p.id)}
+            strategy={verticalListSortingStrategy}
+          >
         {projects.map((project) => {
           const activeCount = getActiveWorktreeCount(project.worktrees)
           const isCreating =
@@ -357,20 +490,20 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
           const isStandaloneMainActive =
             standaloneMainWorktree != null && standaloneMainWorktree.workspaceId === activeWorkspaceId
           return (
-            <div
-              key={project.id}
-              className={cn(
-                "group/project transition-transform duration-300",
-                isDeleting && "animate-pulse opacity-50 pointer-events-none",
-                project.pinned && "animate-in slide-in-from-bottom-1 fade-in duration-300",
-              )}
-            >
+            <SortableProject key={project.id} id={project.id} disabled={isDeleting}>
               <div
                 className={cn(
-                  "relative flex items-center transition-colors",
-                  isStandaloneMainActive ? "bg-primary/6" : "hover:bg-primary/4",
+                  "transition-transform duration-300",
+                  isDeleting && "animate-pulse opacity-50 pointer-events-none",
+                  project.pinned && "animate-in slide-in-from-bottom-1 fade-in duration-300",
                 )}
               >
+                <div
+                  className={cn(
+                    "relative flex items-center transition-colors",
+                    isStandaloneMainActive ? "bg-primary/6" : "hover:bg-primary/4",
+                  )}
+                >
                 <button
                   data-testid={standaloneMainWorktree ? "project-main-only-entry" : undefined}
                   onClick={() => {
@@ -497,10 +630,24 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
               </div>
 
               {isExpanded && (
+                <DndContext
+                  sensors={projectSensors}
+                  collisionDetection={closestCenter}
+                  onDragStart={handleWorktreeDragStart(project.id)}
+                  onDragEnd={handleWorktreeDragEnd(project.id, project.worktrees)}
+                >
+                  <SortableContext
+                    items={project.worktrees.map((w) => w.workspaceId)}
+                    strategy={verticalListSortingStrategy}
+                  >
                 <div className="ml-4 pl-3 border-l border-border-subtle">
                   {project.worktrees.map((worktree, idx) => (
-                    <div
+                    <SortableWorktree
                       key={worktree.workspaceId}
+                      id={worktree.workspaceId}
+                      disabled={worktree.isArchiving}
+                    >
+                    <div
                       data-testid="worktree-row"
                       className={cn(
                         "group/worktree relative flex items-center gap-2 px-2 py-1.5 cursor-pointer outline-none",
@@ -615,6 +762,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                         />
                       )}
                     </div>
+                    </SortableWorktree>
                   ))}
 
                   {isCreating && (
@@ -629,10 +777,35 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     </div>
                   )}
                 </div>
+                  </SortableContext>
+                  <DragOverlay dropAnimation={{
+                    duration: 250,
+                    easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+                  }}>
+                    {activeWorktreeDragId && draggingProjectId === project.id ? (
+                      <WorktreeDragOverlay
+                        worktree={project.worktrees.find((w) => w.workspaceId === activeWorktreeDragId)!}
+                      />
+                    ) : null}
+                  </DragOverlay>
+                </DndContext>
               )}
-	            </div>
+              </div>
+            </SortableProject>
 	          )
 	        })}
+          </SortableContext>
+          <DragOverlay dropAnimation={{
+            duration: 250,
+            easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+          }}>
+            {activeProjectDragId ? (
+              <ProjectDragOverlay
+                project={projects.find((p) => p.id === activeProjectDragId)!}
+              />
+            ) : null}
+          </DragOverlay>
+        </DndContext>
 
         <button
           onClick={() => void handleAddProjectClick()}
