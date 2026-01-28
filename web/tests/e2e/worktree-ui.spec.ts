@@ -161,6 +161,61 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   expect(sawEmptyState).toBe(false)
 })
 
+test("draft attachments persist across worktree switches", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const widA = await activeWorkspaceId(page)
+  const snapA = await fetchAppSnapshot(page)
+  const projectDir =
+    snapA.projects.find((p: any) => p.name === "e2e-project")?.path ??
+    requireEnv("LUBAN_E2E_PROJECT_DIR")
+
+  const nameA = (() => {
+    for (const p of snapA.projects) {
+      const w = p.workspaces.find((x: any) => Number(x.id) === widA)
+      if (w) return String(w.branch_name)
+    }
+    return null
+  })()
+  if (!nameA) throw new Error("missing branch name for workspace A")
+
+  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  await projectToggle.waitFor({ timeout: 15_000 })
+  const projectContainer = projectToggle.locator("..").locator("..")
+  const branchEntries = projectContainer.getByTestId("worktree-branch-name")
+  const branchCountBefore = await branchEntries.count()
+
+  {
+    const png = new PNG({ width: 1, height: 1 })
+    png.data[0] = 255
+    png.data[1] = 0
+    png.data[2] = 0
+    png.data[3] = 255
+    const buffer = PNG.sync.write(png)
+    await page.getByTestId("chat-attach-input").setInputFiles({
+      name: "pasted.png",
+      mimeType: "image/png",
+      buffer,
+    })
+  }
+
+  await expect(page.getByTestId("chat-send")).toBeEnabled({ timeout: 20_000 })
+  await expect(page.getByTestId("chat-attachment-tile")).toHaveCount(1, { timeout: 20_000 })
+
+  await sendWsAction(page, { type: "create_workspace", project_id: projectDir })
+  await expect
+    .poll(async () => await branchEntries.count(), { timeout: 90_000 })
+    .toBe(branchCountBefore + 1)
+
+  await branchEntries.last().click()
+  const widB = await activeWorkspaceId(page)
+  expect(widB).not.toBe(widA)
+
+  await projectContainer.getByTestId("worktree-branch-name").filter({ hasText: nameA }).first().click()
+  await expect(page.getByTestId("chat-send")).toBeEnabled({ timeout: 20_000 })
+  await expect(page.getByTestId("chat-attachment-tile")).toHaveCount(1, { timeout: 20_000 })
+})
+
 test("new worktree highlight clears after a short delay", async ({ page }) => {
   await ensureWorkspace(page)
 

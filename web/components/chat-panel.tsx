@@ -47,6 +47,11 @@ import type { AgentRunnerOverride, AmpModeOverride } from "@/components/shared/a
 
 type ComposerAttachment = EditorComposerAttachment
 
+type PersistedChatDraft = {
+  text: string
+  attachments?: AttachmentRef[]
+}
+
 export function ChatPanel({
   pendingDiffFile,
   onDiffFileOpened,
@@ -112,6 +117,26 @@ export function ChatPanel({
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const attachmentScopeRef = useRef<string>("")
   const attachmentScope = `${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`
+
+  const attachmentsFromRefs = useCallback(
+    (workspaceId: number | null, refs: AttachmentRef[]): ComposerAttachment[] => {
+      return refs.map((attachment) => {
+        const isImage = attachment.kind === "image"
+        const previewUrl =
+          isImage && workspaceId != null ? attachmentHref({ workspaceId, attachment }) ?? undefined : undefined
+        return {
+          id: `ref-${attachment.id}`,
+          type: isImage ? "image" : "file",
+          name: attachment.name,
+          size: attachment.byte_len,
+          status: "ready",
+          attachment,
+          previewUrl,
+        }
+      })
+    },
+    [],
+  )
 
   const queuedPrompts = conversation?.pending_prompts ?? []
   const queuePaused = conversation?.queue_paused ?? false
@@ -333,10 +358,9 @@ export function ChatPanel({
       const match = codexCustomPrompts.find((p) => p.id === commandId) ?? null
       if (!match) return
       setDraftText(match.contents)
-      persistDraft(match.contents)
       focusChatInput()
     },
-    [codexCustomPrompts, persistDraft],
+    [codexCustomPrompts],
   )
 
   const handleAgentCommand = useCallback(
@@ -459,6 +483,20 @@ export function ChatPanel({
   )
 
   useEffect(() => {
+    if (activeWorkspaceId == null || activeThreadId == null) return
+    if (attachmentScopeRef.current !== attachmentScope) return
+
+    const readyAttachments = attachments
+      .filter((a) => a.status === "ready" && a.attachment != null)
+      .map((a) => a.attachment!)
+
+    saveJson(draftKey(activeWorkspaceId, activeThreadId), {
+      text: draftText,
+      attachments: readyAttachments,
+    } satisfies PersistedChatDraft)
+  }, [activeThreadId, activeWorkspaceId, attachmentScope, attachments, draftText])
+
+  useEffect(() => {
     if (activeWorkspaceId == null || activeThreadId == null) {
       setDraftText("")
       setAttachments([])
@@ -474,10 +512,11 @@ export function ChatPanel({
     localStorage.setItem(followTailKey(activeWorkspaceId, activeThreadId), "true")
     startPinToBottom(500)
 
-    const saved = loadJson<{ text: string }>(draftKey(activeWorkspaceId, activeThreadId))
-    setDraftText(saved?.text ?? "")
-    setAttachments([])
     attachmentScopeRef.current = attachmentScope
+
+    const saved = loadJson<PersistedChatDraft>(draftKey(activeWorkspaceId, activeThreadId))
+    setDraftText(saved?.text ?? "")
+    setAttachments(saved?.attachments ? attachmentsFromRefs(activeWorkspaceId, saved.attachments) : [])
     setEditingQueuedPromptId(null)
     setQueuedDraftText("")
     setQueuedDraftAttachments([])
@@ -563,13 +602,6 @@ export function ChatPanel({
     scheduleScrollToBottom()
   }, [displayMessages.length, followTail, activeWorkspaceId, activeThreadId, freezeConversationRender])
 
-  function persistDraft(nextText: string) {
-    if (activeWorkspaceId == null || activeThreadId == null) return
-    saveJson(draftKey(activeWorkspaceId, activeThreadId), {
-      text: nextText,
-    })
-  }
-
   const handleTabClick = (tabId: string) => {
     const id = Number(tabId)
     if (!Number.isFinite(id)) return
@@ -631,29 +663,10 @@ export function ChatPanel({
       sendAgentMessage(text, ready, runConfig)
     }
     setDraftText("")
-    persistDraft("")
     setAttachments([])
     setFollowTail(true)
     localStorage.setItem(followTailKey(activeWorkspaceId, activeThreadId), "true")
     scheduleScrollToBottom()
-  }
-
-  const attachmentsFromRefs = (refs: AttachmentRef[]): ComposerAttachment[] => {
-    const workspaceId = activeWorkspaceId
-    return refs.map((attachment) => {
-      const isImage = attachment.kind === "image"
-      const previewUrl =
-        isImage && workspaceId != null ? attachmentHref({ workspaceId, attachment }) ?? undefined : undefined
-      return {
-        id: `ref-${attachment.id}`,
-        type: isImage ? "image" : "file",
-        name: attachment.name,
-        size: attachment.byte_len,
-        status: "ready",
-        attachment,
-        previewUrl,
-      }
-    })
   }
 
   const baseAgentStatus = useMemo<AgentRunningStatus | null>(() => {
@@ -762,7 +775,7 @@ export function ChatPanel({
 
     setEditingQueuedPromptId(promptId)
     setQueuedDraftText(prompt.text)
-    setQueuedDraftAttachments(attachmentsFromRefs(prompt.attachments ?? []))
+    setQueuedDraftAttachments(attachmentsFromRefs(activeWorkspaceId, prompt.attachments ?? []))
     setQueuedDraftModelId(prompt.run_config?.model_id ?? null)
     setQueuedDraftThinkingEffort(prompt.run_config?.thinking_effort ?? null)
     queuedAttachmentScopeRef.current = `${attachmentScope}:queued:${promptId}:${Date.now()}`
@@ -1036,7 +1049,10 @@ export function ChatPanel({
           onEditorFileSelect={handleAgentFileSelect}
           onEditorPaste={handleAgentPaste}
           onAddEditorAttachmentRef={(attachment) => {
-            setAgentEditorAttachments((prev) => [...prev, ...attachmentsFromRefs([attachment])])
+            setAgentEditorAttachments((prev) => [
+              ...prev,
+              ...attachmentsFromRefs(activeWorkspaceId ?? null, [attachment]),
+            ])
           }}
           workspaceId={activeWorkspaceId ?? null}
           commands={codexCustomPrompts}
@@ -1234,7 +1250,10 @@ export function ChatPanel({
                       onQueuedPaste={handleQueuedPaste}
                       onRemoveEditingAttachment={removeQueuedDraftAttachment}
                       onAddEditingAttachmentRef={(attachment) => {
-                        setQueuedDraftAttachments((prev) => [...prev, ...attachmentsFromRefs([attachment])])
+                        setQueuedDraftAttachments((prev) => [
+                          ...prev,
+                          ...attachmentsFromRefs(activeWorkspaceId ?? null, [attachment]),
+                        ])
                       }}
                       onOpenAgentSettings={(agentId, agentFilePath) =>
                         openSettingsPanel("agent", { agentId, agentFilePath })
@@ -1275,7 +1294,6 @@ export function ChatPanel({
                   value={draftText}
                   onChange={(value) => {
                     setDraftText(value)
-                    persistDraft(value)
                   }}
                   attachments={attachments}
                   onRemoveAttachment={removeAttachment}
