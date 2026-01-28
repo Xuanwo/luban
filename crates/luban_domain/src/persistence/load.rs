@@ -1,25 +1,15 @@
+use super::fonts::normalize_font;
 use crate::agent_settings::{parse_agent_runner_kind, parse_thinking_effort};
 use crate::{
     AppState, AppearanceFonts, AppearanceTheme, Effect, MainPane, OperationStatus,
-    PersistedAppState, PersistedProject, PersistedWorkspace, Project, ProjectId, RightPane,
-    Workspace, WorkspaceId, WorkspaceStatus, WorkspaceTabs, WorkspaceThreadId,
-};
-use crate::{
-    TaskIntentKind, default_agent_model_id, default_agent_runner_kind, default_amp_mode,
-    default_system_prompt_templates, default_task_prompt_templates, default_thinking_effort,
-    normalize_thinking_effort,
+    PersistedAppState, PersistedProject, Project, ProjectId, RightPane, TaskIntentKind, Workspace,
+    WorkspaceId, WorkspaceStatus, WorkspaceTabs, WorkspaceThreadId, default_agent_model_id,
+    default_agent_runner_kind, default_amp_mode, default_system_prompt_templates,
+    default_task_prompt_templates, default_thinking_effort, normalize_thinking_effort,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
-
-fn normalize_font(raw: Option<&str>, fallback: &str) -> String {
-    raw.map(str::trim)
-        .filter(|v| !v.is_empty())
-        .filter(|v| v.len() <= 128)
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| fallback.to_owned())
-}
 
 pub(crate) fn apply_persisted_app_state(
     state: &mut AppState,
@@ -255,105 +245,6 @@ pub(crate) fn apply_persisted_app_state(
     effects
 }
 
-pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
-    PersistedAppState {
-        projects: state
-            .projects
-            .iter()
-            .map(|p| PersistedProject {
-                id: p.id.0,
-                name: p.name.clone(),
-                path: p.path.clone(),
-                slug: p.slug.clone(),
-                is_git: p.is_git,
-                expanded: p.expanded,
-                workspaces: p
-                    .workspaces
-                    .iter()
-                    .map(|w| PersistedWorkspace {
-                        id: w.id.0,
-                        workspace_name: w.workspace_name.clone(),
-                        branch_name: w.branch_name.clone(),
-                        worktree_path: w.worktree_path.clone(),
-                        status: w.status,
-                        last_activity_at_unix_seconds: w
-                            .last_activity_at
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())),
-                    })
-                    .collect(),
-            })
-            .collect(),
-        sidebar_width: state.sidebar_width,
-        terminal_pane_width: state.terminal_pane_width,
-        global_zoom_percent: Some(state.global_zoom_percent),
-        appearance_theme: Some(state.appearance_theme.as_str().to_owned()),
-        appearance_ui_font: Some(state.appearance_fonts.ui_font.clone()),
-        appearance_chat_font: Some(state.appearance_fonts.chat_font.clone()),
-        appearance_code_font: Some(state.appearance_fonts.code_font.clone()),
-        appearance_terminal_font: Some(state.appearance_fonts.terminal_font.clone()),
-        agent_default_model_id: Some(state.agent_default_model_id.clone()),
-        agent_default_thinking_effort: Some(
-            state.agent_default_thinking_effort.as_str().to_owned(),
-        ),
-        agent_default_runner: Some(state.agent_default_runner.as_str().to_owned()),
-        agent_amp_mode: Some(state.agent_amp_mode.clone()),
-        agent_codex_enabled: Some(state.agent_codex_enabled),
-        agent_amp_enabled: Some(state.agent_amp_enabled),
-        last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
-        open_button_selection: state.open_button_selection.clone(),
-        workspace_active_thread_id: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| (workspace_id.0, tabs.active_tab.0))
-            .collect(),
-        workspace_open_tabs: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| {
-                (
-                    workspace_id.0,
-                    tabs.open_tabs.iter().map(|id| id.0).collect(),
-                )
-            })
-            .collect(),
-        workspace_archived_tabs: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| {
-                (
-                    workspace_id.0,
-                    tabs.archived_tabs.iter().map(|id| id.0).collect(),
-                )
-            })
-            .collect(),
-        workspace_next_thread_id: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| (workspace_id.0, tabs.next_thread_id))
-            .collect(),
-        workspace_chat_scroll_y10: state
-            .workspace_chat_scroll_y10
-            .iter()
-            .map(|((workspace_id, thread_id), offset_y10)| {
-                ((workspace_id.0, thread_id.0), *offset_y10)
-            })
-            .collect(),
-        workspace_chat_scroll_anchor: state
-            .workspace_chat_scroll_anchor
-            .iter()
-            .map(|((workspace_id, thread_id), anchor)| {
-                ((workspace_id.0, thread_id.0), anchor.clone())
-            })
-            .collect(),
-        workspace_unread_completions: state
-            .workspace_unread_completions
-            .iter()
-            .map(|workspace_id| (workspace_id.0, true))
-            .collect(),
-        task_prompt_templates: HashMap::new(),
-    }
-}
-
 fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
     use std::collections::hash_map::Entry;
 
@@ -432,8 +323,6 @@ fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
 }
 
 fn dedupe_workspace_names(workspaces: &mut [Workspace]) -> bool {
-    use std::collections::{HashMap, HashSet};
-
     let mut upgraded = false;
     let mut used: HashSet<String> = HashSet::new();
     let mut next_suffix: HashMap<String, u64> = HashMap::new();
@@ -460,8 +349,6 @@ fn dedupe_workspace_names(workspaces: &mut [Workspace]) -> bool {
 }
 
 fn dedupe_worktree_paths(workspaces: &mut Vec<Workspace>) -> bool {
-    use std::collections::HashMap;
-
     if workspaces.len() <= 1 {
         return false;
     }
@@ -507,7 +394,7 @@ fn dedupe_worktree_paths(workspaces: &mut Vec<Workspace>) -> bool {
     upgraded
 }
 
-fn normalize_project_path(path: &std::path::Path) -> PathBuf {
+fn normalize_project_path(path: &Path) -> PathBuf {
     use std::path::Component;
 
     let mut out = PathBuf::new();
@@ -529,7 +416,7 @@ fn normalize_project_path(path: &std::path::Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PersistedProject, PersistedWorkspace};
+    use crate::{PersistedWorkspace, WorkspaceStatus};
 
     #[test]
     fn load_projects_dedupes_duplicate_worktree_paths() {
