@@ -52,6 +52,53 @@ use pull_request::pull_request_ci_state_from_check_buckets;
 use reconnect_notice::is_transient_reconnect_notice;
 use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
 
+fn codex_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<CodexConfigEntry> {
+    entries
+        .into_iter()
+        .map(|entry| CodexConfigEntry {
+            path: entry.path,
+            name: entry.name,
+            kind: match entry.kind {
+                config_tree::ShallowEntryKind::Folder => CodexConfigEntryKind::Folder,
+                config_tree::ShallowEntryKind::File => CodexConfigEntryKind::File,
+            },
+            children: Vec::new(),
+        })
+        .collect()
+}
+
+fn amp_entries_from_shallow(
+    entries: Vec<config_tree::ShallowEntry>,
+) -> Vec<luban_domain::AmpConfigEntry> {
+    entries
+        .into_iter()
+        .map(|entry| luban_domain::AmpConfigEntry {
+            path: entry.path,
+            name: entry.name,
+            kind: match entry.kind {
+                config_tree::ShallowEntryKind::Folder => luban_domain::AmpConfigEntryKind::Folder,
+                config_tree::ShallowEntryKind::File => luban_domain::AmpConfigEntryKind::File,
+            },
+            children: Vec::new(),
+        })
+        .collect()
+}
+
+fn claude_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<ClaudeConfigEntry> {
+    entries
+        .into_iter()
+        .map(|entry| ClaudeConfigEntry {
+            path: entry.path,
+            name: entry.name,
+            kind: match entry.kind {
+                config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
+                config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
+            },
+            children: Vec::new(),
+        })
+        .collect()
+}
+
 /// Git workspace service with persistent Claude process management.
 ///
 /// Each thread/tab can have its own Claude process that maintains MCP connections
@@ -2118,18 +2165,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 "codex config root",
             )?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| CodexConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => CodexConfigEntryKind::Folder,
-                        config_tree::ShallowEntryKind::File => CodexConfigEntryKind::File,
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(codex_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2154,18 +2190,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
 
             let entries = config_tree::read_shallow_entries_in_dir(&abs, &rel_path)?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| CodexConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => CodexConfigEntryKind::Folder,
-                        config_tree::ShallowEntryKind::File => CodexConfigEntryKind::File,
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(codex_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2218,22 +2243,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 "amp config root",
             )?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| luban_domain::AmpConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => {
-                            luban_domain::AmpConfigEntryKind::Folder
-                        }
-                        config_tree::ShallowEntryKind::File => {
-                            luban_domain::AmpConfigEntryKind::File
-                        }
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(amp_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2261,22 +2271,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
 
             let entries = config_tree::read_shallow_entries_in_dir(&abs, &rel_path)?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| luban_domain::AmpConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => {
-                            luban_domain::AmpConfigEntryKind::Folder
-                        }
-                        config_tree::ShallowEntryKind::File => {
-                            luban_domain::AmpConfigEntryKind::File
-                        }
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(amp_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2329,18 +2324,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 "claude config root",
             )?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| ClaudeConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
-                        config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(claude_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2365,18 +2349,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
 
             let entries = config_tree::read_shallow_entries_in_dir(&abs, &rel_path)?;
 
-            Ok(entries
-                .into_iter()
-                .map(|entry| ClaudeConfigEntry {
-                    path: entry.path,
-                    name: entry.name,
-                    kind: match entry.kind {
-                        config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
-                        config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
-                    },
-                    children: Vec::new(),
-                })
-                .collect())
+            Ok(claude_entries_from_shallow(entries))
         })();
 
         result.map_err(|e| format!("{e:#}"))
