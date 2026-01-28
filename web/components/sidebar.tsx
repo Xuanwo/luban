@@ -359,12 +359,16 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
           return (
             <div
               key={project.id}
-              className={cn("group/project", isDeleting && "animate-pulse opacity-50 pointer-events-none")}
+              className={cn(
+                "group/project transition-transform duration-300",
+                isDeleting && "animate-pulse opacity-50 pointer-events-none",
+                project.pinned && "animate-in slide-in-from-bottom-1 fade-in duration-300",
+              )}
             >
               <div
                 className={cn(
                   "relative flex items-center transition-colors",
-                  isStandaloneMainActive ? "bg-primary/6" : "hover:bg-sidebar-accent/50",
+                  isStandaloneMainActive ? "bg-primary/6" : "hover:bg-primary/4",
                 )}
               >
                 <button
@@ -438,7 +442,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     "absolute right-0 top-0 bottom-0 w-32 opacity-0 pointer-events-none transition-opacity duration-150 z-10",
                     "bg-gradient-to-l from-sidebar via-sidebar/90 to-transparent",
                     isStandaloneMainActive && "from-[hsl(var(--primary)/0.06)] via-[hsl(var(--primary)/0.04)]",
-                    !isStandaloneMainActive && "group-hover/project:from-sidebar-accent group-hover/project:via-sidebar-accent/80",
+                    !isStandaloneMainActive && "group-hover/project:from-[hsl(var(--primary)/0.04)] group-hover/project:via-[hsl(var(--primary)/0.02)]",
                     "group-hover/project:opacity-100",
                   )}
                 />
@@ -449,19 +453,10 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                       e.stopPropagation()
                       togglePinProject(project.id)
                     }}
-                    className={cn(
-                      "p-1 transition-all duration-200",
-                      project.pinned
-                        ? "text-base09 hover:text-base0a rotate-0"
-                        : "text-muted-foreground hover:text-foreground -rotate-45 hover:rotate-0",
-                    )}
+                    className="p-1 text-muted-foreground hover:text-foreground"
                     title={project.pinned ? "Unpin project" : "Pin project"}
                   >
-                    {project.pinned ? (
-                      <PinOff className="w-4 h-4" />
-                    ) : (
-                      <Pin className="w-4 h-4" />
-                    )}
+                    {project.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
                   </button>
                   {project.isGit && (
                     <button
@@ -508,10 +503,12 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                       key={worktree.workspaceId}
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 transition-all cursor-pointer outline-none",
-                        worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-sidebar-accent/30",
+                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 cursor-pointer outline-none",
+                        worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-primary/4",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
                           "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
+                        worktree.pinned && newlyCreatedWorkspaceId !== worktree.workspaceId &&
+                          "animate-in slide-in-from-bottom-1 fade-in duration-300",
                         worktree.isArchiving && "animate-pulse opacity-50 pointer-events-none",
                       )}
                       style={{
@@ -522,100 +519,95 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                         void openWorkspace(worktree.workspaceId)
                       }}
                     >
-                        {worktree.isArchiving ? (
-                          <Loader2
-                            data-testid="worktree-archiving-spinner"
-                            className="w-3.5 h-3.5 animate-spin text-muted-foreground"
-                          />
-                        ) : (
-                          <AgentStatusIcon status={worktree.agentStatus} size="sm" />
-                        )}
-
-                        <div className="flex flex-col flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            <span
-                              data-testid="worktree-branch-name"
-                              className="text-xs text-foreground truncate"
-                              title={worktree.name}
-                            >
-                              {worktree.name}
-                            </span>
-                            {worktree.pinned && (
-                              <Pin
-                                className="w-2.5 h-2.5 text-base09 flex-shrink-0 opacity-70 group-hover/worktree:opacity-0 transition-opacity duration-150"
-                                aria-label="Pinned"
-                              />
-                            )}
-                          </div>
-                          <span
-                            data-testid="worktree-worktree-name"
-                            className="text-[10px] text-muted-foreground/50 font-mono truncate"
-                            title={worktree.id}
-                          >
-                            {worktree.worktreeName}
-                          </span>
-                        </div>
-
-                        <PRBadge
-                          status={worktree.prStatus}
-                          prNumber={worktree.prNumber}
-                          workspaceId={worktree.workspaceId}
-                          onOpenPullRequest={openWorkspacePullRequest}
-                          onOpenPullRequestFailedAction={openWorkspacePullRequestFailedAction}
-                          titleOverride={worktree.prTitle}
+                      {worktree.isArchiving ? (
+                        <Loader2
+                          data-testid="worktree-archiving-spinner"
+                          className="w-3.5 h-3.5 animate-spin text-muted-foreground flex-shrink-0"
                         />
-                      {/* Pin button */}
-                      <button
-                        data-testid="worktree-pin-button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          togglePinWorktree(worktree.workspaceId)
-                        }}
-                        className={cn(
-                          "p-0.5 text-muted-foreground hover:text-foreground transition-all duration-150",
-                          "opacity-0 group-hover/worktree:opacity-100",
-                          !worktree.pinned && "-rotate-45 hover:rotate-0",
-                        )}
-                        title={worktree.pinned ? "Unpin worktree" : "Pin worktree"}
-                      >
-                        {worktree.pinned ? (
-                          <PinOff className="w-3 h-3" />
-                        ) : (
-                          <Pin className="w-3 h-3" />
-                        )}
-                      </button>
-                      {/* Archive button only for non-home worktrees */}
-                      {worktree.isHome ? (
-                        <span
-                          data-testid="worktree-home-icon"
-                          className="p-0.5 text-muted-foreground/50 opacity-0 group-hover/worktree:opacity-100 transition-opacity"
-                          title="Main worktree"
-                        >
-                          <Home className="w-3 h-3" />
-                        </span>
                       ) : (
-                        <button
-                          className={cn(
-                            "p-0.5 text-muted-foreground hover:text-foreground transition-opacity",
-                            worktree.isArchiving
-                              ? "opacity-50"
-                              : "opacity-0 group-hover/worktree:opacity-100",
+                        <span className="flex-shrink-0">
+                          <AgentStatusIcon status={worktree.agentStatus} size="sm" />
+                        </span>
+                      )}
+
+                      <div className="flex flex-col flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <span
+                            data-testid="worktree-branch-name"
+                            className="text-xs text-foreground truncate"
+                            title={worktree.name}
+                          >
+                            {worktree.name}
+                          </span>
+                          {worktree.pinned && (
+                            <Pin
+                              className="w-2.5 h-2.5 text-base09 flex-shrink-0 opacity-70"
+                              aria-label="Pinned"
+                            />
                           )}
-                          title="Archive worktree"
+                        </div>
+                        <span
+                          data-testid="worktree-worktree-name"
+                          className="text-[10px] text-muted-foreground/50 font-mono truncate"
+                          title={worktree.id}
+                        >
+                          {worktree.worktreeName}
+                        </span>
+                      </div>
+
+                      <PRBadge
+                        status={worktree.prStatus}
+                        prNumber={worktree.prNumber}
+                        workspaceId={worktree.workspaceId}
+                        onOpenPullRequest={openWorkspacePullRequest}
+                        onOpenPullRequestFailedAction={openWorkspacePullRequestFailedAction}
+                        titleOverride={worktree.prTitle}
+                      />
+
+                      {/* Action buttons - fixed position, opacity only */}
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 transition-opacity">
+                        <button
+                          data-testid="worktree-pin-button"
                           onClick={(e) => {
                             e.stopPropagation()
-                            setOptimisticArchivingWorkspaceIds((prev) => {
-                              const next = new Set(prev)
-                              next.add(worktree.workspaceId)
-                              return next
-                            })
-                            archiveWorkspace(worktree.workspaceId)
+                            togglePinWorktree(worktree.workspaceId)
                           }}
-                          disabled={worktree.isArchiving}
+                          className="p-0.5 text-muted-foreground hover:text-foreground"
+                          title={worktree.pinned ? "Unpin worktree" : "Pin worktree"}
                         >
-                          <Archive className="w-3 h-3" />
+                          {worktree.pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
                         </button>
-                      )}
+                        {worktree.isHome ? (
+                          <span
+                            data-testid="worktree-home-icon"
+                            className="p-0.5 text-muted-foreground/50"
+                            title="Main worktree"
+                          >
+                            <Home className="w-3.5 h-3.5" />
+                          </span>
+                        ) : (
+                          <button
+                            className={cn(
+                              "p-0.5 text-muted-foreground hover:text-foreground",
+                              worktree.isArchiving && "opacity-50",
+                            )}
+                            title="Archive worktree"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setOptimisticArchivingWorkspaceIds((prev) => {
+                                const next = new Set(prev)
+                                next.add(worktree.workspaceId)
+                                return next
+                              })
+                              archiveWorkspace(worktree.workspaceId)
+                            }}
+                            disabled={worktree.isArchiving}
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
                       {worktree.workspaceId === activeWorkspaceId && (
                         <div
                           data-testid="worktree-active-underline"
