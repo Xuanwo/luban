@@ -59,6 +59,7 @@ test("project can be deleted via sidebar confirmation dialog", async ({ page }) 
   const projectContainer = projectToggle.locator("..").locator("..")
 
   await projectContainer.hover()
+  await expect(projectContainer.getByTestId("project-pin-button")).toHaveCount(0)
   await expect(projectContainer.getByTestId("project-delete-button")).toBeVisible()
   const sidebarBox = await page.getByTestId("left-sidebar").boundingBox()
   const deleteButtonBox = await projectContainer.getByTestId("project-delete-button").boundingBox()

@@ -1,7 +1,5 @@
 "use client"
 
-import type React from "react"
-
 import {
   ChevronDown,
   ChevronRight,
@@ -15,8 +13,6 @@ import {
   Home,
   Trash2,
   MessageCircleQuestion,
-  Pin,
-  PinOff,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
@@ -34,14 +30,7 @@ import { SettingsPanel } from "@/components/settings-panel"
 import type { AgentStatus } from "@/lib/worktree-ui"
 import type { OpenSettingsDetail, SettingsSectionId } from "@/lib/open-settings"
 import type { ProjectId, WorkspaceId } from "@/lib/luban-api"
-import {
-  PINNED_PROJECTS_KEY,
-  PINNED_WORKTREES_KEY,
-  PROJECT_ORDER_KEY,
-  WORKTREE_ORDER_KEY,
-  loadJson,
-  saveJson,
-} from "@/lib/ui-prefs"
+import { PROJECT_ORDER_KEY, WORKTREE_ORDER_KEY, loadJson, saveJson } from "@/lib/ui-prefs"
 import {
   DndContext,
   DragOverlay,
@@ -109,43 +98,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
   const [settingsInitialSectionId, setSettingsInitialSectionId] = useState<SettingsSectionId | null>(null)
   const [settingsInitialAgentId, setSettingsInitialAgentId] = useState<string | null>(null)
   const [settingsInitialAgentFilePath, setSettingsInitialAgentFilePath] = useState<string | null>(null)
-  const [pinnedProjectIds, setPinnedProjectIds] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set()
-    const saved = loadJson<string[]>(PINNED_PROJECTS_KEY)
-    return new Set(saved ?? [])
-  })
-
-  const togglePinProject = (projectId: string) => {
-    setPinnedProjectIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(projectId)) {
-        next.delete(projectId)
-      } else {
-        next.add(projectId)
-      }
-      saveJson(PINNED_PROJECTS_KEY, Array.from(next))
-      return next
-    })
-  }
-
-  const [pinnedWorktreeIds, setPinnedWorktreeIds] = useState<Set<number>>(() => {
-    if (typeof window === "undefined") return new Set()
-    const saved = loadJson<number[]>(PINNED_WORKTREES_KEY)
-    return new Set(saved ?? [])
-  })
-
-  const togglePinWorktree = (worktreeId: number) => {
-    setPinnedWorktreeIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(worktreeId)) {
-        next.delete(worktreeId)
-      } else {
-        next.add(worktreeId)
-      }
-      saveJson(PINNED_WORKTREES_KEY, Array.from(next))
-      return next
-    })
-  }
 
   const projectOrder = app?.ui?.sidebar_project_order ?? []
   const worktreeOrder = useMemo(() => {
@@ -410,8 +362,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
 
   const projects: SidebarProjectVm[] = buildSidebarProjects(app, {
     optimisticArchivingWorkspaceIds,
-    pinnedProjectIds,
-    pinnedWorktreeIds,
     projectOrder,
     worktreeOrder,
   })
@@ -509,7 +459,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                 className={cn(
                   "transition-transform duration-300",
                   isDeleting && "animate-pulse opacity-50 pointer-events-none",
-                  project.pinned && "animate-in slide-in-from-bottom-1 fade-in duration-300",
                 )}
               >
                 <div
@@ -537,7 +486,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                   }}
                   className={cn(
                     "flex-1 min-w-0 flex items-center gap-2 px-2 py-2.5 text-left transition-[padding] duration-150",
-                    "group-hover/project:pr-24",
+                    "group-hover/project:pr-16",
                     canExpand || standaloneMainWorktree || project.worktrees.length === 0
                       ? "cursor-pointer"
                       : "cursor-default",
@@ -565,12 +514,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                   >
                     {project.displayName}
                   </span>
-                  {project.pinned && (
-                    <Pin
-                      className="w-3 h-3 text-base09 flex-shrink-0 opacity-70 group-hover/project:opacity-0 transition-opacity duration-150"
-                      aria-label="Pinned"
-                    />
-                  )}
                   {canExpand && !isExpanded && activeCount > 0 && (
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
                       {activeCount}
@@ -594,17 +537,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                   )}
                 />
                 <div className="absolute right-1 top-1/2 -translate-y-1/2 z-20 flex items-center gap-0 opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto transition-opacity duration-150">
-                  <button
-                    data-testid="project-pin-button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      togglePinProject(project.id)
-                    }}
-                    className="p-1 text-muted-foreground hover:text-foreground"
-                    title={project.pinned ? "Unpin project" : "Pin project"}
-                  >
-                    {project.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
-                  </button>
                   {project.isGit && (
                     <button
                       className="p-1 text-muted-foreground hover:text-foreground transition-colors"
@@ -668,8 +600,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                         worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-primary/4",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
                           "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
-                        worktree.pinned && newlyCreatedWorkspaceId !== worktree.workspaceId &&
-                          "animate-in slide-in-from-bottom-1 fade-in duration-300",
                         worktree.isArchiving && "animate-pulse opacity-50 pointer-events-none",
                       )}
                       style={{
@@ -700,12 +630,6 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                           >
                             {worktree.name}
                           </span>
-                          {worktree.pinned && (
-                            <Pin
-                              className="w-2.5 h-2.5 text-base09 flex-shrink-0 opacity-70"
-                              aria-label="Pinned"
-                            />
-                          )}
                         </div>
                         <span
                           data-testid="worktree-worktree-name"
@@ -727,21 +651,10 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
 
                       {/* Action buttons - fixed position, opacity only */}
                       <div className="flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 transition-opacity">
-                        <button
-                          data-testid="worktree-pin-button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            togglePinWorktree(worktree.workspaceId)
-                          }}
-                          className="p-0.5 text-muted-foreground hover:text-foreground"
-                          title={worktree.pinned ? "Unpin worktree" : "Pin worktree"}
-                        >
-                          {worktree.pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-                        </button>
                         {worktree.isHome ? (
                           <span
                             data-testid="worktree-home-icon"
-                            className="p-0.5 text-muted-foreground/50"
+                            className="p-0.5 text-muted-foreground/50 opacity-0 group-hover/worktree:opacity-100 transition-opacity"
                             title="Main worktree"
                           >
                             <Home className="w-3.5 h-3.5" />

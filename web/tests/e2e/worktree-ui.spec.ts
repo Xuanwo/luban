@@ -32,6 +32,8 @@ function samplePixel(png: PNG, x: number, y: number): { r: number; g: number; b:
 test("worktree item shows branch name above worktree name", async ({ page }) => {
   await ensureWorkspace(page)
 
+  await expect(page.getByTestId("worktree-pin-button")).toHaveCount(0)
+
   const worktreeName = page.getByTestId("worktree-worktree-name").first()
   const branchName = page.getByTestId("worktree-branch-name").first()
 
@@ -52,7 +54,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
     requireEnv("LUBAN_E2E_PROJECT_DIR")
   const tidA = Number(snapA?.ui?.active_thread_id ?? NaN)
   if (!Number.isFinite(tidA)) throw new Error("missing active_thread_id")
-  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  const projectToggle = projectToggleByPath(page, fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR")))
   await projectToggle.waitFor({ timeout: 15_000 })
   const projectContainer = projectToggle.locator("..").locator("..")
   const branchEntries = projectContainer.getByTestId("worktree-branch-name")
@@ -123,7 +125,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   await expect(page.getByText(tokenA).first()).toBeVisible({ timeout: 20_000 })
   {
     const row = projectContainer.getByTestId("worktree-row").filter({ hasText: nameA }).first()
-    await expect(row.getByTestId("worktree-active-underline")).toHaveCount(1, { timeout: 10_000 })
+    await expect(row.getByTestId("worktree-active-indicator")).toHaveCount(1, { timeout: 10_000 })
   }
 
   const nameB = await page.evaluate(async (workspaceId) => {
@@ -142,7 +144,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   await expect(page.getByText(tokenB).first()).toBeVisible({ timeout: 20_000 })
   {
     const row = projectContainer.getByTestId("worktree-row").filter({ hasText: String(nameB) }).first()
-    await expect(row.getByTestId("worktree-active-underline")).toHaveCount(1, { timeout: 10_000 })
+    await expect(row.getByTestId("worktree-active-indicator")).toHaveCount(1, { timeout: 10_000 })
   }
 
   const sawEmptyState = await page.evaluate(() => Boolean((window as any).__e2eSawChatEmptyState))
@@ -167,7 +169,7 @@ test("draft attachments persist across worktree switches", async ({ page }) => {
   })()
   if (!nameA) throw new Error("missing branch name for workspace A")
 
-  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  const projectToggle = projectToggleByPath(page, fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR")))
   await projectToggle.waitFor({ timeout: 15_000 })
   const projectContainer = projectToggle.locator("..").locator("..")
   const branchEntries = projectContainer.getByTestId("worktree-branch-name")
@@ -212,7 +214,7 @@ test("new worktree highlight clears after a short delay", async ({ page }) => {
     snap.projects.find((p: any) => p.name === "e2e-project")?.path ??
     requireEnv("LUBAN_E2E_PROJECT_DIR")
 
-  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  const projectToggle = projectToggleByPath(page, fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR")))
   await projectToggle.waitFor({ timeout: 15_000 })
   const projectContainer = projectToggle.locator("..").locator("..")
   const branchEntries = projectContainer.getByTestId("worktree-branch-name")
@@ -371,7 +373,7 @@ test("running status spinner stays centered", async ({ page }) => {
     attachments: [],
   })
 
-  const row = page.getByTestId("worktree-row").filter({ has: page.getByTestId("worktree-active-underline") }).first()
+  const row = page.getByTestId("worktree-row").filter({ has: page.getByTestId("worktree-active-indicator") }).first()
   const spinner = row.locator("svg.animate-spin").first()
   await spinner.waitFor({ state: "visible", timeout: 10_000 })
 
@@ -399,7 +401,7 @@ test("creating a worktree auto-opens its conversation", async ({ page }) => {
 
   const beforeWorkspaceId = await activeWorkspaceId(page)
 
-  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  const projectToggle = projectToggleByPath(page, fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR")))
   const projectContainer = projectToggle.locator("..").locator("..")
 
   const addWorktree = projectContainer.getByTitle("Add worktree")

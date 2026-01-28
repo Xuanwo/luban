@@ -15,7 +15,6 @@ export type SidebarWorktreeVm = {
   prNumber?: number
   prTitle?: string
   workspaceId: number
-  pinned: boolean
 }
 
 export type SidebarProjectVm = {
@@ -26,23 +25,18 @@ export type SidebarProjectVm = {
   expanded: boolean
   createWorkspaceStatus: OperationStatus
   worktrees: SidebarWorktreeVm[]
-  pinned: boolean
 }
 
 export function buildSidebarProjects(
   app: AppSnapshot | null,
   args?: {
     optimisticArchivingWorkspaceIds?: Set<number>
-    pinnedProjectIds?: Set<ProjectId>
-    pinnedWorktreeIds?: Set<number>
     projectOrder?: ProjectId[]
     worktreeOrder?: Map<ProjectId, number[]>
   },
 ): SidebarProjectVm[] {
   if (!app) return []
   const optimisticArchiving = args?.optimisticArchivingWorkspaceIds ?? null
-  const pinnedProjectIds = args?.pinnedProjectIds ?? new Set<ProjectId>()
-  const pinnedWorktreeIds = args?.pinnedWorktreeIds ?? new Set<number>()
   const projectOrder = args?.projectOrder ?? []
   const worktreeOrder = args?.worktreeOrder ?? new Map<ProjectId, number[]>()
 
@@ -65,23 +59,16 @@ export function buildSidebarProjects(
           prNumber: pr.prNumber,
           prTitle: pr.prState === "merged" ? "Merged" : undefined,
           workspaceId: w.id,
-          pinned: pinnedWorktreeIds.has(w.id),
         }
         return { vm, index: worktreeIndex }
       })
       .map((x) => x.vm)
 
     const projectWorktreeOrder = worktreeOrder.get(p.id) ?? []
-    const sortedWorktrees = sortWithCustomOrder(
-      worktrees,
-      (w) => w.workspaceId,
-      projectWorktreeOrder,
-      (a, b) => {
-        if (a.pinned && !b.pinned) return -1
-        if (!a.pinned && b.pinned) return 1
-        return 0
-      }
-    )
+    const sortedWorktrees =
+      projectWorktreeOrder.length > 0
+        ? sortWithCustomOrder(worktrees, (w) => w.workspaceId, projectWorktreeOrder, () => 0)
+        : worktrees
 
     const vm: SidebarProjectVm = {
       id: p.id,
@@ -90,22 +77,14 @@ export function buildSidebarProjects(
       isGit: p.is_git,
       expanded: p.expanded,
       createWorkspaceStatus: p.create_workspace_status,
-      pinned: pinnedProjectIds.has(p.id),
       worktrees: sortedWorktrees,
     }
     return vm
   })
 
-  return sortWithCustomOrder(
-    projects,
-    (p) => p.id,
-    projectOrder,
-    (a, b) => {
-      if (a.pinned && !b.pinned) return -1
-      if (!a.pinned && b.pinned) return 1
-      return 0
-    }
-  )
+  if (projectOrder.length === 0) return projects
+
+  return sortWithCustomOrder(projects, (p) => p.id, projectOrder, () => 0)
 }
 
 function sortWithCustomOrder<T, K>(

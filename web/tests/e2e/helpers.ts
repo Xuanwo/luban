@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import fs from "node:fs"
 import { requireEnv } from "./env"
 
 export async function fetchAppSnapshot(page: Page): Promise<any> {
@@ -63,11 +64,11 @@ export async function sendWsAction<TAction extends Record<string, unknown>>(
 export async function ensureWorkspace(page: Page) {
   await page.goto("/")
 
-  const projectDir = requireEnv("LUBAN_E2E_PROJECT_DIR")
+  const projectDir = fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR"))
 
   await sendWsAction(page, { type: "add_project", path: projectDir })
 
-  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  const projectToggle = page.getByTitle(projectDir, { exact: true }).locator("..")
   await projectToggle.waitFor({ timeout: 15_000 })
   const projectContainer = projectToggle.locator("..").locator("..")
 

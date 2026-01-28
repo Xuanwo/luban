@@ -87,7 +87,8 @@ test("user messages can be copied", async ({ page }) => {
   await expect(bubble).toBeVisible({ timeout: 20_000 })
 
   await bubble.hover()
-  await bubble.getByTestId("user-message-copy").click()
+  const messageContainer = bubble.locator("..")
+  await messageContainer.getByTestId("user-message-copy").click()
 
   await expect
     .poll(async () => await page.evaluate(() => navigator.clipboard.readText()), { timeout: 5_000 })
@@ -112,7 +113,9 @@ test("selected text can be copied while an agent turn is running", async ({ page
   const bubble = page.getByTestId("user-message-bubble").filter({ hasText: marker }).first()
   await expect(bubble).toBeVisible({ timeout: 20_000 })
 
-  await expect(page.getByText("echo 1")).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole("button", { name: /Completed \d+ steps|Cancelled after \d+ steps/ }).first()).toBeVisible({
+    timeout: 20_000,
+  })
 
   await bubble.evaluate(
     (el, needle) => {
