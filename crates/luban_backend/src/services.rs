@@ -37,6 +37,7 @@ mod config_tree;
 mod context_blobs;
 mod conversations;
 mod feedback;
+mod gh_cli;
 mod git;
 mod prompt;
 mod pull_request;
