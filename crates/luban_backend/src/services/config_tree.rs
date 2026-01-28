@@ -31,7 +31,7 @@ pub fn read_optional_root_shallow_entries(
         ));
     }
 
-    read_shallow_entries(root)
+    read_shallow_entries_in_dir(root, Path::new(""))
 }
 
 fn rel_to_string(rel: &Path) -> String {
@@ -39,9 +39,12 @@ fn rel_to_string(rel: &Path) -> String {
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
-fn read_shallow_entries(root: &Path) -> anyhow::Result<Vec<ShallowEntry>> {
-    let mut entries = std::fs::read_dir(root)
-        .with_context(|| format!("failed to read directory {}", root.display()))?
+pub fn read_shallow_entries_in_dir(
+    abs_dir: &Path,
+    rel_path: &Path,
+) -> anyhow::Result<Vec<ShallowEntry>> {
+    let mut entries = std::fs::read_dir(abs_dir)
+        .with_context(|| format!("failed to read directory {}", abs_dir.display()))?
         .filter_map(|entry| entry.ok())
         .collect::<Vec<_>>();
 
@@ -56,7 +59,7 @@ fn read_shallow_entries(root: &Path) -> anyhow::Result<Vec<ShallowEntry>> {
             continue;
         }
 
-        let rel_child = Path::new("").join(&name);
+        let rel_child = rel_path.join(&name);
         let path = rel_to_string(&rel_child);
 
         let (is_dir, is_file) = if file_type.is_symlink() {
