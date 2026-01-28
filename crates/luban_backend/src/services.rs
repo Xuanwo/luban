@@ -21,7 +21,7 @@ use std::{
 use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
-use crate::time::{unix_epoch_micros_now, unix_epoch_nanos_now};
+use crate::time::unix_epoch_nanos_now;
 
 mod amp_cli;
 mod amp_mode;
@@ -43,17 +43,11 @@ use amp_cli::AmpTurnParams;
 use amp_mode::detect_amp_mode_from_config_root;
 use claude_cli::ClaudeTurnParams;
 use codex_cli::CodexTurnParams;
-use codex_thread::{codex_item_id, qualify_codex_item, qualify_event};
+use codex_thread::{codex_item_id, generate_turn_scope_id, qualify_codex_item, qualify_event};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
 use reconnect_notice::is_transient_reconnect_notice;
 use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
-
-fn generate_turn_scope_id() -> String {
-    let micros = unix_epoch_micros_now();
-    let rand: u64 = OsRng.r#gen();
-    format!("turn-{micros:x}-{rand:x}")
-}
 
 /// Git workspace service with persistent Claude process management.
 ///

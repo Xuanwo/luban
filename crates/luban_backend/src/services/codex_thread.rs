@@ -1,4 +1,13 @@
 use luban_domain::{CodexThreadEvent, CodexThreadItem};
+use rand::{Rng as _, rngs::OsRng};
+
+use crate::time::unix_epoch_micros_now;
+
+pub(super) fn generate_turn_scope_id() -> String {
+    let micros = unix_epoch_micros_now();
+    let rand: u64 = OsRng.r#gen();
+    format!("turn-{micros:x}-{rand:x}")
+}
 
 pub(super) fn codex_item_id(item: &CodexThreadItem) -> &str {
     match item {
