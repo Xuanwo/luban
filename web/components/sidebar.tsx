@@ -514,7 +514,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
               >
                 <div
                   className={cn(
-                    "relative flex items-center transition-colors",
+                    "relative flex items-center mx-1 rounded-md transition-colors",
                     isStandaloneMainActive ? "bg-primary/6" : "hover:bg-primary/4",
                   )}
                 >
@@ -536,7 +536,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     }
                   }}
                   className={cn(
-                    "flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left transition-[padding] duration-150",
+                    "flex-1 min-w-0 flex items-center gap-2 px-2 py-2.5 text-left transition-[padding] duration-150",
                     "group-hover/project:pr-24",
                     canExpand || standaloneMainWorktree || project.worktrees.length === 0
                       ? "cursor-pointer"
@@ -545,21 +545,21 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                 >
                   {canExpand ? (
                     isExpanded ? (
-                      <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                      <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                     ) : (
-                      <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                     )
                   ) : standaloneStatus ? (
                     <span data-testid="project-agent-status-icon">
-                      <AgentStatusIcon status={standaloneStatus} size="xs" />
+                      <AgentStatusIcon status={standaloneStatus} size="sm" />
                     </span>
                   ) : (
-                    <span className="w-3 h-3 flex-shrink-0" />
+                    <span className="w-3.5 h-3.5 flex-shrink-0" />
                   )}
                   <span
                     className={cn(
-                      "text-sm truncate flex-1 min-w-0 transition-colors",
-                      isStandaloneMainActive ? "text-foreground" : "text-muted-foreground",
+                      "text-sm font-semibold truncate flex-1 min-w-0 transition-colors",
+                      isStandaloneMainActive ? "text-foreground" : "text-foreground/80",
                     )}
                     title={project.path}
                   >
@@ -579,8 +579,8 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                 </button>
                 {isStandaloneMainActive && (
                   <div
-                    data-testid="project-active-underline"
-                    className="absolute bottom-0 left-3 right-3 h-0.5 bg-primary rounded-full"
+                    data-testid="project-active-indicator"
+                    className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary rounded-l-md"
                   />
                 )}
                 <div
@@ -654,7 +654,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     items={project.worktrees.map((w) => w.workspaceId)}
                     strategy={verticalListSortingStrategy}
                   >
-                <div className="ml-4 pl-3 border-l border-border-subtle">
+                <div className="">
                   {project.worktrees.map((worktree, idx) => (
                     <SortableWorktree
                       key={worktree.workspaceId}
@@ -664,7 +664,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 cursor-pointer outline-none",
+                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 mx-1 rounded-md cursor-pointer outline-none",
                         worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-primary/4",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
                           "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
@@ -771,8 +771,8 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
 
                       {worktree.workspaceId === activeWorkspaceId && (
                         <div
-                          data-testid="worktree-active-underline"
-                          className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full"
+                          data-testid="worktree-active-indicator"
+                          className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary rounded-l-md"
                         />
                       )}
                     </div>
