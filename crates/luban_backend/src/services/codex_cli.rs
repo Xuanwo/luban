@@ -8,8 +8,9 @@ use std::{
     process::Command,
     sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
 };
+
+use super::cancel_killer::spawn_cancel_killer;
 
 fn should_skip_git_repo_check(worktree_path: &Path) -> bool {
     !worktree_path.join(".git").exists()
@@ -202,21 +203,7 @@ pub(super) fn run_codex_turn_streamed_via_cli(
 
     let finished = Arc::new(AtomicBool::new(false));
     let child = Arc::new(std::sync::Mutex::new(child));
-    let killer = {
-        let child = child.clone();
-        let cancel = cancel.clone();
-        let finished = finished.clone();
-        std::thread::spawn(move || {
-            while !finished.load(Ordering::SeqCst) && !cancel.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            if cancel.load(Ordering::SeqCst)
-                && let Ok(mut child) = child.lock()
-            {
-                let _ = child.kill();
-            }
-        })
-    };
+    let killer = spawn_cancel_killer(child.clone(), cancel.clone(), finished.clone());
 
     let stderr_handle = spawn_read_to_string(stderr);
 

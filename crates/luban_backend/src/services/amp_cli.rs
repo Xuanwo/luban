@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use super::ansi::strip_ansi_control_sequences;
+use super::cancel_killer::spawn_cancel_killer;
 use super::stream_json::{
     extract_content_array, extract_string_field, parse_tool_result_content, tool_name_key,
     value_as_string,
@@ -622,21 +622,7 @@ pub(super) fn run_amp_turn_streamed_via_cli(
 
     let finished = Arc::new(AtomicBool::new(false));
     let child = Arc::new(std::sync::Mutex::new(child));
-    let killer = {
-        let child = child.clone();
-        let cancel = cancel.clone();
-        let finished = finished.clone();
-        std::thread::spawn(move || {
-            while !finished.load(Ordering::SeqCst) && !cancel.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            if cancel.load(Ordering::SeqCst)
-                && let Ok(mut child) = child.lock()
-            {
-                let _ = child.kill();
-            }
-        })
-    };
+    let killer = spawn_cancel_killer(child.clone(), cancel.clone(), finished.clone());
 
     let stderr_handle = spawn_read_to_string(stderr);
 
