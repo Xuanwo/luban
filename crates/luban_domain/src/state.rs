@@ -361,10 +361,10 @@ impl WorkspaceConversation {
             return;
         }
         let overflow = self.entries.len() - MAX_CONVERSATION_ENTRIES_IN_MEMORY;
-        let drained = self.entries.drain(0..overflow).collect::<Vec<_>>();
-        for entry in drained {
+        let (entries, codex_item_ids) = (&mut self.entries, &mut self.codex_item_ids);
+        for entry in entries.drain(0..overflow) {
             if let ConversationEntry::CodexItem { item } = entry {
-                self.codex_item_ids.remove(codex_item_id(item.as_ref()));
+                codex_item_ids.remove(codex_item_id(item.as_ref()));
             }
         }
         self.entries_start = self.entries_start.saturating_add(overflow as u64);
@@ -576,6 +576,58 @@ mod tests {
             .map(|a| a.anchor)
             .collect();
         assert_eq!(anchors, vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn trim_entries_drops_overflow_and_updates_codex_item_ids() {
+        let state = crate::AppState::new();
+        let mut conversation = state.default_conversation(WorkspaceThreadId(1));
+        conversation.entries_start = 100;
+
+        let mut entries = Vec::with_capacity(MAX_CONVERSATION_ENTRIES_IN_MEMORY + 2);
+        entries.push(ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: "item-a".to_owned(),
+                text: "a".to_owned(),
+            }),
+        });
+        entries.push(ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: "item-b".to_owned(),
+                text: "b".to_owned(),
+            }),
+        });
+        entries.push(ConversationEntry::CodexItem {
+            item: Box::new(CodexThreadItem::AgentMessage {
+                id: "item-c".to_owned(),
+                text: "c".to_owned(),
+            }),
+        });
+        for idx in 0..(MAX_CONVERSATION_ENTRIES_IN_MEMORY - 1) {
+            entries.push(ConversationEntry::UserMessage {
+                text: format!("user-{idx}"),
+                attachments: Vec::new(),
+            });
+        }
+
+        conversation.entries = entries;
+        conversation.rebuild_codex_item_ids();
+        conversation.trim_entries_to_limit();
+
+        assert_eq!(
+            conversation.entries.len(),
+            MAX_CONVERSATION_ENTRIES_IN_MEMORY
+        );
+        assert_eq!(conversation.entries_start, 102);
+        assert!(!conversation.codex_item_ids.contains("item-a"));
+        assert!(!conversation.codex_item_ids.contains("item-b"));
+        assert!(conversation.codex_item_ids.contains("item-c"));
+
+        let first_entry_id = match &conversation.entries[0] {
+            ConversationEntry::CodexItem { item } => codex_item_id(item.as_ref()),
+            other => panic!("expected codex item entry, got {other:?}"),
+        };
+        assert_eq!(first_entry_id, "item-c");
     }
 }
 
