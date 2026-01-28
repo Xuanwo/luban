@@ -432,19 +432,22 @@ fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
 }
 
 fn dedupe_workspace_names(workspaces: &mut [Workspace]) -> bool {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     let mut upgraded = false;
     let mut used: HashSet<String> = HashSet::new();
+    let mut next_suffix: HashMap<String, u64> = HashMap::new();
 
     for workspace in workspaces.iter_mut() {
-        let base = workspace.workspace_name.clone();
-        if used.insert(base.clone()) {
+        if used.insert(workspace.workspace_name.clone()) {
             continue;
         }
 
-        for i in 2.. {
+        let base = workspace.workspace_name.clone();
+        let counter = next_suffix.entry(base.clone()).or_insert(2);
+        for i in *counter.. {
             let candidate = format!("{base}-{i}");
+            *counter = i + 1;
             if used.insert(candidate.clone()) {
                 workspace.workspace_name = candidate;
                 upgraded = true;
@@ -609,5 +612,55 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].workspaces.len(), 1);
         assert_eq!(loaded[0].workspaces[0].workspace_name, "main");
+    }
+
+    #[test]
+    fn dedupe_workspace_names_preserves_ordered_suffix_selection() {
+        let mut workspaces = vec![
+            Workspace {
+                id: WorkspaceId(1),
+                workspace_name: "dev".to_owned(),
+                branch_name: "dev".to_owned(),
+                worktree_path: PathBuf::from("/tmp/repo/dev"),
+                status: WorkspaceStatus::Active,
+                last_activity_at: None,
+                archive_status: OperationStatus::Idle,
+                branch_rename_status: OperationStatus::Idle,
+            },
+            Workspace {
+                id: WorkspaceId(2),
+                workspace_name: "dev".to_owned(),
+                branch_name: "dev".to_owned(),
+                worktree_path: PathBuf::from("/tmp/repo/dev-2"),
+                status: WorkspaceStatus::Active,
+                last_activity_at: None,
+                archive_status: OperationStatus::Idle,
+                branch_rename_status: OperationStatus::Idle,
+            },
+            Workspace {
+                id: WorkspaceId(3),
+                workspace_name: "dev-2".to_owned(),
+                branch_name: "dev".to_owned(),
+                worktree_path: PathBuf::from("/tmp/repo/dev-3"),
+                status: WorkspaceStatus::Active,
+                last_activity_at: None,
+                archive_status: OperationStatus::Idle,
+                branch_rename_status: OperationStatus::Idle,
+            },
+            Workspace {
+                id: WorkspaceId(4),
+                workspace_name: "dev".to_owned(),
+                branch_name: "dev".to_owned(),
+                worktree_path: PathBuf::from("/tmp/repo/dev-4"),
+                status: WorkspaceStatus::Active,
+                last_activity_at: None,
+                archive_status: OperationStatus::Idle,
+                branch_rename_status: OperationStatus::Idle,
+            },
+        ];
+
+        assert!(dedupe_workspace_names(&mut workspaces));
+        let names: Vec<String> = workspaces.into_iter().map(|w| w.workspace_name).collect();
+        assert_eq!(names, vec!["dev", "dev-2", "dev-2-2", "dev-3"]);
     }
 }
