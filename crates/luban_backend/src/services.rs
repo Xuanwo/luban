@@ -28,6 +28,7 @@ pub mod claude_process;
 mod codex_bin;
 mod codex_cli;
 mod codex_thread;
+mod config_file_io;
 mod config_path;
 mod config_tree;
 mod context_blobs;
@@ -2243,19 +2244,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let meta = std::fs::metadata(&abs)
-                .with_context(|| format!("failed to stat {}", abs.display()))?;
-            if !meta.is_file() {
-                return Err(anyhow!("not a file: {}", abs.display()));
-            }
-            if meta.len() > 2 * 1024 * 1024 {
-                return Err(anyhow!("file is too large to edit"));
-            }
-
-            let bytes =
-                std::fs::read(&abs).with_context(|| format!("failed to read {}", abs.display()))?;
-            let text = String::from_utf8(bytes).context("file is not valid UTF-8")?;
-            Ok(text)
+            config_file_io::read_small_utf8_file(&abs)
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2268,16 +2257,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let parent = abs
-                .parent()
-                .ok_or_else(|| anyhow!("invalid path"))?
-                .to_path_buf();
-            std::fs::create_dir_all(&parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-
-            std::fs::write(&abs, contents.as_bytes())
-                .with_context(|| format!("failed to write {}", abs.display()))?;
-            Ok(())
+            config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2440,19 +2420,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let meta = std::fs::metadata(&abs)
-                .with_context(|| format!("failed to stat {}", abs.display()))?;
-            if !meta.is_file() {
-                return Err(anyhow!("not a file: {}", abs.display()));
-            }
-            if meta.len() > 2 * 1024 * 1024 {
-                return Err(anyhow!("file is too large to edit"));
-            }
-
-            let bytes =
-                std::fs::read(&abs).with_context(|| format!("failed to read {}", abs.display()))?;
-            let text = String::from_utf8(bytes).context("file is not valid UTF-8")?;
-            Ok(text)
+            config_file_io::read_small_utf8_file(&abs)
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2465,16 +2433,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let parent = abs
-                .parent()
-                .ok_or_else(|| anyhow!("invalid path"))?
-                .to_path_buf();
-            std::fs::create_dir_all(&parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-
-            std::fs::write(&abs, contents.as_bytes())
-                .with_context(|| format!("failed to write {}", abs.display()))?;
-            Ok(())
+            config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2625,19 +2584,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let meta = std::fs::metadata(&abs)
-                .with_context(|| format!("failed to stat {}", abs.display()))?;
-            if !meta.is_file() {
-                return Err(anyhow!("not a file: {}", abs.display()));
-            }
-            if meta.len() > 2 * 1024 * 1024 {
-                return Err(anyhow!("file is too large to edit"));
-            }
-
-            let bytes =
-                std::fs::read(&abs).with_context(|| format!("failed to read {}", abs.display()))?;
-            let text = String::from_utf8(bytes).context("file is not valid UTF-8")?;
-            Ok(text)
+            config_file_io::read_small_utf8_file(&abs)
         })();
 
         result.map_err(|e| format!("{e:#}"))
@@ -2650,16 +2597,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             let rel_path = config_path::parse_strict_relative_file_path(&path)?;
 
             let abs = root.join(rel_path);
-            let parent = abs
-                .parent()
-                .ok_or_else(|| anyhow!("invalid path"))?
-                .to_path_buf();
-            std::fs::create_dir_all(&parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-
-            std::fs::write(&abs, contents.as_bytes())
-                .with_context(|| format!("failed to write {}", abs.display()))?;
-            Ok(())
+            config_file_io::write_file_creating_parent_dirs(&abs, &contents)
         })();
 
         result.map_err(|e| format!("{e:#}"))
