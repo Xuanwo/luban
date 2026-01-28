@@ -374,12 +374,21 @@ fn extract_first_json_object(raw: &str) -> Option<&str> {
 }
 
 fn parse_intent_kind(raw: &str) -> TaskIntentKind {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "fix" | "fix_issue" => TaskIntentKind::Fix,
-        "implement" | "implement_feature" => TaskIntentKind::Implement,
-        "review" | "review_pull_request" => TaskIntentKind::Review,
-        "discuss" => TaskIntentKind::Discuss,
-        _ => TaskIntentKind::Other,
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("fix") || trimmed.eq_ignore_ascii_case("fix_issue") {
+        TaskIntentKind::Fix
+    } else if trimmed.eq_ignore_ascii_case("implement")
+        || trimmed.eq_ignore_ascii_case("implement_feature")
+    {
+        TaskIntentKind::Implement
+    } else if trimmed.eq_ignore_ascii_case("review")
+        || trimmed.eq_ignore_ascii_case("review_pull_request")
+    {
+        TaskIntentKind::Review
+    } else if trimmed.eq_ignore_ascii_case("discuss") {
+        TaskIntentKind::Discuss
+    } else {
+        TaskIntentKind::Other
     }
 }
 
@@ -1136,5 +1145,21 @@ mod tests {
             template.contains("{{context_json}}"),
             "rename branch system prompt must include context placeholder"
         );
+    }
+
+    #[test]
+    fn parse_intent_kind_is_ascii_case_insensitive_and_trims() {
+        assert_eq!(parse_intent_kind(" FIX "), TaskIntentKind::Fix);
+        assert_eq!(parse_intent_kind("fix_issue"), TaskIntentKind::Fix);
+        assert_eq!(
+            parse_intent_kind("IMPLEMENT_FEATURE"),
+            TaskIntentKind::Implement
+        );
+        assert_eq!(
+            parse_intent_kind("review_pull_request"),
+            TaskIntentKind::Review
+        );
+        assert_eq!(parse_intent_kind("DisCuss"), TaskIntentKind::Discuss);
+        assert_eq!(parse_intent_kind("unknown"), TaskIntentKind::Other);
     }
 }
