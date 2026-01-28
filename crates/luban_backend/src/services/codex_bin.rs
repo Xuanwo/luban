@@ -15,27 +15,61 @@ pub(super) fn codex_executable() -> PathBuf {
     PathBuf::from("codex")
 }
 
-fn default_codex_candidates() -> Vec<PathBuf> {
+fn default_codex_candidates() -> DefaultCodexCandidates {
+    // Avoid depending on developer machine installation paths during unit tests.
     if cfg!(test) {
-        // Avoid depending on developer machine installation paths during unit tests.
-        return Vec::new();
+        return DefaultCodexCandidates::test_only();
+    }
+    DefaultCodexCandidates::new()
+}
+
+struct DefaultCodexCandidates {
+    idx: u8,
+    cargo_home: Option<PathBuf>,
+}
+
+impl DefaultCodexCandidates {
+    fn new() -> Self {
+        Self {
+            idx: 0,
+            cargo_home: std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".cargo/bin/codex")),
+        }
     }
 
-    let mut out = Vec::new();
-
-    // Homebrew (Apple Silicon / Intel)
-    out.push(PathBuf::from("/opt/homebrew/bin/codex"));
-    out.push(PathBuf::from("/usr/local/bin/codex"));
-
-    // Rust/Cargo installs (less common, but cheap to check).
-    if let Some(home) = std::env::var_os("HOME") {
-        out.push(PathBuf::from(home).join(".cargo/bin/codex"));
+    fn test_only() -> Self {
+        Self {
+            idx: 3,
+            cargo_home: None,
+        }
     }
+}
 
-    // Last resort: rely on PATH (useful for terminal-launched dev).
-    out.push(PathBuf::from("codex"));
+impl Iterator for DefaultCodexCandidates {
+    type Item = PathBuf;
 
-    out
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let idx = self.idx;
+            self.idx = self.idx.saturating_add(1);
+
+            match idx {
+                // Homebrew (Apple Silicon / Intel)
+                0 => return Some(PathBuf::from("/opt/homebrew/bin/codex")),
+                1 => return Some(PathBuf::from("/usr/local/bin/codex")),
+                // Rust/Cargo installs (less common, but cheap to check)
+                2 => {
+                    if let Some(p) = self.cargo_home.take() {
+                        return Some(p);
+                    }
+                    continue;
+                }
+                // Last resort: rely on PATH (useful for terminal-launched dev)
+                3 => return Some(PathBuf::from("codex")),
+                _ => return None,
+            }
+        }
+    }
 }
 
 fn canonicalize_executable(path: &Path) -> Option<PathBuf> {
@@ -64,5 +98,22 @@ fn is_executable_file(path: &Path) -> bool {
     #[cfg(not(unix))]
     {
         path.is_file()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_candidates_are_test_only_in_unit_tests() {
+        let candidates: Vec<_> = default_codex_candidates().collect();
+        assert_eq!(candidates, vec![PathBuf::from("codex")]);
+    }
+
+    #[test]
+    fn codex_executable_prefers_env_override() {
+        let _guard = crate::test_support::EnvVarGuard::set(paths::LUBAN_CODEX_BIN_ENV, "my-codex");
+        assert_eq!(codex_executable(), PathBuf::from("my-codex"));
     }
 }
