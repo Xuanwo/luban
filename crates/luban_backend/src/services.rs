@@ -41,6 +41,7 @@ mod gh_cli;
 mod git;
 mod git_branch;
 mod github_url;
+mod open_command;
 mod prompt;
 mod pull_request;
 mod reconnect_notice;
@@ -591,7 +592,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
 
             #[cfg(target_os = "linux")]
             {
-                let command = linux_open_command(target, &worktree_path)?;
+                let command = open_command::linux_open_command(target, &worktree_path)?;
                 let status = Command::new(command.program)
                     .args(&command.args)
                     .status()
@@ -2318,45 +2319,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct OpenCommand {
-    program: &'static str,
-    args: Vec<std::ffi::OsString>,
-    label: &'static str,
-}
-
-#[cfg(target_os = "linux")]
-fn linux_open_command(target: OpenTarget, worktree_path: &Path) -> anyhow::Result<OpenCommand> {
-    let mut args = Vec::new();
-    let (program, label) = match target {
-        OpenTarget::Vscode => {
-            args.push(worktree_path.as_os_str().to_os_string());
-            ("code", "code")
-        }
-        OpenTarget::Zed => {
-            args.push(worktree_path.as_os_str().to_os_string());
-            ("zed", "zed")
-        }
-        OpenTarget::Finder => {
-            args.push(worktree_path.as_os_str().to_os_string());
-            ("xdg-open", "xdg-open")
-        }
-        OpenTarget::Cursor => {
-            return Err(anyhow!("opening Cursor is not supported on Linux"));
-        }
-        OpenTarget::Ghostty => {
-            return Err(anyhow!("opening Ghostty is not supported on Linux"));
-        }
-    };
-
-    Ok(OpenCommand {
-        program,
-        args,
-        label,
-    })
-}
-
 impl GitWorkspaceService {
     fn open_url(&self, url: &str) -> anyhow::Result<()> {
         #[cfg(target_os = "macos")]
@@ -3912,30 +3874,5 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base_dir);
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_open_command_uses_code_for_vscode() {
-        let worktree_path = Path::new("/tmp/luban-worktree");
-        let command =
-            linux_open_command(OpenTarget::Vscode, worktree_path).expect("vscode open command");
-        assert_eq!(command.program, "code");
-        assert_eq!(command.label, "code");
-        assert_eq!(
-            command.args,
-            vec![std::ffi::OsString::from("/tmp/luban-worktree")]
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_open_command_uses_zed_for_zed() {
-        let worktree_path = Path::new("/tmp/luban-worktree");
-        let command = linux_open_command(OpenTarget::Zed, worktree_path).expect("zed open command");
-        assert_eq!(command.program, "zed");
-        assert_eq!(command.label, "zed");
-        assert_eq!(
-            command.args,
-            vec![std::ffi::OsString::from("/tmp/luban-worktree")]
-        );
-    }
+    // Linux open-command tests live in services/open_command.rs.
 }
