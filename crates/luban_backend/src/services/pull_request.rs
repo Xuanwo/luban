@@ -4,13 +4,12 @@ pub(super) fn pull_request_ci_state_from_check_buckets<'a>(
     buckets: impl IntoIterator<Item = &'a str>,
 ) -> Option<PullRequestCiState> {
     let mut any_pending = false;
-    let mut any_fail = false;
     let mut any_pass = false;
     let mut any_skip = false;
 
     for bucket in buckets {
         match bucket {
-            "fail" | "cancel" => any_fail = true,
+            "fail" | "cancel" => return Some(PullRequestCiState::Failure),
             "pending" => any_pending = true,
             "pass" => any_pass = true,
             "skipping" => any_skip = true,
@@ -18,9 +17,6 @@ pub(super) fn pull_request_ci_state_from_check_buckets<'a>(
         }
     }
 
-    if any_fail {
-        return Some(PullRequestCiState::Failure);
-    }
     if any_pending {
         return Some(PullRequestCiState::Pending);
     }
