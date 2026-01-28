@@ -18,6 +18,10 @@ use std::{
     path::PathBuf,
 };
 
+mod title;
+
+pub use title::derive_thread_title;
+
 fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> {
     if conversation.run_status != OperationStatus::Running {
         return None;
@@ -1959,18 +1963,6 @@ fn normalize_project_path(path: &std::path::Path) -> PathBuf {
             }
             other => out.push(other),
         }
-    }
-    out
-}
-
-pub fn derive_thread_title(text: &str) -> String {
-    let first_line = text.lines().next().unwrap_or("").trim();
-    if first_line.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    for ch in first_line.chars().take(crate::THREAD_TITLE_MAX_CHARS) {
-        out.push(ch);
     }
     out
 }
