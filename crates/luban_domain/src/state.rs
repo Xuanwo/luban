@@ -348,9 +348,14 @@ impl WorkspaceConversation {
         if self.codex_item_ids.contains(id) {
             return false;
         }
-        self.push_entry(ConversationEntry::CodexItem {
+        self.codex_item_ids.insert(id.to_owned());
+        self.entries.push(ConversationEntry::CodexItem {
             item: Box::new(item),
         });
+        self.entries_total = self
+            .entries_total
+            .max(self.entries_start.saturating_add(self.entries.len() as u64));
+        self.trim_entries_to_limit();
         true
     }
 
@@ -655,6 +660,37 @@ mod tests {
         flush_in_progress_items(&mut conversation);
         assert_eq!(conversation.in_progress_order, expected_order);
         assert_eq!(conversation.entries.len(), 2);
+    }
+
+    #[test]
+    fn push_codex_item_if_new_is_idempotent_and_updates_entries_total() {
+        let state = crate::AppState::new();
+        let mut conversation = state.default_conversation(WorkspaceThreadId(1));
+
+        assert!(
+            conversation.push_codex_item_if_new(CodexThreadItem::AgentMessage {
+                id: "item-a".to_owned(),
+                text: "a".to_owned(),
+            })
+        );
+        assert_eq!(conversation.entries.len(), 1);
+        assert_eq!(conversation.entries_total, 1);
+        assert!(conversation.codex_item_ids.contains("item-a"));
+
+        assert!(
+            !conversation.push_codex_item_if_new(CodexThreadItem::AgentMessage {
+                id: "item-a".to_owned(),
+                text: "a2".to_owned(),
+            })
+        );
+        assert_eq!(conversation.entries.len(), 1);
+        assert_eq!(conversation.entries_total, 1);
+
+        let first_entry_id = match &conversation.entries[0] {
+            ConversationEntry::CodexItem { item } => codex_item_id(item.as_ref()),
+            other => panic!("expected codex item entry, got {other:?}"),
+        };
+        assert_eq!(first_entry_id, "item-a");
     }
 }
 
