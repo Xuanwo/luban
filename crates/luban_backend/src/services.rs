@@ -62,6 +62,54 @@ fn anyhow_error_to_string(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
+fn normalize_branch_suffix(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut value = trimmed;
+    if let Some(stripped) = value.strip_prefix("refs/heads/") {
+        value = stripped;
+    }
+    if let Some(stripped) = value.strip_prefix("luban/") {
+        value = stripped;
+    }
+
+    let mut out = String::new();
+    let mut prev_hyphen = false;
+    for ch in value.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '-'
+        };
+        if next == '-' {
+            if prev_hyphen {
+                continue;
+            }
+            prev_hyphen = true;
+            out.push('-');
+            continue;
+        }
+        prev_hyphen = false;
+        out.push(next);
+    }
+
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    const MAX_SUFFIX_LEN: usize = 24;
+    let limited = trimmed.chars().take(MAX_SUFFIX_LEN).collect::<String>();
+    let limited = limited.trim_matches('-').to_owned();
+    if limited.is_empty() {
+        return None;
+    }
+    Some(limited)
+}
+
 fn codex_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<CodexConfigEntry> {
     entries
         .into_iter()
@@ -441,54 +489,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             std::fs::create_dir_all(self.worktrees_root.join(&project_slug))
                 .context("failed to create worktrees root")?;
 
-            fn normalize_branch_suffix(raw: &str) -> Option<String> {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-
-                let mut rest = trimmed;
-                if let Some(stripped) = rest.strip_prefix("refs/heads/") {
-                    rest = stripped;
-                }
-                if let Some(stripped) = rest.strip_prefix("luban/") {
-                    rest = stripped;
-                }
-
-                let mut out = String::new();
-                let mut prev_hyphen = false;
-                for ch in rest.chars() {
-                    let next = if ch.is_ascii_alphanumeric() {
-                        ch.to_ascii_lowercase()
-                    } else {
-                        '-'
-                    };
-                    if next == '-' {
-                        if prev_hyphen {
-                            continue;
-                        }
-                        prev_hyphen = true;
-                        out.push('-');
-                        continue;
-                    }
-                    prev_hyphen = false;
-                    out.push(next);
-                }
-
-                let trimmed = out.trim_matches('-');
-                if trimmed.is_empty() {
-                    return None;
-                }
-
-                const MAX_SUFFIX_LEN: usize = 24;
-                let limited = trimmed.chars().take(MAX_SUFFIX_LEN).collect::<String>();
-                let limited = limited.trim_matches('-').to_owned();
-                if limited.is_empty() {
-                    return None;
-                }
-                Some(limited)
-            }
-
             fn branch_exists(project_path: &Path, branch_name: &str) -> bool {
                 let branch_ref = format!("refs/heads/{branch_name}");
                 Command::new("git")
@@ -703,54 +703,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 ));
             }
 
-            fn normalize_branch_name(raw: &str) -> Option<String> {
-                let mut value = raw.trim();
-                if value.is_empty() {
-                    return None;
-                }
-
-                if let Some(stripped) = value.strip_prefix("refs/heads/") {
-                    value = stripped;
-                }
-                if let Some(stripped) = value.strip_prefix("luban/") {
-                    value = stripped;
-                }
-
-                let mut out = String::new();
-                let mut prev_hyphen = false;
-                for ch in value.chars() {
-                    let next = if ch.is_ascii_alphanumeric() {
-                        ch.to_ascii_lowercase()
-                    } else {
-                        '-'
-                    };
-                    if next == '-' {
-                        if prev_hyphen {
-                            continue;
-                        }
-                        prev_hyphen = true;
-                        out.push('-');
-                        continue;
-                    }
-                    prev_hyphen = false;
-                    out.push(next);
-                }
-
-                let trimmed = out.trim_matches('-');
-                if trimmed.is_empty() {
-                    return None;
-                }
-
-                const MAX_SUFFIX_LEN: usize = 24;
-                let suffix = trimmed.chars().take(MAX_SUFFIX_LEN).collect::<String>();
-                let suffix = suffix.trim_matches('-');
-                if suffix.is_empty() {
-                    return None;
-                }
-
-                Some(format!("luban/{suffix}"))
-            }
-
             fn branch_exists(worktree_path: &Path, branch_name: &str) -> bool {
                 let branch_ref = format!("refs/heads/{branch_name}");
                 Command::new("git")
@@ -776,8 +728,9 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 return Err(anyhow!("refusing to rename main branch"));
             }
 
-            let normalized = normalize_branch_name(&requested_branch_name)
+            let suffix = normalize_branch_suffix(&requested_branch_name)
                 .ok_or_else(|| anyhow!("invalid branch name"))?;
+            let normalized = format!("luban/{suffix}");
             if normalized == current_branch {
                 return Ok(normalized);
             }
@@ -4052,5 +4005,31 @@ mod tests {
             command.args,
             vec![std::ffi::OsString::from("/tmp/luban-worktree")]
         );
+    }
+
+    #[test]
+    fn normalize_branch_suffix_strips_prefixes_and_sanitizes() {
+        assert_eq!(
+            normalize_branch_suffix("refs/heads/luban/Foo_Bar").as_deref(),
+            Some("foo-bar")
+        );
+        assert_eq!(
+            normalize_branch_suffix("luban/Hello---World").as_deref(),
+            Some("hello-world")
+        );
+        assert_eq!(
+            normalize_branch_suffix("  hello world  ").as_deref(),
+            Some("hello-world")
+        );
+        assert_eq!(normalize_branch_suffix("   "), None);
+        assert_eq!(normalize_branch_suffix("luban/---"), None);
+    }
+
+    #[test]
+    fn normalize_branch_suffix_limits_length() {
+        let input = "refs/heads/luban/abcdefghijklmnopqrstuvwxyz";
+        let suffix = normalize_branch_suffix(input).expect("suffix should be present");
+        assert_eq!(suffix.len(), 24);
+        assert_eq!(suffix, "abcdefghijklmnopqrstuvwx");
     }
 }
