@@ -136,6 +136,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     ),
 ];
 
+#[derive(Clone)]
 pub struct SqliteStore {
     tx: mpsc::Sender<DbCommand>,
 }
@@ -149,14 +150,6 @@ impl Default for SqliteStoreOptions {
     fn default() -> Self {
         Self {
             persist_ui_state: true,
-        }
-    }
-}
-
-impl Clone for SqliteStore {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
         }
     }
 }
