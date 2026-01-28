@@ -9,12 +9,17 @@ pub enum ContextTokenKind {
 
 impl ContextTokenKind {
     fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "image" => Some(Self::Image),
-            "text" => Some(Self::Text),
-            "file" => Some(Self::File),
-            _ => None,
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("image") {
+            return Some(Self::Image);
         }
+        if raw.eq_ignore_ascii_case("text") {
+            return Some(Self::Text);
+        }
+        if raw.eq_ignore_ascii_case("file") {
+            return Some(Self::File);
+        }
+        None
     }
 
     pub fn as_str(self) -> &'static str {
