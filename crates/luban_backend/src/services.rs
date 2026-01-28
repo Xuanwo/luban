@@ -245,11 +245,22 @@ fn qualify_event(turn_scope_id: &str, event: CodexThreadEvent) -> CodexThreadEve
     }
 }
 
-fn generate_turn_scope_id() -> String {
-    let micros = SystemTime::now()
+fn unix_epoch_micros_now() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_micros();
+        .as_micros()
+}
+
+fn unix_epoch_nanos_now() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+}
+
+fn generate_turn_scope_id() -> String {
+    let micros = unix_epoch_micros_now();
     let rand: u64 = OsRng.r#gen();
     format!("turn-{micros:x}-{rand:x}")
 }
@@ -265,10 +276,7 @@ fn resolve_luban_root() -> anyhow::Result<PathBuf> {
     }
 
     if cfg!(test) {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        let nanos = unix_epoch_nanos_now();
         let pid = std::process::id();
         return Ok(std::env::temp_dir().join(format!("luban-test-{pid}-{nanos}")));
     }
@@ -2425,10 +2433,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             })?;
 
             let path = service.task_prompt_template_path(intent_kind);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
+            let nanos = unix_epoch_nanos_now();
             let pid = std::process::id();
             let tmp = service.task_prompts_root.join(format!(
                 ".{}.{}.{}.tmp",
@@ -2521,10 +2526,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             })?;
 
             let path = service.system_prompt_template_path(kind);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
+            let nanos = unix_epoch_nanos_now();
             let pid = std::process::id();
             let tmp =
                 service
