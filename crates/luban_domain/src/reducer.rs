@@ -1729,12 +1729,12 @@ impl AppState {
     }
 
     fn add_project(&mut self, path: PathBuf, is_git: bool) -> ProjectId {
-        let normalized_path = normalize_project_path(&path);
+        let normalized_path = crate::paths::normalize_project_path(&path);
 
         if let Some(project) = self
             .projects
             .iter_mut()
-            .find(|p| normalize_project_path(&p.path) == normalized_path)
+            .find(|p| crate::paths::normalize_project_path(&p.path) == normalized_path)
         {
             project.is_git = is_git;
             return project.id;
@@ -1946,25 +1946,6 @@ fn sanitize_slug(input: &str) -> String {
     } else {
         out
     }
-}
-
-fn normalize_project_path(path: &std::path::Path) -> PathBuf {
-    use std::path::Component;
-
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let popped = out.pop();
-                if !popped {
-                    out.push(component);
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 fn start_next_queued_prompt(

@@ -43,6 +43,25 @@ pub fn workspace_context_dir(
     workspace_conversation_dir(conversations_root, project_slug, workspace_name).join("context")
 }
 
+pub(crate) fn normalize_project_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +93,23 @@ mod tests {
             workspace_context_dir(&conversations, "proj", "ws"),
             conversations.join("proj").join("ws").join("context")
         );
+    }
+
+    #[test]
+    fn normalize_project_path_removes_curdir_components() {
+        let path = PathBuf::from("a").join(".").join("b");
+        assert_eq!(normalize_project_path(&path), PathBuf::from("a").join("b"));
+    }
+
+    #[test]
+    fn normalize_project_path_simplifies_parentdirs_when_possible() {
+        let path = PathBuf::from("a").join("b").join("..").join("c");
+        assert_eq!(normalize_project_path(&path), PathBuf::from("a").join("c"));
+    }
+
+    #[test]
+    fn normalize_project_path_preserves_leading_parentdirs() {
+        let path = PathBuf::from("..").join("a");
+        assert_eq!(normalize_project_path(&path), path);
     }
 }

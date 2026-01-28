@@ -8,7 +8,7 @@ use crate::{
     default_task_prompt_templates, default_thinking_effort, normalize_thinking_effort,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
 
 fn normalize_thread_tabs(
@@ -261,7 +261,7 @@ fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
     let mut grouped: HashMap<PathBuf, Vec<Project>> = HashMap::new();
 
     for persisted in projects {
-        let normalized_path = normalize_project_path(&persisted.path);
+        let normalized_path = crate::paths::normalize_project_path(&persisted.path);
         if normalized_path != persisted.path {
             upgraded = true;
         }
@@ -401,25 +401,6 @@ fn dedupe_worktree_paths(workspaces: &mut Vec<Workspace>) -> bool {
     merged.sort_by_key(|w| w.id.0);
     *workspaces = merged;
     upgraded
-}
-
-fn normalize_project_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let popped = out.pop();
-                if !popped {
-                    out.push(component);
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
