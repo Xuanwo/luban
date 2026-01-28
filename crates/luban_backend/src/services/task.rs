@@ -1,3 +1,4 @@
+use crate::env::home_dir;
 use crate::services::GitWorkspaceService;
 use anyhow::{Context as _, anyhow};
 use luban_domain::ProjectWorkspaceService;
@@ -79,8 +80,7 @@ fn looks_like_local_path(token: &str) -> bool {
 
 fn expand_tilde(path: &str) -> anyhow::Result<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
-        let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-        return Ok(PathBuf::from(home).join(rest));
+        return Ok(home_dir()?.join(rest));
     }
     Ok(PathBuf::from(path))
 }

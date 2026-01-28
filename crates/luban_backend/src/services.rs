@@ -20,7 +20,7 @@ use std::{
 
 use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
-use crate::env::optional_trimmed_path_from_env;
+use crate::env::{home_dir, optional_trimmed_path_from_env};
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
 use crate::time::{unix_epoch_micros_now, unix_epoch_nanos_now};
 
@@ -252,8 +252,7 @@ fn resolve_luban_root() -> anyhow::Result<PathBuf> {
         return Ok(std::env::temp_dir().join(format!("luban-test-{pid}-{nanos}")));
     }
 
-    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-    Ok(PathBuf::from(home).join("luban"))
+    Ok(home_dir()?.join("luban"))
 }
 
 fn resolve_codex_root() -> anyhow::Result<PathBuf> {
@@ -265,8 +264,7 @@ fn resolve_codex_root() -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(".codex"));
     }
 
-    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".codex"))
+    Ok(home_dir()?.join(".codex"))
 }
 
 fn resolve_amp_root() -> anyhow::Result<PathBuf> {
@@ -286,8 +284,7 @@ fn resolve_amp_root() -> anyhow::Result<PathBuf> {
         }
     }
 
-    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".config").join("amp"))
+    Ok(home_dir()?.join(".config").join("amp"))
 }
 
 fn resolve_claude_root() -> anyhow::Result<PathBuf> {
@@ -299,8 +296,7 @@ fn resolve_claude_root() -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(".claude"));
     }
 
-    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".claude"))
+    Ok(home_dir()?.join(".claude"))
 }
 
 fn parse_amp_mode_from_config_text(contents: &str) -> Option<String> {

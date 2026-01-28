@@ -1,6 +1,11 @@
 use anyhow::anyhow;
 use std::path::PathBuf;
 
+pub(crate) fn home_dir() -> anyhow::Result<PathBuf> {
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
+    Ok(PathBuf::from(home))
+}
+
 pub(crate) fn optional_trimmed_path_from_env(name: &str) -> anyhow::Result<Option<PathBuf>> {
     let value = match std::env::var_os(name) {
         Some(value) => value,
@@ -18,7 +23,7 @@ pub(crate) fn optional_trimmed_path_from_env(name: &str) -> anyhow::Result<Optio
 
 #[cfg(test)]
 mod tests {
-    use super::optional_trimmed_path_from_env;
+    use super::{home_dir, optional_trimmed_path_from_env};
     use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -26,6 +31,55 @@ mod tests {
 
     fn lock_env() -> MutexGuard<'static, ()> {
         ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn home_dir_errors_when_unset() {
+        let _guard = lock_env();
+
+        let prev = std::env::var_os("HOME");
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+
+        let err = home_dir().expect_err("missing HOME should error");
+        assert!(
+            err.to_string().contains("HOME is not set"),
+            "unexpected error: {err:?}"
+        );
+
+        if let Some(value) = prev {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn home_dir_returns_value() {
+        let _guard = lock_env();
+
+        let prev = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", "luban-home");
+        }
+
+        let loaded = home_dir().expect("HOME should be read");
+        assert_eq!(loaded, PathBuf::from("luban-home"));
+
+        if let Some(value) = prev {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
