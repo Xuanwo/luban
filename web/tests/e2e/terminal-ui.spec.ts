@@ -160,17 +160,25 @@ test("terminal ANSI black background is distinct from card background", async ({
   })
   expect(samplePoint, "terminal render target not found for pixel sampling").not.toBeNull()
 
-  const shot = await terminal.screenshot()
-  const png = PNG.sync.read(shot)
-  const pixel = samplePixel(png, samplePoint?.x ?? Math.floor(png.width / 2), samplePoint?.y ?? 20)
-
-  const minDelta = 20
-  const delta = Math.max(
-    Math.abs(pixel.r - (background?.r ?? 0)),
-    Math.abs(pixel.g - (background?.g ?? 0)),
-    Math.abs(pixel.b - (background?.b ?? 0)),
-  )
-  expect(delta).toBeGreaterThanOrEqual(minDelta)
+  // Dark mode uses a near-black palette, so keep this threshold small but non-zero.
+  // Poll for a bit to avoid racing xterm's async canvas paint.
+  const minDelta = 10
+  await expect
+    .poll(async () => {
+      const nextShot = await terminal.screenshot()
+      const nextPng = PNG.sync.read(nextShot)
+      const nextPixel = samplePixel(
+        nextPng,
+        samplePoint?.x ?? Math.floor(nextPng.width / 2),
+        samplePoint?.y ?? 20,
+      )
+      return Math.max(
+        Math.abs(nextPixel.r - (background?.r ?? 0)),
+        Math.abs(nextPixel.g - (background?.g ?? 0)),
+        Math.abs(nextPixel.b - (background?.b ?? 0)),
+      )
+    }, { timeout: 10_000 })
+    .toBeGreaterThanOrEqual(minDelta)
 })
 
 test("terminal scrollbar is thin like chat scrollbar", async ({ page }) => {

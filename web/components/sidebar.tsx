@@ -502,6 +502,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                   {project.worktrees.map((worktree, idx) => (
                     <div
                       key={worktree.workspaceId}
+                      data-testid="worktree-row"
                       className={cn(
                         "group/worktree relative flex items-center gap-2 px-2 py-1.5 transition-all cursor-pointer outline-none",
                         worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-sidebar-accent/30",

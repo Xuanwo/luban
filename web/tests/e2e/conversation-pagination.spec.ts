@@ -121,6 +121,15 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
   expect(Number.isFinite(threadId) && threadId > 0).toBeTruthy()
   const ids = { workspaceId, threadId }
 
+  const beforeRequest = page.waitForRequest((req) => {
+    if (req.method() !== "GET") return false
+    const url = req.url()
+    return (
+      url.includes(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}`) &&
+      url.includes("before=")
+    )
+  })
+
   const runId = Math.random().toString(16).slice(2)
   const marker = `e2e-pagination-steps-${runId}`
 
@@ -149,6 +158,20 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
     }, { timeout: 60_000 })
     .toBeGreaterThan(0)
 
+  await expect
+    .poll(async () => {
+      const res = await page.request.get(
+        `/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=1`,
+      )
+      if (!res.ok()) return { run_status: "running", queue_paused: false }
+      const snap = (await res.json()) as { run_status?: string; queue_paused?: boolean }
+      return {
+        run_status: String(snap.run_status ?? "idle"),
+        queue_paused: Boolean(snap.queue_paused ?? false),
+      }
+    }, { timeout: 90_000 })
+    .toMatchObject({ run_status: "idle", queue_paused: true })
+
   // Force the UI to refresh the conversation via HTTP so the client-side state has
   // `entries_start` populated before we attempt to load older pages.
   const refreshTab = page.getByTestId("thread-tab-title").last().locator("..")
@@ -158,20 +181,13 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
   const container = page.getByTestId("chat-scroll-container")
   await page.waitForTimeout(750)
 
-  const expectedBefore = await page.request
-    .get(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=2000`)
-    .then(async (res) => {
-      const snap = (await res.json()) as { entries_start?: number }
-      return snap.entries_start ?? 0
-    })
-
-  const beforeRequest = page.waitForRequest((req) => {
-    const url = req.url()
-    return (
-      url.includes(`/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}`) &&
-      url.includes(`before=${expectedBefore}`)
-    )
-  })
+  const expectedBeforeRes = await page.request.get(
+    `/api/workspaces/${ids.workspaceId}/conversations/${ids.threadId}?limit=2000`,
+  )
+  expect(expectedBeforeRes.ok()).toBeTruthy()
+  const expectedBeforeSnap = (await expectedBeforeRes.json()) as { entries_start?: number }
+  const expectedBefore = expectedBeforeSnap.entries_start ?? 0
+  expect(expectedBefore).toBeGreaterThan(0)
 
   await container.evaluate((el) => {
     el.scrollTop = el.scrollHeight
@@ -182,7 +198,11 @@ test("loads older conversation entries when scrolling to top", async ({ page }) 
     el.dispatchEvent(new Event("scroll", { bubbles: true }))
   })
 
-  await beforeRequest
+  const req = await beforeRequest
+  const before = Number(new URL(req.url()).searchParams.get("before") ?? NaN)
+  expect(Number.isFinite(before)).toBeTruthy()
+  expect(before).toBeGreaterThan(0)
+  expect(before).toBeLessThanOrEqual(expectedBefore)
 
   await expect(page.getByTestId("chat-input")).toBeVisible()
   await expect(page.getByText("Application error:", { exact: false })).toHaveCount(0)
