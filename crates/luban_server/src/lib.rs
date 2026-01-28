@@ -3,6 +3,7 @@ use axum::Router;
 use std::net::SocketAddr;
 
 mod auth;
+mod branch_watch;
 pub mod engine;
 mod git_changes;
 mod idempotency;

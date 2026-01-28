@@ -10,6 +10,7 @@ futures = "0.3"
 luban_api = { path = "../luban_api" }
 luban_backend = { path = "../luban_backend" }
 luban_domain = { path = "../luban_domain" }
+notify = "6"
 portable-pty.workspace = true
 serde.workspace = true
 serde_json.workspace = true

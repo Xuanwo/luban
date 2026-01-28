@@ -99,6 +99,10 @@ pub enum Action {
         workspace_id: WorkspaceId,
         branch_name: String,
     },
+    WorkspaceBranchSynced {
+        workspace_id: WorkspaceId,
+        branch_name: String,
+    },
     WorkspaceBranchRenameFailed {
         workspace_id: WorkspaceId,
         message: String,

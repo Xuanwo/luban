@@ -480,6 +480,27 @@ impl AppState {
                 }
                 Vec::new()
             }
+            Action::WorkspaceBranchSynced {
+                workspace_id,
+                branch_name,
+            } => {
+                let Some((project_idx, workspace_idx)) = self.find_workspace_indices(workspace_id)
+                else {
+                    return Vec::new();
+                };
+
+                let project = &self.projects[project_idx];
+                if !project.is_git {
+                    return Vec::new();
+                }
+
+                let workspace = &mut self.projects[project_idx].workspaces[workspace_idx];
+                if workspace.branch_name == branch_name {
+                    return Vec::new();
+                }
+                workspace.branch_name = branch_name;
+                vec![Effect::SaveAppState]
+            }
             Action::WorkspaceBranchRenameFailed {
                 workspace_id,
                 message,
@@ -2390,6 +2411,41 @@ mod tests {
             }
             other => panic!("unexpected effect: {other:?}"),
         }
+    }
+
+    #[test]
+    fn workspace_branch_synced_updates_and_persists_when_changed() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+
+        let effects = state.apply(Action::WorkspaceBranchSynced {
+            workspace_id,
+            branch_name: "repo/renamed".to_owned(),
+        });
+        assert_eq!(
+            state.workspace(workspace_id).unwrap().branch_name,
+            "repo/renamed"
+        );
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SaveAppState));
+
+        let effects = state.apply(Action::WorkspaceBranchSynced {
+            workspace_id,
+            branch_name: "repo/renamed".to_owned(),
+        });
+        assert!(effects.is_empty());
     }
 
     #[test]
