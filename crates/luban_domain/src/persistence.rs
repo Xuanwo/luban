@@ -162,22 +162,22 @@ pub(crate) fn apply_persisted_app_state(
             .copied()
             .unwrap_or(active.0 + 1);
 
-        state.workspace_tabs.insert(
-            workspace_id,
-            WorkspaceTabs {
-                open_tabs: open_tabs.clone(),
-                archived_tabs,
-                active_tab: active,
-                next_thread_id,
-            },
-        );
-
-        for thread_id in open_tabs {
+        for thread_id in open_tabs.iter().copied() {
             state.conversations.insert(
                 (workspace_id, thread_id),
                 state.default_conversation(thread_id),
             );
         }
+
+        state.workspace_tabs.insert(
+            workspace_id,
+            WorkspaceTabs {
+                open_tabs,
+                archived_tabs,
+                active_tab: active,
+                next_thread_id,
+            },
+        );
     }
 
     state.workspace_chat_scroll_y10 = persisted
@@ -662,5 +662,76 @@ mod tests {
         assert!(dedupe_workspace_names(&mut workspaces));
         let names: Vec<String> = workspaces.into_iter().map(|w| w.workspace_name).collect();
         assert_eq!(names, vec!["dev", "dev-2", "dev-2-2", "dev-3"]);
+    }
+
+    #[test]
+    fn apply_persisted_app_state_creates_conversations_for_open_tabs() {
+        let path = PathBuf::from("/tmp/repo");
+        let workspace_id = 10_u64;
+
+        let persisted = PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                name: "Repo".to_owned(),
+                path: path.clone(),
+                slug: "repo".to_owned(),
+                is_git: true,
+                expanded: true,
+                workspaces: vec![PersistedWorkspace {
+                    id: workspace_id,
+                    workspace_name: "main".to_owned(),
+                    branch_name: "main".to_owned(),
+                    worktree_path: path.clone(),
+                    status: WorkspaceStatus::Active,
+                    last_activity_at_unix_seconds: None,
+                }],
+            }],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            global_zoom_percent: None,
+            appearance_theme: None,
+            appearance_ui_font: None,
+            appearance_chat_font: None,
+            appearance_code_font: None,
+            appearance_terminal_font: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            agent_default_runner: None,
+            agent_amp_mode: None,
+            agent_codex_enabled: None,
+            agent_amp_enabled: None,
+            last_open_workspace_id: None,
+            open_button_selection: None,
+            workspace_active_thread_id: HashMap::from([(workspace_id, 2)]),
+            workspace_open_tabs: HashMap::from([(workspace_id, vec![1, 2])]),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_chat_scroll_anchor: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+            task_prompt_templates: HashMap::new(),
+        };
+
+        let mut state = AppState::new();
+        let _effects = apply_persisted_app_state(&mut state, persisted);
+
+        let tabs = state
+            .workspace_tabs
+            .get(&WorkspaceId(workspace_id))
+            .unwrap();
+        assert!(tabs.open_tabs.contains(&WorkspaceThreadId(1)));
+        assert!(tabs.open_tabs.contains(&WorkspaceThreadId(2)));
+        assert_eq!(tabs.active_tab, WorkspaceThreadId(2));
+
+        assert!(
+            state
+                .conversations
+                .contains_key(&(WorkspaceId(workspace_id), WorkspaceThreadId(1)))
+        );
+        assert!(
+            state
+                .conversations
+                .contains_key(&(WorkspaceId(workspace_id), WorkspaceThreadId(2)))
+        );
     }
 }

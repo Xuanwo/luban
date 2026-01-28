@@ -122,10 +122,7 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   await projectContainer.getByTestId("worktree-branch-name").filter({ hasText: nameA }).first().click()
   await expect(page.getByText(tokenA).first()).toBeVisible({ timeout: 20_000 })
   {
-    const row = projectContainer
-      .getByTestId("worktree-row")
-      .filter({ hasText: nameA })
-      .first()
+    const row = projectContainer.getByTestId("worktree-row").filter({ hasText: nameA }).first()
     await expect(row.getByTestId("worktree-active-underline")).toHaveCount(1, { timeout: 10_000 })
   }
 
@@ -144,15 +141,40 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   await projectContainer.getByTestId("worktree-branch-name").filter({ hasText: String(nameB) }).first().click()
   await expect(page.getByText(tokenB).first()).toBeVisible({ timeout: 20_000 })
   {
-    const row = projectContainer
-      .getByTestId("worktree-row")
-      .filter({ hasText: String(nameB) })
-      .first()
+    const row = projectContainer.getByTestId("worktree-row").filter({ hasText: String(nameB) }).first()
     await expect(row.getByTestId("worktree-active-underline")).toHaveCount(1, { timeout: 10_000 })
   }
 
   const sawEmptyState = await page.evaluate(() => Boolean((window as any).__e2eSawChatEmptyState))
   expect(sawEmptyState).toBe(false)
+})
+
+test("new worktree highlight clears after a short delay", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const snap = await fetchAppSnapshot(page)
+  const projectDir =
+    snap.projects.find((p: any) => p.name === "e2e-project")?.path ??
+    requireEnv("LUBAN_E2E_PROJECT_DIR")
+
+  const projectToggle = page.getByRole("button", { name: "e2e-project", exact: true })
+  await projectToggle.waitFor({ timeout: 15_000 })
+  const projectContainer = projectToggle.locator("..").locator("..")
+  const branchEntries = projectContainer.getByTestId("worktree-branch-name")
+  const beforeCount = await branchEntries.count()
+
+  await sendWsAction(page, { type: "create_workspace", project_id: projectDir })
+  await expect
+    .poll(async () => await branchEntries.count(), { timeout: 90_000 })
+    .toBe(beforeCount + 1)
+
+  const newRow = branchEntries.last().locator("..").locator("..").locator("..")
+  await expect
+    .poll(async () => ((await newRow.getAttribute("class")) ?? "").includes("ring-1"), { timeout: 10_000 })
+    .toBe(true)
+  await expect
+    .poll(async () => ((await newRow.getAttribute("class")) ?? "").includes("ring-1"), { timeout: 10_000 })
+    .toBe(false)
 })
 
 test("main worktree home icon is only visible on hover", async ({ page }) => {

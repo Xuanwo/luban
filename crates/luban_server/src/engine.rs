@@ -1,3 +1,4 @@
+use crate::branch_watch::BranchWatchHandle;
 use anyhow::Context as _;
 use luban_api::{
     AppSnapshot, ConversationSnapshot, PullRequestCiState, PullRequestSnapshot, PullRequestState,
@@ -157,6 +158,10 @@ pub enum EngineCommand {
         workspace_id: WorkspaceId,
         info: Option<PullRequestInfo>,
     },
+    WorkspaceBranchObserved {
+        workspace_id: WorkspaceId,
+        branch_name: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -242,6 +247,7 @@ pub struct Engine {
     services: Arc<dyn ProjectWorkspaceService>,
     events: broadcast::Sender<WsServerMessage>,
     tx: mpsc::Sender<EngineCommand>,
+    branch_watch: BranchWatchHandle,
     cancel_flags: HashMap<(WorkspaceId, WorkspaceThreadId), CancelFlagEntry>,
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
@@ -260,12 +266,14 @@ impl Engine {
         let (tx, mut rx) = mpsc::channel::<EngineCommand>(256);
         let (events, _) = broadcast::channel::<WsServerMessage>(256);
 
+        let branch_watch = BranchWatchHandle::start(tx.clone());
         let mut engine = Self {
             state: AppState::new(),
             rev: 0,
             services,
             events: events.clone(),
             tx: tx.clone(),
+            branch_watch,
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -1740,6 +1748,16 @@ impl Engine {
                     self.publish_app_snapshot();
                 }
             }
+            EngineCommand::WorkspaceBranchObserved {
+                workspace_id,
+                branch_name,
+            } => {
+                self.process_action_queue(Action::WorkspaceBranchSynced {
+                    workspace_id,
+                    branch_name,
+                })
+                .await;
+            }
         }
     }
 
@@ -1840,11 +1858,15 @@ impl Engine {
         while let Some(action) = actions.pop_front() {
             self.rev = self.rev.saturating_add(1);
 
+            let should_sync_branch_watchers = should_sync_branch_watchers(&action);
             let conversation_key = conversation_key_for_action(&action);
             let queue_state_key = queue_state_key_for_action(&action);
             let threads_event = threads_event_for_action(&action);
 
             let new_effects = self.state.apply(action);
+            if should_sync_branch_watchers {
+                self.sync_branch_watchers();
+            }
             self.publish_app_snapshot();
 
             if let Some((wid, tid)) = conversation_key {
@@ -1868,6 +1890,24 @@ impl Engine {
                 }
             }
         }
+    }
+
+    fn sync_branch_watchers(&self) {
+        let workspaces = self
+            .state
+            .projects
+            .iter()
+            .filter(|p| p.is_git)
+            .flat_map(|p| {
+                p.workspaces.iter().filter_map(|w| {
+                    if w.status != luban_domain::WorkspaceStatus::Active {
+                        return None;
+                    }
+                    Some((w.id, w.worktree_path.clone()))
+                })
+            })
+            .collect::<Vec<_>>();
+        self.branch_watch.sync_workspaces(workspaces);
     }
 
     async fn persist_queue_state(&self, workspace_id: WorkspaceId, thread_id: WorkspaceThreadId) {
@@ -3730,6 +3770,19 @@ fn workspace_scope(state: &AppState, workspace_id: WorkspaceId) -> Option<Worksp
     None
 }
 
+fn should_sync_branch_watchers(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::AppStateLoaded { .. }
+            | Action::AddProject { .. }
+            | Action::CreateWorkspace { .. }
+            | Action::EnsureMainWorkspace { .. }
+            | Action::WorkspaceCreated { .. }
+            | Action::WorkspaceArchived { .. }
+            | Action::DeleteProject { .. }
+    )
+}
+
 fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, WorkspaceThreadId)> {
     match action {
         Action::SendAgentMessage {
@@ -4880,6 +4933,7 @@ mod tests {
             services: Arc::new(TestServices),
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -4940,6 +4994,7 @@ mod tests {
             services: Arc::new(TestServices),
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -5095,6 +5150,7 @@ mod tests {
             services: Arc::new(TestServices),
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -5279,6 +5335,7 @@ mod tests {
             services: Arc::new(TestServices),
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -5593,6 +5650,7 @@ mod tests {
             services,
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -5875,6 +5933,7 @@ mod tests {
             services,
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -5920,6 +5979,7 @@ mod tests {
             services,
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -6389,6 +6449,7 @@ mod tests {
             services,
             events,
             tx: tx.clone(),
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -6452,6 +6513,7 @@ mod tests {
             services,
             events,
             tx,
+            branch_watch: BranchWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
