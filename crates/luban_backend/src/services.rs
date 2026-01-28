@@ -20,6 +20,7 @@ use std::{
 
 use claude_process::{ClaudeProcessKey, ClaudeThreadProcess};
 
+use crate::env::optional_trimmed_path_from_env;
 use crate::sqlite_store::{SqliteStore, SqliteStoreOptions};
 use crate::time::{unix_epoch_micros_now, unix_epoch_nanos_now};
 
@@ -253,13 +254,8 @@ fn generate_turn_scope_id() -> String {
 }
 
 fn resolve_luban_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = std::env::var_os(paths::LUBAN_ROOT_ENV) {
-        let root = root.to_string_lossy();
-        let trimmed = root.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("{} is set but empty", paths::LUBAN_ROOT_ENV));
-        }
-        return Ok(PathBuf::from(trimmed));
+    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_ROOT_ENV)? {
+        return Ok(root);
     }
 
     if cfg!(test) {
@@ -273,13 +269,8 @@ fn resolve_luban_root() -> anyhow::Result<PathBuf> {
 }
 
 fn resolve_codex_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = std::env::var_os(paths::LUBAN_CODEX_ROOT_ENV) {
-        let root = root.to_string_lossy();
-        let trimmed = root.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("{} is set but empty", paths::LUBAN_CODEX_ROOT_ENV));
-        }
-        return Ok(PathBuf::from(trimmed));
+    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_CODEX_ROOT_ENV)? {
+        return Ok(root);
     }
 
     if cfg!(test) {
@@ -291,13 +282,8 @@ fn resolve_codex_root() -> anyhow::Result<PathBuf> {
 }
 
 fn resolve_amp_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = std::env::var_os(paths::LUBAN_AMP_ROOT_ENV) {
-        let root = root.to_string_lossy();
-        let trimmed = root.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("{} is set but empty", paths::LUBAN_AMP_ROOT_ENV));
-        }
-        return Ok(PathBuf::from(trimmed));
+    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_AMP_ROOT_ENV)? {
+        return Ok(root);
     }
 
     if cfg!(test) {
@@ -317,13 +303,8 @@ fn resolve_amp_root() -> anyhow::Result<PathBuf> {
 }
 
 fn resolve_claude_root() -> anyhow::Result<PathBuf> {
-    if let Some(root) = std::env::var_os(paths::LUBAN_CLAUDE_ROOT_ENV) {
-        let root = root.to_string_lossy();
-        let trimmed = root.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("{} is set but empty", paths::LUBAN_CLAUDE_ROOT_ENV));
-        }
-        return Ok(PathBuf::from(trimmed));
+    if let Some(root) = optional_trimmed_path_from_env(paths::LUBAN_CLAUDE_ROOT_ENV)? {
+        return Ok(root);
     }
 
     if cfg!(test) {
