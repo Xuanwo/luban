@@ -27,12 +27,17 @@ impl AgentRunnerKind {
 }
 
 pub fn parse_agent_runner_kind(value: &str) -> Option<AgentRunnerKind> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "codex" => Some(AgentRunnerKind::Codex),
-        "amp" => Some(AgentRunnerKind::Amp),
-        "claude" => Some(AgentRunnerKind::Claude),
-        _ => None,
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("codex") {
+        return Some(AgentRunnerKind::Codex);
     }
+    if value.eq_ignore_ascii_case("amp") {
+        return Some(AgentRunnerKind::Amp);
+    }
+    if value.eq_ignore_ascii_case("claude") {
+        return Some(AgentRunnerKind::Claude);
+    }
+    None
 }
 
 pub fn default_agent_runner_kind() -> AgentRunnerKind {
@@ -132,32 +137,16 @@ const CODEX_MAX_EFFORTS: &[ThinkingEffort] = &[
     ThinkingEffort::XHigh,
 ];
 
-const CODEX_STANDARD_EFFORTS: &[ThinkingEffort] = &[
-    ThinkingEffort::Minimal,
-    ThinkingEffort::Low,
-    ThinkingEffort::Medium,
-    ThinkingEffort::High,
-    ThinkingEffort::XHigh,
-];
-
-const BASE_MODEL_EFFORTS: &[ThinkingEffort] = &[
-    ThinkingEffort::Minimal,
-    ThinkingEffort::Low,
-    ThinkingEffort::Medium,
-    ThinkingEffort::High,
-    ThinkingEffort::XHigh,
-];
-
 const AGENT_MODELS: &[AgentModelSpec] = &[
     AgentModelSpec {
         id: "gpt-5.2",
         label: "GPT-5.2",
-        supported_thinking_efforts: BASE_MODEL_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5.2-codex",
         label: "GPT-5.2-Codex",
-        supported_thinking_efforts: CODEX_STANDARD_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5.1-codex-max",
@@ -167,27 +156,27 @@ const AGENT_MODELS: &[AgentModelSpec] = &[
     AgentModelSpec {
         id: "gpt-5.1-codex-mini",
         label: "GPT-5.1-Codex-Mini",
-        supported_thinking_efforts: CODEX_STANDARD_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5.1",
         label: "GPT-5.1",
-        supported_thinking_efforts: BASE_MODEL_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5.1-codex",
         label: "GPT-5.1-Codex",
-        supported_thinking_efforts: CODEX_STANDARD_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5-codex",
         label: "GPT-5-Codex",
-        supported_thinking_efforts: CODEX_STANDARD_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5-codex-mini",
         label: "GPT-5-Codex-Mini",
-        supported_thinking_efforts: CODEX_STANDARD_EFFORTS,
+        supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
         id: "gpt-5",
