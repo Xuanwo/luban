@@ -39,6 +39,7 @@ mod conversations;
 mod feedback;
 mod gh_cli;
 mod git;
+mod git_branch;
 mod github_url;
 mod prompt;
 mod pull_request;
@@ -53,6 +54,7 @@ use amp_mode::detect_amp_mode_from_config_root;
 use claude_cli::ClaudeTurnParams;
 use codex_cli::CodexTurnParams;
 use codex_thread::{codex_item_id, generate_turn_scope_id, qualify_codex_item, qualify_event};
+use git_branch::{branch_exists, normalize_branch_suffix};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
 use reconnect_notice::is_transient_reconnect_notice;
@@ -60,54 +62,6 @@ use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_l
 
 fn anyhow_error_to_string(e: anyhow::Error) -> String {
     format!("{e:#}")
-}
-
-fn normalize_branch_suffix(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let mut value = trimmed;
-    if let Some(stripped) = value.strip_prefix("refs/heads/") {
-        value = stripped;
-    }
-    if let Some(stripped) = value.strip_prefix("luban/") {
-        value = stripped;
-    }
-
-    let mut out = String::new();
-    let mut prev_hyphen = false;
-    for ch in value.chars() {
-        let next = if ch.is_ascii_alphanumeric() {
-            ch.to_ascii_lowercase()
-        } else {
-            '-'
-        };
-        if next == '-' {
-            if prev_hyphen {
-                continue;
-            }
-            prev_hyphen = true;
-            out.push('-');
-            continue;
-        }
-        prev_hyphen = false;
-        out.push(next);
-    }
-
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    const MAX_SUFFIX_LEN: usize = 24;
-    let limited = trimmed.chars().take(MAX_SUFFIX_LEN).collect::<String>();
-    let limited = limited.trim_matches('-').to_owned();
-    if limited.is_empty() {
-        return None;
-    }
-    Some(limited)
 }
 
 fn codex_entries_from_shallow(entries: Vec<config_tree::ShallowEntry>) -> Vec<CodexConfigEntry> {
@@ -489,17 +443,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             std::fs::create_dir_all(self.worktrees_root.join(&project_slug))
                 .context("failed to create worktrees root")?;
 
-            fn branch_exists(project_path: &Path, branch_name: &str) -> bool {
-                let branch_ref = format!("refs/heads/{branch_name}");
-                Command::new("git")
-                    .args(["show-ref", "--verify", "--quiet", &branch_ref])
-                    .current_dir(project_path)
-                    .status()
-                    .ok()
-                    .map(|s| s.success())
-                    .unwrap_or(false)
-            }
-
             if let Some(hint) = branch_name_hint
                 .as_deref()
                 .and_then(normalize_branch_suffix)
@@ -701,17 +644,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     "workspace path does not exist: {}",
                     worktree_path.display()
                 ));
-            }
-
-            fn branch_exists(worktree_path: &Path, branch_name: &str) -> bool {
-                let branch_ref = format!("refs/heads/{branch_name}");
-                Command::new("git")
-                    .args(["show-ref", "--verify", "--quiet", &branch_ref])
-                    .current_dir(worktree_path)
-                    .status()
-                    .ok()
-                    .map(|s| s.success())
-                    .unwrap_or(false)
             }
 
             let current_branch = self
@@ -4005,31 +3937,5 @@ mod tests {
             command.args,
             vec![std::ffi::OsString::from("/tmp/luban-worktree")]
         );
-    }
-
-    #[test]
-    fn normalize_branch_suffix_strips_prefixes_and_sanitizes() {
-        assert_eq!(
-            normalize_branch_suffix("refs/heads/luban/Foo_Bar").as_deref(),
-            Some("foo-bar")
-        );
-        assert_eq!(
-            normalize_branch_suffix("luban/Hello---World").as_deref(),
-            Some("hello-world")
-        );
-        assert_eq!(
-            normalize_branch_suffix("  hello world  ").as_deref(),
-            Some("hello-world")
-        );
-        assert_eq!(normalize_branch_suffix("   "), None);
-        assert_eq!(normalize_branch_suffix("luban/---"), None);
-    }
-
-    #[test]
-    fn normalize_branch_suffix_limits_length() {
-        let input = "refs/heads/luban/abcdefghijklmnopqrstuvwxyz";
-        let suffix = normalize_branch_suffix(input).expect("suffix should be present");
-        assert_eq!(suffix.len(), 24);
-        assert_eq!(suffix, "abcdefghijklmnopqrstuvwx");
     }
 }
