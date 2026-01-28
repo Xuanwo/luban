@@ -1,4 +1,5 @@
 use super::fonts::normalize_font;
+use super::strings::normalize_optional_string;
 use crate::agent_settings::{parse_agent_runner_kind, parse_thinking_effort};
 use crate::{
     AppState, AppearanceFonts, AppearanceTheme, Effect, MainPane, OperationStatus,
@@ -25,13 +26,6 @@ fn normalize_thread_tabs(
     }
     archived_tabs.retain(|id| *id != active);
     (open_tabs, archived_tabs)
-}
-
-fn normalize_optional_string(raw: Option<&str>, max_len: usize) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|v| !v.is_empty())
-        .filter(|v| v.len() <= max_len)
-        .map(ToOwned::to_owned)
 }
 
 pub(crate) fn apply_persisted_app_state(
@@ -627,16 +621,5 @@ mod tests {
         );
         assert_eq!(open, vec![WorkspaceThreadId(2), active]);
         assert!(archived.is_empty());
-    }
-
-    #[test]
-    fn normalize_optional_string_trims_and_enforces_max_len() {
-        assert_eq!(
-            normalize_optional_string(Some("  abc  "), 3),
-            Some("abc".to_owned())
-        );
-        assert_eq!(normalize_optional_string(Some("  abc  "), 2), None);
-        assert_eq!(normalize_optional_string(Some("   "), 10), None);
-        assert_eq!(normalize_optional_string(None, 10), None);
     }
 }
