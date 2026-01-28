@@ -20,9 +20,10 @@ enum BuildChannel {
 }
 
 fn parse_build_channel(raw: &str) -> BuildChannel {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "release" => BuildChannel::Release,
-        _ => BuildChannel::Dev,
+    if raw.trim().eq_ignore_ascii_case("release") {
+        BuildChannel::Release
+    } else {
+        BuildChannel::Dev
     }
 }
 
@@ -521,8 +522,15 @@ mod tests {
 
     #[test]
     fn auto_update_is_enabled_on_release_channel() {
-        with_env_var("LUBAN_BUILD_CHANNEL", "release", || {
+        with_env_var("LUBAN_BUILD_CHANNEL", " RELEASE ", || {
             assert!(auto_update_enabled());
+        });
+    }
+
+    #[test]
+    fn auto_update_is_disabled_on_unknown_channel() {
+        with_env_var("LUBAN_BUILD_CHANNEL", "nightly", || {
+            assert!(!auto_update_enabled());
         });
     }
 }
