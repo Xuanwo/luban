@@ -199,16 +199,20 @@ impl WorkspaceConversation {
         }
     }
 
-    pub(crate) fn push_entry(&mut self, entry: ConversationEntry) {
-        if let ConversationEntry::CodexItem { item } = &entry {
-            self.codex_item_ids
-                .insert(codex_item_id(item.as_ref()).to_owned());
-        }
+    fn push_entry_and_update_totals(&mut self, entry: ConversationEntry) {
         self.entries.push(entry);
         self.entries_total = self
             .entries_total
             .max(self.entries_start.saturating_add(self.entries.len() as u64));
         self.trim_entries_to_limit();
+    }
+
+    pub(crate) fn push_entry(&mut self, entry: ConversationEntry) {
+        if let ConversationEntry::CodexItem { item } = &entry {
+            self.codex_item_ids
+                .insert(codex_item_id(item.as_ref()).to_owned());
+        }
+        self.push_entry_and_update_totals(entry);
     }
 
     pub(crate) fn push_codex_item_if_new(&mut self, item: CodexThreadItem) -> bool {
@@ -217,13 +221,9 @@ impl WorkspaceConversation {
             return false;
         }
         self.codex_item_ids.insert(id.to_owned());
-        self.entries.push(ConversationEntry::CodexItem {
+        self.push_entry_and_update_totals(ConversationEntry::CodexItem {
             item: Box::new(item),
         });
-        self.entries_total = self
-            .entries_total
-            .max(self.entries_start.saturating_add(self.entries.len() as u64));
-        self.trim_entries_to_limit();
         true
     }
 
