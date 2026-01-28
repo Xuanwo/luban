@@ -25,6 +25,7 @@ mod amp_cli;
 mod amp_mode;
 mod claude_cli;
 pub mod claude_process;
+mod cli_check;
 mod codex_bin;
 mod codex_cli;
 mod codex_thread;
@@ -2099,27 +2100,10 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     }
 
     fn codex_check(&self) -> Result<(), String> {
-        let result: anyhow::Result<()> = (|| {
+        let result: anyhow::Result<()> = {
             let codex = self.codex_executable();
-            let output = Command::new(&codex)
-                .args(["--version"])
-                .output()
-                .with_context(|| format!("failed to spawn {}", codex.display()))?;
-
-            if output.status.success() {
-                return Ok(());
-            }
-
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !stderr.is_empty() {
-                return Err(anyhow!("{stderr}"));
-            }
-            if !stdout.is_empty() {
-                return Err(anyhow!("{stdout}"));
-            }
-            Err(anyhow!("codex exited with status {}", output.status))
-        })();
+            cli_check::check_cli_version(&codex, "codex")
+        };
 
         result.map_err(|e| format!("{e:#}"))
     }
@@ -2214,29 +2198,12 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     }
 
     fn amp_check(&self) -> Result<(), String> {
-        let result: anyhow::Result<()> = (|| {
+        let result: anyhow::Result<()> = {
             let amp = std::env::var_os("LUBAN_AMP_BIN")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("amp"));
-            let output = Command::new(&amp)
-                .args(["--version"])
-                .output()
-                .with_context(|| format!("failed to spawn {}", amp.display()))?;
-
-            if output.status.success() {
-                return Ok(());
-            }
-
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !stderr.is_empty() {
-                return Err(anyhow!("{stderr}"));
-            }
-            if !stdout.is_empty() {
-                return Err(anyhow!("{stdout}"));
-            }
-            Err(anyhow!("amp exited with status {}", output.status))
-        })();
+            cli_check::check_cli_version(&amp, "amp")
+        };
 
         result.map_err(|e| format!("{e:#}"))
     }
@@ -2342,29 +2309,12 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     }
 
     fn claude_check(&self) -> Result<(), String> {
-        let result: anyhow::Result<()> = (|| {
+        let result: anyhow::Result<()> = {
             let claude = std::env::var_os(paths::LUBAN_CLAUDE_BIN_ENV)
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("claude"));
-            let output = Command::new(&claude)
-                .args(["--version"])
-                .output()
-                .with_context(|| format!("failed to spawn {}", claude.display()))?;
-
-            if output.status.success() {
-                return Ok(());
-            }
-
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !stderr.is_empty() {
-                return Err(anyhow!("{stderr}"));
-            }
-            if !stdout.is_empty() {
-                return Err(anyhow!("{stdout}"));
-            }
-            Err(anyhow!("claude exited with status {}", output.status))
-        })();
+            cli_check::check_cli_version(&claude, "claude")
+        };
 
         result.map_err(|e| format!("{e:#}"))
     }
