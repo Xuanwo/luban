@@ -32,11 +32,10 @@ impl GitWorkspaceService {
         let root = self
             .run_git(repo_path, ["rev-parse", "--show-toplevel"])
             .context("failed to resolve git repository root")?;
-        let trimmed = root.trim();
-        if trimmed.is_empty() {
+        if root.is_empty() {
             return Err(anyhow!("git rev-parse returned empty root"));
         }
-        Ok(PathBuf::from(trimmed))
+        Ok(PathBuf::from(root))
     }
 
     pub(super) fn select_remote_best_effort(
@@ -44,19 +43,20 @@ impl GitWorkspaceService {
         repo_path: &Path,
     ) -> anyhow::Result<Option<String>> {
         let out = self.run_git(repo_path, ["remote"])?;
-        let remotes = out
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>();
-
-        if remotes.is_empty() {
-            return Ok(None);
+        let mut first_remote: Option<&str> = None;
+        for line in out.lines() {
+            let remote = line.trim();
+            if remote.is_empty() {
+                continue;
+            }
+            if remote == "origin" {
+                return Ok(Some("origin".to_owned()));
+            }
+            if first_remote.is_none() {
+                first_remote = Some(remote);
+            }
         }
-        if remotes.contains(&"origin") {
-            return Ok(Some("origin".to_owned()));
-        }
-        Ok(Some(remotes[0].to_owned()))
+        Ok(first_remote.map(ToOwned::to_owned))
     }
 
     pub(super) fn github_repo_id_from_remote_url(url: &str) -> Option<String> {
