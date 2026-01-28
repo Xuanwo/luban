@@ -36,89 +36,48 @@ pub(crate) fn optional_trimmed_path_from_env(name: &str) -> anyhow::Result<Optio
 mod tests {
     use super::lock_env_for_tests;
     use super::{home_dir, optional_trimmed_path_from_env};
+    use crate::test_support::EnvVarGuard;
     use std::path::PathBuf;
 
     #[test]
     fn home_dir_errors_when_unset() {
         let _guard = lock_env_for_tests();
 
-        let prev = std::env::var_os("HOME");
-        unsafe {
-            std::env::remove_var("HOME");
-        }
+        let _env = EnvVarGuard::remove("HOME");
 
         let err = home_dir().expect_err("missing HOME should error");
         assert!(
             err.to_string().contains("HOME is not set"),
             "unexpected error: {err:?}"
         );
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var("HOME", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("HOME");
-            }
-        }
     }
 
     #[test]
     fn home_dir_returns_value() {
         let _guard = lock_env_for_tests();
 
-        let prev = std::env::var_os("HOME");
-        unsafe {
-            std::env::set_var("HOME", "luban-home");
-        }
+        let _env = EnvVarGuard::set("HOME", "luban-home");
 
         let loaded = home_dir().expect("HOME should be read");
         assert_eq!(loaded, PathBuf::from("luban-home"));
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var("HOME", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("HOME");
-            }
-        }
     }
 
     #[test]
     fn optional_trimmed_path_from_env_returns_none_when_unset() {
         let _guard = lock_env_for_tests();
 
-        let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
-        unsafe {
-            std::env::remove_var("LUBAN_TEST_TRIMMED_PATH_ENV");
-        }
+        let _env = EnvVarGuard::remove("LUBAN_TEST_TRIMMED_PATH_ENV");
 
         let loaded = optional_trimmed_path_from_env("LUBAN_TEST_TRIMMED_PATH_ENV")
             .expect("unset env should not error");
         assert!(loaded.is_none());
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var("LUBAN_TEST_TRIMMED_PATH_ENV", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("LUBAN_TEST_TRIMMED_PATH_ENV");
-            }
-        }
     }
 
     #[test]
     fn optional_trimmed_path_from_env_errors_on_empty() {
         let _guard = lock_env_for_tests();
 
-        let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
-        unsafe {
-            std::env::set_var("LUBAN_TEST_TRIMMED_PATH_ENV", "   ");
-        }
+        let _env = EnvVarGuard::set("LUBAN_TEST_TRIMMED_PATH_ENV", "   ");
 
         let err = optional_trimmed_path_from_env("LUBAN_TEST_TRIMMED_PATH_ENV")
             .expect_err("empty env should error");
@@ -127,39 +86,16 @@ mod tests {
                 .contains("LUBAN_TEST_TRIMMED_PATH_ENV is set but empty"),
             "unexpected error: {err:?}"
         );
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var("LUBAN_TEST_TRIMMED_PATH_ENV", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("LUBAN_TEST_TRIMMED_PATH_ENV");
-            }
-        }
     }
 
     #[test]
     fn optional_trimmed_path_from_env_trims_value() {
         let _guard = lock_env_for_tests();
 
-        let prev = std::env::var_os("LUBAN_TEST_TRIMMED_PATH_ENV");
-        unsafe {
-            std::env::set_var("LUBAN_TEST_TRIMMED_PATH_ENV", " luban-test ");
-        }
+        let _env = EnvVarGuard::set("LUBAN_TEST_TRIMMED_PATH_ENV", " luban-test ");
 
         let loaded = optional_trimmed_path_from_env("LUBAN_TEST_TRIMMED_PATH_ENV")
             .expect("non-empty env should succeed");
         assert_eq!(loaded, Some(PathBuf::from("luban-test")));
-
-        if let Some(value) = prev {
-            unsafe {
-                std::env::set_var("LUBAN_TEST_TRIMMED_PATH_ENV", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("LUBAN_TEST_TRIMMED_PATH_ENV");
-            }
-        }
     }
 }
