@@ -48,6 +48,7 @@ pub use system_prompts::{
     SystemTaskKind, default_system_prompt_template, default_system_prompt_templates,
 };
 mod dashboard;
+mod time;
 pub use dashboard::{
     DashboardCardModel, DashboardPreviewMessage, DashboardPreviewModel, DashboardStage,
     dashboard_cards, dashboard_preview,

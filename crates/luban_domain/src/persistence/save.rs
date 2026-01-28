@@ -1,6 +1,6 @@
+use crate::time::unix_seconds;
 use crate::{AppState, PersistedAppState, PersistedProject, PersistedWorkspace};
 use std::collections::HashMap;
-use std::time::UNIX_EPOCH;
 
 pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
     PersistedAppState {
@@ -23,9 +23,7 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
                         branch_name: w.branch_name.clone(),
                         worktree_path: w.worktree_path.clone(),
                         status: w.status,
-                        last_activity_at_unix_seconds: w
-                            .last_activity_at
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())),
+                        last_activity_at_unix_seconds: w.last_activity_at.and_then(unix_seconds),
                     })
                     .collect(),
             })

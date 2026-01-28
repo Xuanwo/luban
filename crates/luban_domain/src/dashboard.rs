@@ -1,9 +1,10 @@
+use crate::time::unix_seconds_or_zero;
 use crate::{
     AppState, CodexThreadItem, ConversationEntry, OperationStatus, Project, PullRequestInfo,
     Workspace, WorkspaceId, WorkspaceStatus,
 };
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum DashboardStage {
@@ -177,9 +178,7 @@ pub fn dashboard_preview(
 }
 
 fn sort_key(when: Option<SystemTime>) -> u64 {
-    when.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    unix_seconds_or_zero(when)
 }
 
 fn stage_for_workspace(
