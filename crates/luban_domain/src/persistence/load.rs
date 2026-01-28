@@ -27,6 +27,13 @@ fn normalize_thread_tabs(
     (open_tabs, archived_tabs)
 }
 
+fn normalize_optional_string(raw: Option<&str>, max_len: usize) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .filter(|v| v.len() <= max_len)
+        .map(ToOwned::to_owned)
+}
+
 pub(crate) fn apply_persisted_app_state(
     state: &mut AppState,
     persisted: PersistedAppState,
@@ -67,13 +74,7 @@ pub(crate) fn apply_persisted_app_state(
         .and_then(parse_agent_runner_kind)
         .unwrap_or_else(default_agent_runner_kind);
 
-    let agent_amp_mode = persisted
-        .agent_amp_mode
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .filter(|v| v.len() <= 32)
-        .map(ToOwned::to_owned)
+    let agent_amp_mode = normalize_optional_string(persisted.agent_amp_mode.as_deref(), 32)
         .unwrap_or_else(|| default_amp_mode().to_owned());
 
     state.agent_default_model_id = agent_default_model_id;
@@ -113,13 +114,8 @@ pub(crate) fn apply_persisted_app_state(
         ),
     };
     state.last_open_workspace_id = persisted.last_open_workspace_id.map(WorkspaceId);
-    state.open_button_selection = persisted
-        .open_button_selection
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter(|s| s.len() <= 1024)
-        .map(ToOwned::to_owned);
+    state.open_button_selection =
+        normalize_optional_string(persisted.open_button_selection.as_deref(), 1024);
     state.workspace_tabs = HashMap::new();
     state.conversations = HashMap::new();
     state.workspace_unread_completions = persisted
@@ -631,5 +627,16 @@ mod tests {
         );
         assert_eq!(open, vec![WorkspaceThreadId(2), active]);
         assert!(archived.is_empty());
+    }
+
+    #[test]
+    fn normalize_optional_string_trims_and_enforces_max_len() {
+        assert_eq!(
+            normalize_optional_string(Some("  abc  "), 3),
+            Some("abc".to_owned())
+        );
+        assert_eq!(normalize_optional_string(Some("  abc  "), 2), None);
+        assert_eq!(normalize_optional_string(Some("   "), 10), None);
+        assert_eq!(normalize_optional_string(None, 10), None);
     }
 }
