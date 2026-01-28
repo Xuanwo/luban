@@ -1,7 +1,7 @@
 use crate::engine::EngineCommand;
 use luban_domain::WorkspaceId;
 use notify::{Event, RecursiveMode, Watcher as _};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -135,11 +135,7 @@ fn sync_workspaces(
     path_to_workspace: &mut HashMap<PathBuf, WorkspaceId>,
     workspaces: Vec<(WorkspaceId, PathBuf)>,
 ) {
-    let desired_ids = workspaces.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    let desired_set = desired_ids
-        .iter()
-        .copied()
-        .collect::<std::collections::HashSet<_>>();
+    let desired_set: HashSet<WorkspaceId> = workspaces.iter().map(|(id, _)| *id).collect();
 
     let existing_ids = watched.keys().copied().collect::<Vec<_>>();
     for workspace_id in existing_ids {
@@ -230,4 +226,45 @@ fn branch_name_from_head_contents(contents: &str) -> String {
     }
 
     reference.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branch_name_from_head_contents_handles_detached_head() {
+        assert_eq!(
+            branch_name_from_head_contents("40c0e65a8dc0e6b296be4c4422cda1da01a97e5a\n"),
+            "HEAD"
+        );
+    }
+
+    #[test]
+    fn branch_name_from_head_contents_parses_heads_prefix() {
+        assert_eq!(
+            branch_name_from_head_contents("ref: refs/heads/main\n"),
+            "main"
+        );
+        assert_eq!(
+            branch_name_from_head_contents("ref: refs/heads/feature/x\n"),
+            "feature/x"
+        );
+    }
+
+    #[test]
+    fn branch_name_from_head_contents_parses_refs_prefix() {
+        assert_eq!(
+            branch_name_from_head_contents("ref: refs/remotes/origin/main\n"),
+            "remotes/origin/main"
+        );
+    }
+
+    #[test]
+    fn branch_name_from_head_contents_trims_whitespace() {
+        assert_eq!(
+            branch_name_from_head_contents("  ref:   refs/heads/main  \n"),
+            "main"
+        );
+    }
 }
