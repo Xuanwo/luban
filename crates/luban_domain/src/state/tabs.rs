@@ -18,12 +18,30 @@ impl WorkspaceTabs {
         }
     }
 
-    pub fn activate(&mut self, thread_id: WorkspaceThreadId) {
-        self.active_tab = thread_id;
+    fn remove_open(&mut self, thread_id: WorkspaceThreadId) {
+        self.open_tabs.retain(|id| *id != thread_id);
+    }
+
+    fn remove_archived(&mut self, thread_id: WorkspaceThreadId) {
         self.archived_tabs.retain(|id| *id != thread_id);
+    }
+
+    fn ensure_open(&mut self, thread_id: WorkspaceThreadId) {
         if !self.open_tabs.contains(&thread_id) {
             self.open_tabs.push(thread_id);
         }
+    }
+
+    fn ensure_archived(&mut self, thread_id: WorkspaceThreadId) {
+        if !self.archived_tabs.contains(&thread_id) {
+            self.archived_tabs.push(thread_id);
+        }
+    }
+
+    pub fn activate(&mut self, thread_id: WorkspaceThreadId) {
+        self.active_tab = thread_id;
+        self.remove_archived(thread_id);
+        self.ensure_open(thread_id);
     }
 
     pub fn archive_tab(&mut self, thread_id: WorkspaceThreadId) {
@@ -37,20 +55,16 @@ impl WorkspaceTabs {
                 active_fallback = Some(self.open_tabs[idx + 1]);
             }
         }
-        self.open_tabs.retain(|id| *id != thread_id);
-        if !self.archived_tabs.contains(&thread_id) {
-            self.archived_tabs.push(thread_id);
-        }
+        self.remove_open(thread_id);
+        self.ensure_archived(thread_id);
         if let Some(next) = active_fallback.or_else(|| self.open_tabs.first().copied()) {
             self.active_tab = next;
         }
     }
 
     pub fn restore_tab(&mut self, thread_id: WorkspaceThreadId, activate: bool) {
-        self.archived_tabs.retain(|id| *id != thread_id);
-        if !self.open_tabs.contains(&thread_id) {
-            self.open_tabs.push(thread_id);
-        }
+        self.remove_archived(thread_id);
+        self.ensure_open(thread_id);
         if activate {
             self.active_tab = thread_id;
         }
