@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   checks:
-    name: fmt / lint / test
+    name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
