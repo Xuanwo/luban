@@ -774,16 +774,20 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         project_slug: String,
         workspace_name: String,
         thread_id: u64,
+        runner: luban_domain::AgentRunnerKind,
         model_id: String,
         thinking_effort: luban_domain::ThinkingEffort,
+        amp_mode: Option<String>,
     ) -> Result<(), String> {
         self.sqlite
             .save_conversation_run_config(
                 project_slug,
                 workspace_name,
                 thread_id,
+                runner,
                 model_id,
                 thinking_effort,
+                amp_mode,
             )
             .map_err(anyhow_error_to_string)
     }

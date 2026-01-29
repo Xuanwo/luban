@@ -212,11 +212,25 @@ pub(crate) fn apply_persisted_app_state(
             if model_id.is_empty() || model_id.len() > 256 {
                 return None;
             }
+            let runner = run_config
+                .runner
+                .as_deref()
+                .and_then(crate::agent_settings::parse_agent_runner_kind)
+                .map(|r| r.as_str().to_owned());
+            let amp_mode = run_config
+                .amp_mode
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .filter(|v| v.len() <= 128)
+                .map(ToOwned::to_owned);
             let parsed_effort = parse_thinking_effort(&run_config.thinking_effort)?;
             let normalized = normalize_thinking_effort(model_id, parsed_effort);
             Some((
                 (WorkspaceId(workspace_id), WorkspaceThreadId(thread_id)),
                 crate::PersistedWorkspaceThreadRunConfigOverride {
+                    runner,
+                    amp_mode,
                     model_id: model_id.to_owned(),
                     thinking_effort: normalized.as_str().to_owned(),
                 },
@@ -262,12 +276,40 @@ pub(crate) fn apply_persisted_app_state(
             if let Some(run_config) = state
                 .workspace_thread_run_config_overrides
                 .get(&(workspace_id, thread_id))
-                && let Some(parsed_effort) = parse_thinking_effort(&run_config.thinking_effort)
             {
-                let normalized = normalize_thinking_effort(&run_config.model_id, parsed_effort);
-                conversation.run_config_overridden_by_user = true;
-                conversation.agent_model_id = run_config.model_id.clone();
-                conversation.thinking_effort = normalized;
+                let mut overridden = false;
+                if let Some(runner) = run_config
+                    .runner
+                    .as_deref()
+                    .and_then(crate::agent_settings::parse_agent_runner_kind)
+                {
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.agent_runner = runner;
+                    overridden = true;
+                }
+                if let Some(mode) = run_config
+                    .amp_mode
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                {
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.amp_mode = Some(mode.to_owned());
+                    overridden = true;
+                }
+                if let Some(parsed_effort) = parse_thinking_effort(&run_config.thinking_effort) {
+                    let normalized = normalize_thinking_effort(&run_config.model_id, parsed_effort);
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.agent_model_id = run_config.model_id.clone();
+                    conversation.thinking_effort = normalized;
+                    overridden = true;
+                }
+                if overridden
+                    && conversation.agent_runner == crate::AgentRunnerKind::Amp
+                    && conversation.amp_mode.is_none()
+                {
+                    conversation.amp_mode = Some(state.agent_amp_mode.clone());
+                }
             }
             state
                 .conversations

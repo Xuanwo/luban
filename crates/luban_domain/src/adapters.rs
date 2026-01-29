@@ -334,13 +334,16 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn save_conversation_run_config(
         &self,
         _project_slug: String,
         _workspace_name: String,
         _thread_id: u64,
+        _runner: AgentRunnerKind,
         _model_id: String,
         _thinking_effort: ThinkingEffort,
+        _amp_mode: Option<String>,
     ) -> Result<(), String> {
         Ok(())
     }

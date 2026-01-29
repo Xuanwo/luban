@@ -496,7 +496,7 @@ export function mockDispatchAction(args: {
         has_unread_completion: false,
         pull_request: null,
       })
-      state.threadsByWorkspace.set(workspaceId, {
+	    state.threadsByWorkspace.set(workspaceId, {
         rev: state.rev,
         workspace_id: workspaceId,
         tabs: { open_tabs: [], archived_tabs: [], active_tab: 1 },
@@ -597,18 +597,21 @@ export function mockDispatchAction(args: {
       updated_at_unix_seconds: Math.floor(Date.now() / 1000),
     })
     snap.tabs.open_tabs.push(threadId)
-    bumpRev(state)
-    snap.rev = state.rev
-    const convo: ConversationState = {
-      rev: state.rev,
-      workspace_id: a.workspace_id,
-      thread_id: threadId,
-      agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
-      thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
-      run_status: "idle",
-      run_started_at_unix_ms: null,
-      run_finished_at_unix_ms: null,
-      entries: [],
+	    bumpRev(state)
+	    snap.rev = state.rev
+	    const runner = state.app.agent.default_runner ?? "codex"
+	    const convo: ConversationState = {
+	      rev: state.rev,
+	      workspace_id: a.workspace_id,
+	      thread_id: threadId,
+	      agent_runner: runner,
+	      agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
+	      thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
+	      amp_mode: runner === "amp" ? (state.app.agent.amp_mode ?? null) : null,
+	      run_status: "idle",
+	      run_started_at_unix_ms: null,
+	      run_finished_at_unix_ms: null,
+	      entries: [],
       entries_total: 0,
       entries_start: 0,
       entries_truncated: false,
@@ -695,11 +698,19 @@ export function mockDispatchAction(args: {
   if (a.type === "queue_agent_message") {
     const convo = getConversationState(state, a.workspace_id, a.thread_id)
     const nextId = Math.max(0, ...convo.pending_prompts.map((p) => p.id)) + 1
+    const runner = a.runner ?? convo.agent_runner
+    const ampMode =
+      runner === "amp" ? (a.amp_mode ?? convo.amp_mode ?? state.app.agent.amp_mode ?? null) : null
     convo.pending_prompts.push({
       id: nextId,
       text: a.text,
       attachments: a.attachments,
-      run_config: { model_id: convo.agent_model_id, thinking_effort: convo.thinking_effort },
+      run_config: {
+        runner,
+        model_id: convo.agent_model_id,
+        thinking_effort: convo.thinking_effort,
+        ...(runner === "amp" ? { amp_mode: ampMode } : {}),
+      },
     })
     emitConversationChanged({ state, workspaceId: a.workspace_id, threadId: a.thread_id, onEvent: args.onEvent })
     return
@@ -727,14 +738,40 @@ export function mockDispatchAction(args: {
     const convo = getConversationState(state, a.workspace_id, a.thread_id)
     const idx = convo.pending_prompts.findIndex((p) => p.id === a.prompt_id)
     if (idx >= 0) {
+      const existing = convo.pending_prompts[idx]!
       convo.pending_prompts[idx] = {
         id: a.prompt_id,
         text: a.text,
         attachments: a.attachments,
-        run_config: { model_id: a.model_id, thinking_effort: a.thinking_effort },
+        run_config: {
+          runner: existing.run_config.runner,
+          model_id: a.model_id,
+          thinking_effort: a.thinking_effort,
+          ...(existing.run_config.runner === "amp" ? { amp_mode: existing.run_config.amp_mode ?? null } : {}),
+        },
       }
       emitConversationChanged({ state, workspaceId: a.workspace_id, threadId: a.thread_id, onEvent: args.onEvent })
     }
+    return
+  }
+
+  if (a.type === "chat_runner_changed") {
+    const convo = getConversationState(state, a.workspace_id, a.thread_id)
+    convo.agent_runner = a.runner
+    if (a.runner === "amp") {
+      convo.amp_mode = convo.amp_mode ?? state.app.agent.amp_mode ?? null
+    } else {
+      convo.amp_mode = null
+    }
+    emitConversationChanged({ state, workspaceId: a.workspace_id, threadId: a.thread_id, onEvent: args.onEvent })
+    return
+  }
+
+  if (a.type === "chat_amp_mode_changed") {
+    const convo = getConversationState(state, a.workspace_id, a.thread_id)
+    if (convo.agent_runner !== "amp") return
+    convo.amp_mode = a.amp_mode
+    emitConversationChanged({ state, workspaceId: a.workspace_id, threadId: a.thread_id, onEvent: args.onEvent })
     return
   }
 
@@ -977,17 +1014,20 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
       workspace_id: workspaceId,
       tabs: { open_tabs: [1], archived_tabs: [], active_tab: 1 },
       threads: [{ thread_id: 1, remote_thread_id: null, title: "Mock thread", updated_at_unix_seconds: Math.floor(Date.now() / 1000) }],
-    })
-    state.conversationsByWorkspaceThread.set(workspaceThreadKey(workspaceId, 1), {
-      rev: state.rev,
-      workspace_id: workspaceId,
-      thread_id: 1,
-      agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
-      thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
-      run_status: "idle",
-      run_started_at_unix_ms: null,
-      run_finished_at_unix_ms: null,
-      entries: [
+	    })
+	    const runner = state.app.agent.default_runner ?? "codex"
+	    state.conversationsByWorkspaceThread.set(workspaceThreadKey(workspaceId, 1), {
+	      rev: state.rev,
+	      workspace_id: workspaceId,
+	      thread_id: 1,
+	      agent_runner: runner,
+	      agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
+	      thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
+	      amp_mode: runner === "amp" ? (state.app.agent.amp_mode ?? null) : null,
+	      run_status: "idle",
+	      run_started_at_unix_ms: null,
+	      run_finished_at_unix_ms: null,
+	      entries: [
         { type: "user_message", text: "New project added (mock).", attachments: [] },
         { type: "agent_item", id: "agent_message_welcome", kind: "agent_message", payload: { text: "This project is created by mock mode." } },
       ],
@@ -998,8 +1038,8 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
       pending_prompts: [],
       queue_paused: false,
       remote_thread_id: null,
-      title: "Mock thread",
-    })
+	      title: "Mock thread",
+	    })
 
     return { projectId, workspaceId } as T
   }
@@ -1091,16 +1131,19 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
         ],
       })
 
-      state.conversationsByWorkspaceThread.set(workspaceThreadKey(workspaceId, threadId), {
-        rev: state.rev,
-        workspace_id: workspaceId,
-        thread_id: threadId,
-        agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
-        thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
-        run_status: "idle",
-        run_started_at_unix_ms: null,
-        run_finished_at_unix_ms: null,
-        entries: [{ type: "user_message", text: action.draft.prompt, attachments: [] }],
+	      const runner = state.app.agent.default_runner ?? "codex"
+	      state.conversationsByWorkspaceThread.set(workspaceThreadKey(workspaceId, threadId), {
+	        rev: state.rev,
+	        workspace_id: workspaceId,
+	        thread_id: threadId,
+	        agent_runner: runner,
+	        agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
+	        thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
+	        amp_mode: runner === "amp" ? (state.app.agent.amp_mode ?? null) : null,
+	        run_status: "idle",
+	        run_started_at_unix_ms: null,
+	        run_finished_at_unix_ms: null,
+	        entries: [{ type: "user_message", text: action.draft.prompt, attachments: [] }],
         entries_total: 1,
         entries_start: 0,
         entries_truncated: false,

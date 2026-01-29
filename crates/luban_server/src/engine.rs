@@ -10,7 +10,6 @@ use luban_domain::{
     ConversationEntry, Effect, OpenTarget, OperationStatus, ProjectWorkspaceService,
     PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
     PullRequestState as DomainPullRequestState, ThinkingEffort, WorkspaceId, WorkspaceThreadId,
-    default_agent_model_id, default_thinking_effort,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -1806,18 +1805,49 @@ impl Engine {
         let entries_end = entries_start.saturating_add(loaded.entries.len() as u64);
         let entries_truncated = entries_start > 0 || entries_end < entries_total;
 
+        let runner = loaded
+            .runner
+            .unwrap_or_else(|| self.state.agent_default_runner());
+        let model_id = loaded
+            .agent_model_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| self.state.agent_default_model_id())
+            .to_owned();
+        let thinking_effort = loaded
+            .thinking_effort
+            .unwrap_or_else(|| self.state.agent_default_thinking_effort());
+        let amp_mode = if runner == luban_domain::AgentRunnerKind::Amp {
+            loaded
+                .amp_mode
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| Some(self.state.agent_amp_mode().to_owned()))
+        } else {
+            None
+        };
+
         Ok(ConversationSnapshot {
             rev: self.rev,
             workspace_id,
             thread_id,
-            agent_model_id: default_agent_model_id().to_owned(),
-            thinking_effort: match default_thinking_effort() {
+            agent_runner: match runner {
+                luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
+                luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
+                luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+            },
+            agent_model_id: model_id.clone(),
+            thinking_effort: match thinking_effort {
                 ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
                 ThinkingEffort::Low => luban_api::ThinkingEffort::Low,
                 ThinkingEffort::Medium => luban_api::ThinkingEffort::Medium,
                 ThinkingEffort::High => luban_api::ThinkingEffort::High,
                 ThinkingEffort::XHigh => luban_api::ThinkingEffort::XHigh,
             },
+            amp_mode,
             run_status: luban_api::OperationStatus::Idle,
             run_started_at_unix_ms: loaded.run_started_at_unix_ms,
             run_finished_at_unix_ms: loaded.run_finished_at_unix_ms,
@@ -1834,6 +1864,15 @@ impl Engine {
                     text: prompt.text.clone(),
                     attachments: prompt.attachments.iter().map(map_attachment_ref).collect(),
                     run_config: luban_api::AgentRunConfigSnapshot {
+                        runner: match prompt.run_config.runner {
+                            luban_domain::AgentRunnerKind::Codex => {
+                                luban_api::AgentRunnerKind::Codex
+                            }
+                            luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
+                            luban_domain::AgentRunnerKind::Claude => {
+                                luban_api::AgentRunnerKind::Claude
+                            }
+                        },
                         model_id: prompt.run_config.model_id.clone(),
                         thinking_effort: match prompt.run_config.thinking_effort {
                             ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
@@ -1842,6 +1881,7 @@ impl Engine {
                             ThinkingEffort::High => luban_api::ThinkingEffort::High,
                             ThinkingEffort::XHigh => luban_api::ThinkingEffort::XHigh,
                         },
+                        amp_mode: prompt.run_config.amp_mode.clone(),
                     },
                 })
                 .collect(),
@@ -2520,8 +2560,10 @@ impl Engine {
             Effect::StoreConversationRunConfig {
                 workspace_id,
                 thread_id,
+                runner,
                 model_id,
                 thinking_effort,
+                amp_mode,
             } => {
                 let Some(scope) = workspace_scope(&self.state, workspace_id) else {
                     return Ok(VecDeque::new());
@@ -2533,8 +2575,10 @@ impl Engine {
                         scope.project_slug,
                         scope.workspace_name,
                         thread_local_id,
+                        runner,
                         model_id,
                         thinking_effort,
+                        amp_mode,
                     )
                 })
                 .await;
@@ -3564,6 +3608,11 @@ impl Engine {
             rev: self.rev,
             workspace_id,
             thread_id,
+            agent_runner: match conversation.agent_runner {
+                luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
+                luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
+                luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+            },
             agent_model_id: conversation.agent_model_id.clone(),
             thinking_effort: match conversation.thinking_effort {
                 ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
@@ -3571,6 +3620,14 @@ impl Engine {
                 ThinkingEffort::Medium => luban_api::ThinkingEffort::Medium,
                 ThinkingEffort::High => luban_api::ThinkingEffort::High,
                 ThinkingEffort::XHigh => luban_api::ThinkingEffort::XHigh,
+            },
+            amp_mode: if conversation.agent_runner == luban_domain::AgentRunnerKind::Amp {
+                conversation
+                    .amp_mode
+                    .clone()
+                    .or_else(|| Some(self.state.agent_amp_mode().to_owned()))
+            } else {
+                None
             },
             run_status: match conversation.run_status {
                 OperationStatus::Idle => luban_api::OperationStatus::Idle,
@@ -3606,6 +3663,15 @@ impl Engine {
                     text: prompt.text.clone(),
                     attachments: prompt.attachments.iter().map(map_attachment_ref).collect(),
                     run_config: luban_api::AgentRunConfigSnapshot {
+                        runner: match prompt.run_config.runner {
+                            luban_domain::AgentRunnerKind::Codex => {
+                                luban_api::AgentRunnerKind::Codex
+                            }
+                            luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
+                            luban_domain::AgentRunnerKind::Claude => {
+                                luban_api::AgentRunnerKind::Claude
+                            }
+                        },
                         model_id: prompt.run_config.model_id.clone(),
                         thinking_effort: match prompt.run_config.thinking_effort {
                             ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
@@ -3614,6 +3680,7 @@ impl Engine {
                             ThinkingEffort::High => luban_api::ThinkingEffort::High,
                             ThinkingEffort::XHigh => luban_api::ThinkingEffort::XHigh,
                         },
+                        amp_mode: prompt.run_config.amp_mode.clone(),
                     },
                 })
                 .collect(),
@@ -3891,6 +3958,16 @@ fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspac
             thread_id,
         } => Some((*workspace_id, *thread_id)),
         Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
+        Action::ChatRunnerChanged {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
+        Action::ChatAmpModeChanged {
             workspace_id,
             thread_id,
             ..
@@ -4291,6 +4368,24 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
             workspace_id: WorkspaceId::from_u64(workspace_id.0),
             thread_id: WorkspaceThreadId::from_u64(thread_id.0),
             model_id,
+        }),
+        luban_api::ClientAction::ChatRunnerChanged {
+            workspace_id,
+            thread_id,
+            runner,
+        } => Some(Action::ChatRunnerChanged {
+            workspace_id: WorkspaceId::from_u64(workspace_id.0),
+            thread_id: WorkspaceThreadId::from_u64(thread_id.0),
+            runner: map_api_agent_runner_kind(runner),
+        }),
+        luban_api::ClientAction::ChatAmpModeChanged {
+            workspace_id,
+            thread_id,
+            amp_mode,
+        } => Some(Action::ChatAmpModeChanged {
+            workspace_id: WorkspaceId::from_u64(workspace_id.0),
+            thread_id: WorkspaceThreadId::from_u64(thread_id.0),
+            amp_mode,
         }),
         luban_api::ClientAction::ThinkingEffortChanged {
             workspace_id,
@@ -6729,5 +6824,76 @@ mod tests {
         assert!(request.amp_mode.is_none());
         assert_eq!(request.model.as_deref(), Some("not-a-real-model"));
         assert_eq!(request.model_reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[tokio::test]
+    async fn agent_turn_uses_pinned_chat_runner_and_amp_mode() {
+        let (sender, receiver) = std::sync::mpsc::channel::<luban_domain::RunAgentTurnRequest>();
+        let services: Arc<dyn ProjectWorkspaceService> =
+            Arc::new(CaptureRunAgentTurnServices { sender });
+
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-pinned-run-config-test"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-pinned-run-config-test"),
+        });
+
+        let workspace_id = state.projects[0].workspaces[0].id;
+        let thread_id = WorkspaceThreadId::from_u64(1);
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services,
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+        };
+
+        engine
+            .process_action_queue(Action::ChatRunnerChanged {
+                workspace_id,
+                thread_id,
+                runner: luban_domain::AgentRunnerKind::Amp,
+            })
+            .await;
+
+        engine
+            .process_action_queue(Action::ChatAmpModeChanged {
+                workspace_id,
+                thread_id,
+                amp_mode: "rush".to_owned(),
+            })
+            .await;
+
+        engine
+            .process_action_queue(Action::SendAgentMessage {
+                workspace_id,
+                thread_id,
+                text: "hello".to_owned(),
+                attachments: Vec::new(),
+                runner: None,
+                amp_mode: None,
+            })
+            .await;
+
+        let request = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("expected agent turn request");
+
+        assert_eq!(request.runner, luban_domain::AgentRunnerKind::Amp);
+        assert_eq!(request.amp_mode.as_deref(), Some("rush"));
     }
 }

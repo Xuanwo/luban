@@ -139,6 +139,16 @@ pub enum Action {
         thread_id: WorkspaceThreadId,
         model_id: String,
     },
+    ChatRunnerChanged {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        runner: AgentRunnerKind,
+    },
+    ChatAmpModeChanged {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        amp_mode: String,
+    },
     ThinkingEffortChanged {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,

@@ -566,6 +566,7 @@ impl AppState {
                 thread_id,
                 snapshot,
             } => {
+                let default_amp_mode = self.agent_amp_mode.clone();
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 let snapshot_model_id = snapshot
                     .agent_model_id
@@ -574,6 +575,8 @@ impl AppState {
                     .filter(|v| !v.is_empty())
                     .map(ToOwned::to_owned);
                 let snapshot_thinking_effort = snapshot.thinking_effort;
+                let snapshot_runner = snapshot.runner;
+                let snapshot_amp_mode = snapshot.amp_mode.clone();
 
                 if conversation.thread_id.is_none() {
                     conversation.thread_id = snapshot.thread_id.clone();
@@ -582,6 +585,22 @@ impl AppState {
                 let should_apply_snapshot_run_config = !conversation.run_config_overridden_by_user
                     || conversation.agent_model_id.trim().is_empty();
                 if should_apply_snapshot_run_config {
+                    if let Some(runner) = snapshot_runner {
+                        conversation.agent_runner = runner;
+                    }
+                    if let Some(mode) = snapshot_amp_mode
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        conversation.amp_mode = Some(mode.to_owned());
+                    }
+                    if conversation.agent_runner == crate::AgentRunnerKind::Amp
+                        && conversation.amp_mode.is_none()
+                    {
+                        conversation.amp_mode = Some(default_amp_mode);
+                    }
+
                     if let Some(model_id) = snapshot_model_id {
                         let effort =
                             snapshot_thinking_effort.unwrap_or(conversation.thinking_effort);
@@ -646,13 +665,22 @@ impl AppState {
                 runner,
                 amp_mode,
             } => {
+                let default_amp_mode = self.agent_amp_mode.clone();
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 tabs.activate(thread_id);
 
-                let runner = runner.unwrap_or(self.agent_default_runner);
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 conversation.draft.clear();
                 conversation.draft_attachments.clear();
+
+                let runner = runner.unwrap_or(conversation.agent_runner);
+                let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                    amp_mode
+                        .or(conversation.amp_mode.clone())
+                        .or(Some(default_amp_mode))
+                } else {
+                    None
+                };
 
                 let should_auto_title =
                     conversation.entries.is_empty() && conversation.title.starts_with("Thread ");
@@ -674,11 +702,7 @@ impl AppState {
                     runner,
                     model_id: conversation.agent_model_id.clone(),
                     thinking_effort: conversation.thinking_effort,
-                    amp_mode: if runner == crate::AgentRunnerKind::Amp {
-                        amp_mode
-                    } else {
-                        None
-                    },
+                    amp_mode,
                 };
 
                 if conversation.run_status == OperationStatus::Running {
@@ -750,13 +774,22 @@ impl AppState {
                 runner,
                 amp_mode,
             } => {
+                let default_amp_mode = self.agent_amp_mode.clone();
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 tabs.activate(thread_id);
 
-                let runner = runner.unwrap_or(self.agent_default_runner);
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 conversation.draft.clear();
                 conversation.draft_attachments.clear();
+
+                let runner = runner.unwrap_or(conversation.agent_runner);
+                let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                    amp_mode
+                        .or(conversation.amp_mode.clone())
+                        .or(Some(default_amp_mode))
+                } else {
+                    None
+                };
 
                 if conversation.entries.is_empty() && conversation.title.starts_with("Thread ") {
                     let title = derive_thread_title(&text);
@@ -769,11 +802,7 @@ impl AppState {
                     runner,
                     model_id: conversation.agent_model_id.clone(),
                     thinking_effort: conversation.thinking_effort,
-                    amp_mode: if runner == crate::AgentRunnerKind::Amp {
-                        amp_mode
-                    } else {
-                        None
-                    },
+                    amp_mode,
                 };
 
                 let id = conversation.next_queued_prompt_id;
@@ -792,18 +821,27 @@ impl AppState {
                 thread_id,
                 model_id,
             } => {
-                let thinking_effort = {
+                let default_amp_mode = self.agent_amp_mode.clone();
+                let (thinking_effort, runner, amp_mode) = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     let normalized =
                         normalize_thinking_effort(&model_id, conversation.thinking_effort);
                     conversation.run_config_overridden_by_user = true;
                     conversation.agent_model_id = model_id.clone();
                     conversation.thinking_effort = normalized;
-                    normalized
+                    let runner = conversation.agent_runner;
+                    let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                        conversation.amp_mode.clone().or(Some(default_amp_mode))
+                    } else {
+                        None
+                    };
+                    (normalized, runner, amp_mode)
                 };
                 self.workspace_thread_run_config_overrides.insert(
                     (workspace_id, thread_id),
                     crate::PersistedWorkspaceThreadRunConfigOverride {
+                        runner: Some(runner.as_str().to_owned()),
+                        amp_mode: amp_mode.clone(),
                         model_id: model_id.clone(),
                         thinking_effort: thinking_effort.as_str().to_owned(),
                     },
@@ -812,8 +850,98 @@ impl AppState {
                     Effect::StoreConversationRunConfig {
                         workspace_id,
                         thread_id,
+                        runner,
                         model_id,
                         thinking_effort,
+                        amp_mode,
+                    },
+                    Effect::SaveAppState,
+                ]
+            }
+            Action::ChatRunnerChanged {
+                workspace_id,
+                thread_id,
+                runner,
+            } => {
+                let default_amp_mode = self.agent_amp_mode.clone();
+                let (model_id, thinking_effort, amp_mode) = {
+                    let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.agent_runner = runner;
+                    if runner == crate::AgentRunnerKind::Amp && conversation.amp_mode.is_none() {
+                        conversation.amp_mode = Some(default_amp_mode);
+                    }
+                    let model_id = conversation.agent_model_id.clone();
+                    let thinking_effort = conversation.thinking_effort;
+                    let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                        conversation.amp_mode.clone()
+                    } else {
+                        None
+                    };
+                    (model_id, thinking_effort, amp_mode)
+                };
+                self.workspace_thread_run_config_overrides.insert(
+                    (workspace_id, thread_id),
+                    crate::PersistedWorkspaceThreadRunConfigOverride {
+                        runner: Some(runner.as_str().to_owned()),
+                        amp_mode: amp_mode.clone(),
+                        model_id: model_id.clone(),
+                        thinking_effort: thinking_effort.as_str().to_owned(),
+                    },
+                );
+                vec![
+                    Effect::StoreConversationRunConfig {
+                        workspace_id,
+                        thread_id,
+                        runner,
+                        model_id,
+                        thinking_effort,
+                        amp_mode,
+                    },
+                    Effect::SaveAppState,
+                ]
+            }
+            Action::ChatAmpModeChanged {
+                workspace_id,
+                thread_id,
+                amp_mode,
+            } => {
+                let trimmed = amp_mode.trim();
+                if trimmed.is_empty() {
+                    return Vec::new();
+                }
+
+                let (runner, model_id, thinking_effort, amp_mode) = {
+                    let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.amp_mode = Some(trimmed.to_owned());
+                    let runner = conversation.agent_runner;
+                    let model_id = conversation.agent_model_id.clone();
+                    let thinking_effort = conversation.thinking_effort;
+                    let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                        conversation.amp_mode.clone()
+                    } else {
+                        None
+                    };
+                    (runner, model_id, thinking_effort, amp_mode)
+                };
+                self.workspace_thread_run_config_overrides.insert(
+                    (workspace_id, thread_id),
+                    crate::PersistedWorkspaceThreadRunConfigOverride {
+                        runner: Some(runner.as_str().to_owned()),
+                        amp_mode: amp_mode.clone(),
+                        model_id: model_id.clone(),
+                        thinking_effort: thinking_effort.as_str().to_owned(),
+                    },
+                );
+                vec![
+                    Effect::StoreConversationRunConfig {
+                        workspace_id,
+                        thread_id,
+                        runner,
+                        model_id,
+                        thinking_effort,
+                        amp_mode,
                     },
                     Effect::SaveAppState,
                 ]
@@ -823,18 +951,28 @@ impl AppState {
                 thread_id,
                 thinking_effort,
             } => {
-                let model_id = {
+                let default_amp_mode = self.agent_amp_mode.clone();
+                let (runner, model_id, thinking_effort, amp_mode) = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     if !thinking_effort_supported(&conversation.agent_model_id, thinking_effort) {
                         return Vec::new();
                     }
                     conversation.run_config_overridden_by_user = true;
                     conversation.thinking_effort = thinking_effort;
-                    conversation.agent_model_id.clone()
+                    let runner = conversation.agent_runner;
+                    let model_id = conversation.agent_model_id.clone();
+                    let amp_mode = if runner == crate::AgentRunnerKind::Amp {
+                        conversation.amp_mode.clone().or(Some(default_amp_mode))
+                    } else {
+                        None
+                    };
+                    (runner, model_id, thinking_effort, amp_mode)
                 };
                 self.workspace_thread_run_config_overrides.insert(
                     (workspace_id, thread_id),
                     crate::PersistedWorkspaceThreadRunConfigOverride {
+                        runner: Some(runner.as_str().to_owned()),
+                        amp_mode: amp_mode.clone(),
                         model_id: model_id.clone(),
                         thinking_effort: thinking_effort.as_str().to_owned(),
                     },
@@ -843,8 +981,10 @@ impl AppState {
                     Effect::StoreConversationRunConfig {
                         workspace_id,
                         thread_id,
+                        runner,
                         model_id,
                         thinking_effort,
+                        amp_mode,
                     },
                     Effect::SaveAppState,
                 ]
@@ -1315,18 +1455,49 @@ impl AppState {
                                 meta.thread_id,
                                 default_model_id.clone(),
                                 default_thinking_effort,
+                                self.agent_default_runner,
                             );
-                            if let Some(run_config) = run_config_override.clone()
-                                && let Some(parsed_effort) =
+                            if let Some(run_config) = run_config_override.clone() {
+                                let mut overridden = false;
+                                if let Some(runner) = run_config
+                                    .runner
+                                    .as_deref()
+                                    .and_then(crate::agent_settings::parse_agent_runner_kind)
+                                {
+                                    conversation.run_config_overridden_by_user = true;
+                                    conversation.agent_runner = runner;
+                                    overridden = true;
+                                }
+                                if let Some(mode) = run_config
+                                    .amp_mode
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty())
+                                {
+                                    conversation.run_config_overridden_by_user = true;
+                                    conversation.amp_mode = Some(mode.to_owned());
+                                    overridden = true;
+                                }
+                                if let Some(parsed_effort) =
                                     crate::agent_settings::parse_thinking_effort(
                                         &run_config.thinking_effort,
                                     )
-                            {
-                                let normalized =
-                                    normalize_thinking_effort(&run_config.model_id, parsed_effort);
-                                conversation.run_config_overridden_by_user = true;
-                                conversation.agent_model_id = run_config.model_id;
-                                conversation.thinking_effort = normalized;
+                                {
+                                    let normalized = normalize_thinking_effort(
+                                        &run_config.model_id,
+                                        parsed_effort,
+                                    );
+                                    conversation.run_config_overridden_by_user = true;
+                                    conversation.agent_model_id = run_config.model_id;
+                                    conversation.thinking_effort = normalized;
+                                    overridden = true;
+                                }
+                                if overridden
+                                    && conversation.agent_runner == crate::AgentRunnerKind::Amp
+                                    && conversation.amp_mode.is_none()
+                                {
+                                    conversation.amp_mode = Some(self.agent_amp_mode.clone());
+                                }
                             }
                             conversation
                         });
@@ -1799,6 +1970,7 @@ impl AppState {
                     initial,
                     default_model_id,
                     default_thinking_effort,
+                    self.agent_default_runner,
                 );
                 self.conversations
                     .insert((workspace_id, initial), conversation);
@@ -1828,15 +2000,45 @@ impl AppState {
                     thread_id,
                     default_model_id.clone(),
                     default_thinking_effort,
+                    self.agent_default_runner,
                 );
-                if let Some(run_config) = run_config_override
-                    && let Some(parsed_effort) =
+                if let Some(run_config) = run_config_override {
+                    let mut overridden = false;
+                    if let Some(runner) = run_config
+                        .runner
+                        .as_deref()
+                        .and_then(crate::agent_settings::parse_agent_runner_kind)
+                    {
+                        conversation.run_config_overridden_by_user = true;
+                        conversation.agent_runner = runner;
+                        overridden = true;
+                    }
+                    if let Some(mode) = run_config
+                        .amp_mode
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        conversation.run_config_overridden_by_user = true;
+                        conversation.amp_mode = Some(mode.to_owned());
+                        overridden = true;
+                    }
+                    if let Some(parsed_effort) =
                         crate::agent_settings::parse_thinking_effort(&run_config.thinking_effort)
-                {
-                    let normalized = normalize_thinking_effort(&run_config.model_id, parsed_effort);
-                    conversation.run_config_overridden_by_user = true;
-                    conversation.agent_model_id = run_config.model_id;
-                    conversation.thinking_effort = normalized;
+                    {
+                        let normalized =
+                            normalize_thinking_effort(&run_config.model_id, parsed_effort);
+                        conversation.run_config_overridden_by_user = true;
+                        conversation.agent_model_id = run_config.model_id;
+                        conversation.thinking_effort = normalized;
+                        overridden = true;
+                    }
+                    if overridden
+                        && conversation.agent_runner == crate::AgentRunnerKind::Amp
+                        && conversation.amp_mode.is_none()
+                    {
+                        conversation.amp_mode = Some(self.agent_amp_mode.clone());
+                    }
                 }
                 entry.insert(conversation)
             }
@@ -1847,6 +2049,7 @@ impl AppState {
         thread_id: WorkspaceThreadId,
         model_id: String,
         thinking_effort: ThinkingEffort,
+        agent_runner: crate::AgentRunnerKind,
     ) -> WorkspaceConversation {
         WorkspaceConversation {
             local_thread_id: thread_id,
@@ -1855,8 +2058,10 @@ impl AppState {
             draft: String::new(),
             draft_attachments: Vec::new(),
             run_config_overridden_by_user: false,
+            agent_runner,
             agent_model_id: model_id,
             thinking_effort,
+            amp_mode: None,
             entries: Vec::new(),
             entries_total: 0,
             entries_start: 0,
@@ -1883,6 +2088,7 @@ impl AppState {
             thread_id,
             self.agent_default_model_id.clone(),
             self.agent_default_thinking_effort,
+            self.agent_default_runner,
         )
     }
 
@@ -2409,8 +2615,10 @@ mod tests {
 
         let snapshot = ConversationSnapshot {
             thread_id: None,
+            runner: None,
             agent_model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
+            amp_mode: None,
             entries: Vec::new(),
             entries_total: 0,
             entries_start: 0,
@@ -2641,8 +2849,10 @@ mod tests {
 
         let snapshot = ConversationSnapshot {
             thread_id: None,
+            runner: None,
             agent_model_id: None,
             thinking_effort: None,
+            amp_mode: None,
             entries: (1..=8)
                 .map(|idx| ConversationEntry::UserMessage {
                     text: format!("Message {idx}"),
@@ -3742,8 +3952,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -3902,8 +4114,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: Some("thread_0".to_owned()),
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -3955,8 +4169,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
                     attachments: Vec::new(),
@@ -3993,8 +4209,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: vec![ConversationEntry::UserMessage {
                     text: "Hello".to_owned(),
                     attachments: Vec::new(),
@@ -4013,8 +4231,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: vec![
                     ConversationEntry::UserMessage {
                         text: "Hello".to_owned(),
@@ -4052,8 +4272,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -4092,8 +4314,10 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                runner: None,
                 agent_model_id: Some("gpt-5.2-codex".to_owned()),
                 thinking_effort: Some(ThinkingEffort::High),
+                amp_mode: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,

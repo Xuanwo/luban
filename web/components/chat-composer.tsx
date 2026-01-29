@@ -4,7 +4,7 @@ import type React from "react"
 
 import { Send } from "lucide-react"
 
-import { AgentSelector, type AgentRunnerOverride, type AmpModeOverride } from "@/components/shared/agent-selector"
+import { AgentSelector, type AmpMode } from "@/components/shared/agent-selector"
 import { MessageEditor, type ComposerAttachment } from "@/components/shared/message-editor"
 import type { AgentRunnerKind, AttachmentRef, CodexCustomPromptSnapshot, ThinkingEffort } from "@/lib/luban-api"
 
@@ -30,10 +30,10 @@ export function ChatComposer({
   onChangeModelId,
   onChangeThinkingEffort,
   defaultRunner,
-  runnerOverride,
-  ampModeOverride,
-  onChangeRunnerOverride,
-  onChangeAmpModeOverride,
+  runner,
+  ampMode,
+  onChangeRunner,
+  onChangeAmpMode,
   onSend,
   canSend,
   codexEnabled = true,
@@ -60,10 +60,10 @@ export function ChatComposer({
   onChangeModelId: (modelId: string) => void
   onChangeThinkingEffort: (effort: ThinkingEffort) => void
   defaultRunner: AgentRunnerKind | null
-  runnerOverride: AgentRunnerOverride
-  ampModeOverride: AmpModeOverride
-  onChangeRunnerOverride: (runner: AgentRunnerOverride) => void
-  onChangeAmpModeOverride: (mode: AmpModeOverride) => void
+  runner: AgentRunnerKind | null | undefined
+  ampMode: string | null | undefined
+  onChangeRunner: (runner: AgentRunnerKind) => void
+  onChangeAmpMode: (mode: AmpMode) => void
   onSend: () => void
   canSend: boolean
   codexEnabled?: boolean
@@ -100,10 +100,10 @@ export function ChatComposer({
               onChangeModelId={onChangeModelId}
               onChangeThinkingEffort={onChangeThinkingEffort}
               defaultRunner={defaultRunner}
-              runnerOverride={runnerOverride}
-              ampModeOverride={ampModeOverride}
-              onChangeRunnerOverride={onChangeRunnerOverride}
-              onChangeAmpModeOverride={onChangeAmpModeOverride}
+              runner={runner}
+              ampMode={ampMode}
+              onChangeRunner={onChangeRunner}
+              onChangeAmpMode={onChangeAmpMode}
               codexEnabled={codexEnabled}
               ampEnabled={ampEnabled}
             />

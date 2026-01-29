@@ -121,9 +121,13 @@ pub(crate) fn entries_is_suffix(suffix: &[ConversationEntry], full: &[Conversati
 pub struct ConversationSnapshot {
     pub thread_id: Option<String>,
     #[serde(default)]
+    pub runner: Option<crate::AgentRunnerKind>,
+    #[serde(default)]
     pub agent_model_id: Option<String>,
     #[serde(default)]
     pub thinking_effort: Option<crate::ThinkingEffort>,
+    #[serde(default)]
+    pub amp_mode: Option<String>,
     pub entries: Vec<ConversationEntry>,
     #[serde(default)]
     pub entries_total: u64,
@@ -155,8 +159,10 @@ pub struct WorkspaceConversation {
     pub draft: String,
     pub draft_attachments: Vec<DraftAttachment>,
     pub run_config_overridden_by_user: bool,
+    pub agent_runner: crate::AgentRunnerKind,
     pub agent_model_id: String,
     pub thinking_effort: ThinkingEffort,
+    pub amp_mode: Option<String>,
     pub entries: Vec<ConversationEntry>,
     pub entries_total: u64,
     pub entries_start: u64,

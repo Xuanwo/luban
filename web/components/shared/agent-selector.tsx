@@ -212,9 +212,7 @@ export function CodexAgentSelector({
   )
 }
 
-export type AgentRunnerOverride = AgentRunnerKind | null
-
-export type AmpModeOverride = "smart" | "rush" | null
+export type AmpMode = "smart" | "rush" | null
 
 export function AgentSelector({
   testId = "agent-selector",
@@ -230,10 +228,10 @@ export function AgentSelector({
   className,
   defaultRunner,
   defaultAmpMode,
-  runnerOverride,
-  onChangeRunnerOverride,
-  ampModeOverride,
-  onChangeAmpModeOverride,
+  runner,
+  onChangeRunner,
+  ampMode,
+  onChangeAmpMode,
   codexEnabled = true,
   ampEnabled = true,
 }: {
@@ -250,23 +248,25 @@ export function AgentSelector({
   className?: string
   defaultRunner: AgentRunnerKind | null | undefined
   defaultAmpMode: string | null | undefined
-  runnerOverride: AgentRunnerOverride
-  onChangeRunnerOverride: (runner: AgentRunnerOverride) => void
-  ampModeOverride: AmpModeOverride
-  onChangeAmpModeOverride: (mode: AmpModeOverride) => void
+  runner: AgentRunnerKind | null | undefined
+  onChangeRunner: (runner: AgentRunnerKind) => void
+  ampMode: string | null | undefined
+  onChangeAmpMode: (mode: AmpMode) => void
   codexEnabled?: boolean
   ampEnabled?: boolean
 }) {
   const resolvedDefaultRunner: AgentRunnerKind = defaultRunner ?? "codex"
-  const resolvedRunner: AgentRunnerKind = runnerOverride ?? resolvedDefaultRunner
+  const resolvedRunner: AgentRunnerKind = runner ?? resolvedDefaultRunner
   const isAmp = resolvedRunner === "amp"
   const isClaude = resolvedRunner === "claude"
-  const resolvedDefaultAmpMode: AmpModeOverride = defaultAmpMode === "rush" ? "rush" : defaultAmpMode === "smart" ? "smart" : null
+  const resolvedDefaultAmpMode: AmpMode =
+    defaultAmpMode === "rush" ? "rush" : defaultAmpMode === "smart" ? "smart" : null
+  const resolvedAmpMode: AmpMode = ampMode === "rush" ? "rush" : ampMode === "smart" ? "smart" : null
 
   const displayName = useMemo(() => {
     if (isAmp) {
-      if (ampModeOverride === "rush") return "Amp · Rush"
-      if (ampModeOverride === "smart") return "Amp · Smart"
+      if (resolvedAmpMode === "rush") return "Amp · Rush"
+      if (resolvedAmpMode === "smart") return "Amp · Smart"
       return "Amp"
     }
     if (isClaude) return "Claude"
@@ -274,7 +274,7 @@ export function AgentSelector({
     const effort = thinkingEffortLabel(thinkingEffort)
     if (model === "Model" || effort === "Effort") return "Codex"
     return `${model} · ${effort}`
-  }, [ampModeOverride, isAmp, isClaude, modelId, thinkingEffort])
+  }, [isAmp, isClaude, modelId, resolvedAmpMode, thinkingEffort])
 
   const icon = isAmp ? (
     <Zap className="w-3.5 h-3.5" />
@@ -309,16 +309,7 @@ export function AgentSelector({
   const selectRunner = (next: AgentRunnerKind) => {
     setTempRunner(next)
     setTempModelId(null)
-
-    if (next === resolvedDefaultRunner) {
-      onChangeRunnerOverride(null)
-    } else {
-      onChangeRunnerOverride(next)
-    }
-
-    if (next !== "amp") {
-      onChangeAmpModeOverride(null)
-    }
+    onChangeRunner(next)
   }
 
   const claudeEnabled = true
@@ -538,18 +529,14 @@ export function AgentSelector({
                     { id: "smart" as const, label: "Smart" },
                     { id: "rush" as const, label: "Rush" },
                   ] as const).map((opt) => {
-                    const selected = opt.id === (ampModeOverride ?? resolvedDefaultAmpMode)
+                    const selected = opt.id === (resolvedAmpMode ?? resolvedDefaultAmpMode)
                     const isDefault = resolvedDefaultAmpMode != null && opt.id === resolvedDefaultAmpMode
                     return (
                       <div key={opt.id} className="relative group">
                         <button
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
-                            if (resolvedDefaultAmpMode != null && opt.id === resolvedDefaultAmpMode) {
-                              onChangeAmpModeOverride(null)
-                            } else {
-                              onChangeAmpModeOverride(opt.id)
-                            }
+                            onChangeAmpMode(opt.id)
                             close()
                           }}
                           className={cn(

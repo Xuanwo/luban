@@ -47,6 +47,11 @@ Legend:
 | C-WS-EVENTS | `WS /api/events` | `crates/luban_server/src/server.rs:ws_events` | `web/lib/luban-transport.ts:useLubanTransport` | Draft | ✅ | ✅ | ✅ |
 | C-WS-PTY | `WS /api/pty/{workspace_id}/{thread_id}` | `crates/luban_server/src/server.rs:ws_pty` | `web/components/pty-terminal.tsx` | Draft | ✅ | ✅ | ✅ |
 
+## Notes
+
+- `C-WS-EVENTS`: `ClientAction::ChatRunnerChanged` and `ClientAction::ChatAmpModeChanged` are implemented in mock + provider and enforced in CI via `crates/luban_server/src/engine.rs` unit tests (see `agent_turn_uses_pinned_chat_runner_and_amp_mode`).
+- `C-HTTP-CONVERSATION`: `ConversationSnapshot` now includes `agent_runner` and `amp_mode` (mock + provider implemented; CI not yet enforced).
+
 ## Feature contracts
 
 - `docs/contracts/features/c-auth-single-user.md`

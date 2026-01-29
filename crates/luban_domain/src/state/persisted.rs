@@ -3,6 +3,10 @@ use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PersistedWorkspaceThreadRunConfigOverride {
+    #[serde(default)]
+    pub runner: Option<String>,
+    #[serde(default)]
+    pub amp_mode: Option<String>,
     pub model_id: String,
     pub thinking_effort: String,
 }

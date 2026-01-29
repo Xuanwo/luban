@@ -1,5 +1,6 @@
 import type {
   AgentItem,
+  AgentRunnerKind,
   AmpConfigEntrySnapshot,
   AppSnapshot,
   AttachmentKind,
@@ -548,23 +549,27 @@ export function defaultMockFixtures(): MockFixtures {
     },
   }
 
-  const conversationBase = (args: {
-    workspaceId: WorkspaceId
-    threadId: WorkspaceThreadId
-    title: string
-    entries: ConversationEntry[]
-    agentModelId?: string
-    thinkingEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
-  }): ConversationSnapshot => ({
-    rev: 1,
-    workspace_id: args.workspaceId,
-    thread_id: args.threadId,
-    agent_model_id: args.agentModelId ?? "gpt-5",
-    thinking_effort: args.thinkingEffort ?? "medium",
-    run_status: op("idle"),
-    run_started_at_unix_ms: null,
-    run_finished_at_unix_ms: null,
-    entries: args.entries,
+	  const conversationBase = (args: {
+	    workspaceId: WorkspaceId
+	    threadId: WorkspaceThreadId
+	    title: string
+	    entries: ConversationEntry[]
+	    agentRunner?: AgentRunnerKind
+	    agentModelId?: string
+	    thinkingEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+	    ampMode?: string | null
+	  }): ConversationSnapshot => ({
+	    rev: 1,
+	    workspace_id: args.workspaceId,
+	    thread_id: args.threadId,
+	    agent_runner: args.agentRunner ?? "codex",
+	    agent_model_id: args.agentModelId ?? "gpt-5",
+	    thinking_effort: args.thinkingEffort ?? "medium",
+	    amp_mode: args.ampMode ?? null,
+	    run_status: op("idle"),
+	    run_started_at_unix_ms: null,
+	    run_finished_at_unix_ms: null,
+	    entries: args.entries,
     entries_total: args.entries.length,
     entries_start: 0,
     entries_truncated: false,
@@ -653,24 +658,34 @@ export function defaultMockFixtures(): MockFixtures {
         { id: "loop_error_1", kind: "error", payload: { message: "Retrying after a temporary failure." } },
       ],
     },
-    [key(workspace1, thread2)]: {
-      ...conversationBase({
-        workspaceId: workspace1,
-        threadId: thread2,
-        title: "Running: with queue",
-        entries: [
-          { type: "user_message", text: "Queue a few prompts while running.", attachments: [] },
-          { type: "agent_item", id: "queue_running_msg_1", kind: "agent_message", payload: { text: "Processing current prompt; others are queued." } },
-        ],
-      }),
-      run_status: op("running"),
-      run_started_at_unix_ms: unixMs(-12_000),
-      run_finished_at_unix_ms: null,
-      pending_prompts: [
-        { id: 1, text: "First queued prompt.", attachments: [], run_config: { model_id: "gpt-5", thinking_effort: "medium" } },
-        { id: 2, text: "Second queued prompt.", attachments: [fileA], run_config: { model_id: "gpt-5", thinking_effort: "medium" } },
-      ],
-    },
+	    [key(workspace1, thread2)]: {
+	      ...conversationBase({
+	        workspaceId: workspace1,
+	        threadId: thread2,
+	        title: "Running: with queue",
+	        entries: [
+	          { type: "user_message", text: "Queue a few prompts while running.", attachments: [] },
+	          { type: "agent_item", id: "queue_running_msg_1", kind: "agent_message", payload: { text: "Processing current prompt; others are queued." } },
+	        ],
+	      }),
+	      run_status: op("running"),
+	      run_started_at_unix_ms: unixMs(-12_000),
+	      run_finished_at_unix_ms: null,
+	      pending_prompts: [
+	        {
+	          id: 1,
+	          text: "First queued prompt.",
+	          attachments: [],
+	          run_config: { runner: "codex", model_id: "gpt-5", thinking_effort: "medium" },
+	        },
+	        {
+	          id: 2,
+	          text: "Second queued prompt.",
+	          attachments: [fileA],
+	          run_config: { runner: "codex", model_id: "gpt-5", thinking_effort: "medium" },
+	        },
+	      ],
+	    },
     [key(workspace1, thread3)]: {
       ...conversationBase({
         workspaceId: workspace1,

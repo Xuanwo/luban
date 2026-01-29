@@ -305,8 +305,11 @@ pub struct ConversationSnapshot {
     pub rev: u64,
     pub workspace_id: WorkspaceId,
     pub thread_id: WorkspaceThreadId,
+    pub agent_runner: AgentRunnerKind,
     pub agent_model_id: String,
     pub thinking_effort: ThinkingEffort,
+    #[serde(default)]
+    pub amp_mode: Option<String>,
     pub run_status: OperationStatus,
     #[serde(default)]
     pub run_started_at_unix_ms: Option<u64>,
@@ -339,8 +342,11 @@ pub struct QueuedPromptSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentRunConfigSnapshot {
+    pub runner: AgentRunnerKind,
     pub model_id: String,
     pub thinking_effort: ThinkingEffort,
+    #[serde(default)]
+    pub amp_mode: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -682,6 +688,16 @@ pub enum ClientAction {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         model_id: String,
+    },
+    ChatRunnerChanged {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        runner: AgentRunnerKind,
+    },
+    ChatAmpModeChanged {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        amp_mode: String,
     },
     ThinkingEffortChanged {
         workspace_id: WorkspaceId,

@@ -43,7 +43,6 @@ import { EscCancelHint } from "@/components/esc-cancel-hint"
 import { ChatComposer } from "@/components/chat-composer"
 import { WorkspaceChatHeader } from "@/components/workspace-chat-header"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
-import type { AgentRunnerOverride, AmpModeOverride } from "@/components/shared/agent-selector"
 
 type ComposerAttachment = EditorComposerAttachment
 
@@ -97,11 +96,11 @@ export function ChatPanel({
     loadConversationBefore,
     setChatModel,
     setThinkingEffort,
+    setChatRunner,
+    setChatAmpMode,
   } = useLuban()
 
   const [draftText, setDraftText] = useState("")
-  const [runnerOverride, setRunnerOverride] = useState<AgentRunnerOverride>(null)
-  const [ampModeOverride, setAmpModeOverride] = useState<AmpModeOverride>(null)
   const [followTail, setFollowTail] = useState(true)
   const [freezeConversationRender, setFreezeConversationRender] = useState(false)
   const programmaticScrollRef = useRef(false)
@@ -197,8 +196,6 @@ export function ChatPanel({
     setAgentOverrideStatus(null)
     setAgentEditorValue("")
     setAgentEditorAttachments([])
-    setRunnerOverride(null)
-    setAmpModeOverride(null)
     setAgentRunNowMs(Date.now())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkspaceId, activeThreadId])
@@ -657,30 +654,23 @@ export function ChatPanel({
     void restoreThreadTab(id)
   }
 
-  const handleSend = () => {
-    if (activeWorkspaceId == null || activeThreadId == null) return
-    const text = draftText.trim()
-    const ready = attachments
+	  const handleSend = () => {
+	    if (activeWorkspaceId == null || activeThreadId == null) return
+	    const text = draftText.trim()
+	    const ready = attachments
       .filter((a) => a.status === "ready" && a.attachment != null)
       .map((a) => a.attachment!)
-    const hasUploading = attachments.some((a) => a.status === "uploading")
-    if (hasUploading) return
-    if (text.length === 0 && ready.length === 0) return
-
-    const defaultRunner = app?.agent?.default_runner ?? "codex"
-    const effectiveRunner = runnerOverride ?? defaultRunner
-    const runConfig = {
-      runner: runnerOverride,
-      amp_mode: effectiveRunner === "amp" && ampModeOverride != null ? ampModeOverride : null,
-    }
-    if (queuePaused && queuedPrompts.length > 0) {
-      queueAgentMessage(text, ready, runConfig)
-    } else {
-      sendAgentMessage(text, ready, runConfig)
-    }
-    setDraftText("")
-    setAttachments([])
-    setFollowTail(true)
+	    const hasUploading = attachments.some((a) => a.status === "uploading")
+	    if (hasUploading) return
+	    if (text.length === 0 && ready.length === 0) return
+	    if (queuePaused && queuedPrompts.length > 0) {
+	      queueAgentMessage(text, ready)
+	    } else {
+	      sendAgentMessage(text, ready)
+	    }
+	    setDraftText("")
+	    setAttachments([])
+	    setFollowTail(true)
     localStorage.setItem(followTailKey(activeWorkspaceId, activeThreadId), "true")
     scheduleScrollToBottom()
   }
@@ -752,28 +742,21 @@ export function ChatPanel({
     clearAgentEditor()
   }
 
-  const handleAgentSubmit = () => {
-    if (activeWorkspaceId == null || activeThreadId == null) return
-    const text = agentEditorValue.trim()
-    const hasUploading = agentEditorAttachments.some((a) => a.status === "uploading")
-    if (hasUploading) return
-    const ready = agentEditorAttachments
-      .filter((a) => a.status === "ready" && a.attachment != null)
-      .map((a) => a.attachment!)
-    if (text.length === 0 && ready.length === 0) return
+	  const handleAgentSubmit = () => {
+	    if (activeWorkspaceId == null || activeThreadId == null) return
+	    const text = agentEditorValue.trim()
+	    const hasUploading = agentEditorAttachments.some((a) => a.status === "uploading")
+	    if (hasUploading) return
+	    const ready = agentEditorAttachments
+	      .filter((a) => a.status === "ready" && a.attachment != null)
+	      .map((a) => a.attachment!)
+	    if (text.length === 0 && ready.length === 0) return
 
-    const defaultRunner = app?.agent?.default_runner ?? "codex"
-    const effectiveRunner = runnerOverride ?? defaultRunner
-    const runConfig = {
-      runner: runnerOverride,
-      amp_mode: effectiveRunner === "amp" && ampModeOverride != null ? ampModeOverride : null,
-    }
-
-    if (agentOverrideStatus === "cancelling") {
-      cancelAndSendAgentMessage(text, ready, runConfig)
-    } else if (agentOverrideStatus === "resuming") {
-      sendAgentMessage(text, ready, runConfig)
-    }
+	    if (agentOverrideStatus === "cancelling") {
+	      cancelAndSendAgentMessage(text, ready)
+	    } else if (agentOverrideStatus === "resuming") {
+	      sendAgentMessage(text, ready)
+	    }
 
     setAgentOverrideStatus(null)
     clearAgentEditor()
@@ -805,9 +788,9 @@ export function ChatPanel({
     setQueuedDraftThinkingEffort(null)
   }
 
-  const handleSaveQueuedEdit = () => {
-    if (activeWorkspaceId == null || activeThreadId == null) return
-    if (editingQueuedPromptId == null) return
+	  const handleSaveQueuedEdit = () => {
+	    if (activeWorkspaceId == null || activeThreadId == null) return
+	    if (editingQueuedPromptId == null) return
 
     const text = queuedDraftText.trim()
     const hasUploading = queuedDraftAttachments.some((a) => a.status === "uploading")
@@ -816,20 +799,29 @@ export function ChatPanel({
       .filter((a) => a.status === "ready" && a.attachment != null)
       .map((a) => a.attachment!)
 
-    if (text.length === 0 && ready.length === 0) {
-      handleCancelQueuedEdit()
-      return
-    }
+	    if (text.length === 0 && ready.length === 0) {
+	      handleCancelQueuedEdit()
+	      return
+	    }
 
-    const modelId = queuedDraftModelId ?? conversation?.agent_model_id ?? ""
-    const effort = queuedDraftThinkingEffort ?? conversation?.thinking_effort ?? "minimal"
-    updateQueuedPrompt(activeWorkspaceId, activeThreadId, editingQueuedPromptId, {
-      text,
-      attachments: ready,
-      runConfig: { model_id: modelId, thinking_effort: effort },
-    })
-    handleCancelQueuedEdit()
-  }
+	    const original = queuedPrompts.find((p) => p.id === editingQueuedPromptId) ?? null
+	    const modelId = queuedDraftModelId ?? conversation?.agent_model_id ?? ""
+	    const effort = queuedDraftThinkingEffort ?? conversation?.thinking_effort ?? "minimal"
+	    const runner = original?.run_config?.runner ?? conversation?.agent_runner ?? app?.agent.default_runner ?? "codex"
+	    const ampMode =
+	      runner === "amp" ? (original?.run_config?.amp_mode ?? conversation?.amp_mode ?? app?.agent.amp_mode ?? null) : null
+	    updateQueuedPrompt(activeWorkspaceId, activeThreadId, editingQueuedPromptId, {
+	      text,
+	      attachments: ready,
+	      runConfig: {
+	        runner,
+	        model_id: modelId,
+	        thinking_effort: effort as ThinkingEffort,
+	        ...(runner === "amp" ? { amp_mode: ampMode } : {}),
+	      },
+	    })
+	    handleCancelQueuedEdit()
+	  }
 
   const handleCancelQueuedPrompt = (promptId: number) => {
     if (activeWorkspaceId == null || activeThreadId == null) return
@@ -1301,10 +1293,10 @@ export function ChatPanel({
                 </div>
               ) : null}
 
-              {editingQueuedPromptId == null && (
-                <ChatComposer
-                  value={draftText}
-                  onChange={(value) => {
+	              {editingQueuedPromptId == null && (
+	                <ChatComposer
+	                  value={draftText}
+	                  onChange={(value) => {
                     setDraftText(value)
                   }}
                   attachments={attachments}
@@ -1336,19 +1328,26 @@ export function ChatPanel({
                   onCommand={handleCommand}
                   disabled={activeWorkspaceId == null || activeThreadId == null}
                   agentModelId={conversation?.agent_model_id}
-                  agentThinkingEffort={conversation?.thinking_effort}
-                  defaultModelId={app?.agent.default_model_id ?? null}
-                  defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
-                  defaultAmpMode={app?.agent.amp_mode ?? null}
-                  defaultRunner={app?.agent.default_runner ?? null}
-                  runnerOverride={runnerOverride}
-                  ampModeOverride={ampModeOverride}
-                  onChangeRunnerOverride={setRunnerOverride}
-                  onChangeAmpModeOverride={setAmpModeOverride}
-                  onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
-                  onChangeModelId={(modelId) => {
-                    if (activeWorkspaceId == null || activeThreadId == null) return
-                    setChatModel(activeWorkspaceId, activeThreadId, modelId)
+	                  agentThinkingEffort={conversation?.thinking_effort}
+	                  defaultModelId={app?.agent.default_model_id ?? null}
+	                  defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
+	                  defaultAmpMode={app?.agent.amp_mode ?? null}
+	                  defaultRunner={app?.agent.default_runner ?? null}
+	                  runner={conversation?.agent_runner ?? null}
+	                  ampMode={conversation?.amp_mode ?? null}
+	                  onChangeRunner={(runner) => {
+	                    if (activeWorkspaceId == null || activeThreadId == null) return
+	                    setChatRunner(activeWorkspaceId, activeThreadId, runner)
+	                  }}
+	                  onChangeAmpMode={(mode) => {
+	                    if (activeWorkspaceId == null || activeThreadId == null) return
+	                    if (mode == null) return
+	                    setChatAmpMode(activeWorkspaceId, activeThreadId, mode)
+	                  }}
+	                  onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
+	                  onChangeModelId={(modelId) => {
+	                    if (activeWorkspaceId == null || activeThreadId == null) return
+	                    setChatModel(activeWorkspaceId, activeThreadId, modelId)
                   }}
                   onChangeThinkingEffort={(effort) => {
                     if (activeWorkspaceId == null || activeThreadId == null) return

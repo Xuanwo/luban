@@ -103,6 +103,8 @@ update this section.
 - `ArchiveWorkspace`
 - `EnsureMainWorkspace`
 - `ChatModelChanged`
+- `ChatRunnerChanged`
+- `ChatAmpModeChanged`
 - `ThinkingEffortChanged`
 - `SendAgentMessage`
 - `CancelAndSendAgentMessage`

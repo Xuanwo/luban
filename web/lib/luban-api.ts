@@ -186,8 +186,10 @@ export type ConversationSnapshot = {
   rev: number
   workspace_id: WorkspaceId
   thread_id: WorkspaceThreadId
+  agent_runner: AgentRunnerKind
   agent_model_id: string
   thinking_effort: ThinkingEffort
+  amp_mode?: string | null
   run_status: OperationStatus
   run_started_at_unix_ms?: number | null
   run_finished_at_unix_ms?: number | null
@@ -203,8 +205,10 @@ export type ConversationSnapshot = {
 }
 
 export type AgentRunConfigSnapshot = {
+  runner: AgentRunnerKind
   model_id: string
   thinking_effort: ThinkingEffort
+  amp_mode?: string | null
 }
 
 export type QueuedPromptSnapshot = {
@@ -360,6 +364,8 @@ export type ClientAction =
   | { type: "open_workspace_pull_request_failed_action"; workspace_id: WorkspaceId }
   | { type: "archive_workspace"; workspace_id: WorkspaceId }
   | { type: "chat_model_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; model_id: string }
+  | { type: "chat_runner_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; runner: AgentRunnerKind }
+  | { type: "chat_amp_mode_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; amp_mode: string }
   | {
       type: "thinking_effort_changed"
       workspace_id: WorkspaceId

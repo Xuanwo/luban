@@ -117,8 +117,10 @@ impl GitWorkspaceService {
         if !events_path.exists() {
             return Ok(Some(ConversationSnapshot {
                 thread_id: meta.thread_id,
+                runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
+                amp_mode: None,
                 entries: Vec::new(),
                 entries_total: 0,
                 entries_start: 0,
@@ -160,8 +162,10 @@ impl GitWorkspaceService {
         let entries_total = entries.len() as u64;
         Ok(Some(ConversationSnapshot {
             thread_id: meta.thread_id,
+            runner: None,
             agent_model_id: None,
             thinking_effort: None,
+            amp_mode: None,
             entries,
             entries_total,
             entries_start: 0,

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 14;
+const LATEST_SCHEMA_VERSION: u32 = 15;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -136,6 +136,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0014_conversation_run_config.sql"
         )),
     ),
+    (
+        15,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0015_conversation_agent_runner.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -247,8 +254,10 @@ enum DbCommand {
         project_slug: String,
         workspace_name: String,
         thread_local_id: u64,
+        runner: luban_domain::AgentRunnerKind,
         model_id: String,
         thinking_effort: ThinkingEffort,
+        amp_mode: Option<String>,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
     InsertContextItem {
@@ -471,8 +480,10 @@ impl SqliteStore {
                                 project_slug,
                                 workspace_name,
                                 thread_local_id,
+                                runner,
                                 model_id,
                                 thinking_effort,
+                                amp_mode,
                                 reply,
                             },
                         ) => {
@@ -480,8 +491,10 @@ impl SqliteStore {
                                 &project_slug,
                                 &workspace_name,
                                 thread_local_id,
+                                runner,
                                 &model_id,
                                 thinking_effort,
+                                amp_mode.as_deref(),
                             ));
                         }
                         (
@@ -785,13 +798,16 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_conversation_run_config(
         &self,
         project_slug: String,
         workspace_name: String,
         thread_local_id: u64,
+        runner: luban_domain::AgentRunnerKind,
         model_id: String,
         thinking_effort: ThinkingEffort,
+        amp_mode: Option<String>,
     ) -> anyhow::Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
@@ -799,8 +815,10 @@ impl SqliteStore {
                 project_slug,
                 workspace_name,
                 thread_local_id,
+                runner,
                 model_id,
                 thinking_effort,
+                amp_mode,
                 reply: reply_tx,
             })
             .context("sqlite worker is not running")?;
@@ -2509,12 +2527,14 @@ impl SqliteDatabase {
             queue_paused,
             run_started_at_unix_ms,
             run_finished_at_unix_ms,
+            agent_runner,
             agent_model_id,
             thinking_effort,
+            amp_mode,
         ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_model_id, thinking_effort FROM conversations
+                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
@@ -2525,25 +2545,43 @@ impl SqliteDatabase {
                         row.get::<_, Option<i64>>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
                     ))
                 },
             )
             .optional()
             .context("failed to load conversation meta")?
-            .map(|(thread_id, queue_paused, started, finished, model_id, thinking_effort)| {
+            .map(
+                |(
+                    thread_id,
+                    queue_paused,
+                    started,
+                    finished,
+                    agent_runner,
+                    model_id,
+                    thinking_effort,
+                    amp_mode,
+                )| {
                 let thinking_effort = thinking_effort
                     .as_deref()
                     .and_then(luban_domain::parse_thinking_effort);
+                let agent_runner = agent_runner
+                    .as_deref()
+                    .and_then(luban_domain::parse_agent_runner_kind);
                 (
                     thread_id,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
+                    agent_runner,
                     model_id,
                     thinking_effort,
+                    amp_mode,
                 )
-            })
-            .unwrap_or((None, false, None, None, None, None));
+            },
+            )
+            .unwrap_or((None, false, None, None, None, None, None, None));
 
         let mut stmt = self.conn.prepare(
             "SELECT payload_json
@@ -2586,8 +2624,10 @@ impl SqliteDatabase {
         let entries_total = entries.len() as u64;
         Ok(ConversationSnapshot {
             thread_id,
+            runner: agent_runner,
             agent_model_id,
             thinking_effort,
+            amp_mode,
             entries,
             entries_total,
             entries_start: 0,
@@ -2613,12 +2653,14 @@ impl SqliteDatabase {
             queue_paused,
             run_started_at_unix_ms,
             run_finished_at_unix_ms,
+            agent_runner,
             agent_model_id,
             thinking_effort,
+            amp_mode,
         ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_model_id, thinking_effort FROM conversations
+                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
@@ -2629,25 +2671,43 @@ impl SqliteDatabase {
                         row.get::<_, Option<i64>>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
                     ))
                 },
             )
             .optional()
             .context("failed to load conversation meta")?
-            .map(|(thread_id, queue_paused, started, finished, model_id, thinking_effort)| {
+            .map(
+                |(
+                    thread_id,
+                    queue_paused,
+                    started,
+                    finished,
+                    agent_runner,
+                    model_id,
+                    thinking_effort,
+                    amp_mode,
+                )| {
                 let thinking_effort = thinking_effort
                     .as_deref()
                     .and_then(luban_domain::parse_thinking_effort);
+                let agent_runner = agent_runner
+                    .as_deref()
+                    .and_then(luban_domain::parse_agent_runner_kind);
                 (
                     thread_id,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
+                    agent_runner,
                     model_id,
                     thinking_effort,
+                    amp_mode,
                 )
-            })
-            .unwrap_or((None, false, None, None, None, None));
+            },
+            )
+            .unwrap_or((None, false, None, None, None, None, None, None));
 
         let total_entries: u64 = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_entries
@@ -2717,8 +2777,10 @@ impl SqliteDatabase {
 
         Ok(ConversationSnapshot {
             thread_id,
+            runner: agent_runner,
             agent_model_id,
             thinking_effort,
+            amp_mode,
             entries,
             entries_total: total_entries,
             entries_start: start as u64,
@@ -2803,28 +2865,35 @@ impl SqliteDatabase {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn save_conversation_run_config(
         &mut self,
         project_slug: &str,
         workspace_name: &str,
         thread_local_id: u64,
+        runner: luban_domain::AgentRunnerKind,
         model_id: &str,
         thinking_effort: ThinkingEffort,
+        amp_mode: Option<&str>,
     ) -> anyhow::Result<()> {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
         let now = now_unix_seconds();
         self.conn.execute(
             "UPDATE conversations
-             SET agent_model_id = ?4,
-                 thinking_effort = ?5,
-                 updated_at = ?6
+             SET agent_runner = ?4,
+                 agent_model_id = ?5,
+                 thinking_effort = ?6,
+                 amp_mode = ?7,
+                 updated_at = ?8
              WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
             params![
                 project_slug,
                 workspace_name,
                 thread_local_id as i64,
+                runner.as_str(),
                 model_id,
                 thinking_effort.as_str(),
+                amp_mode,
                 now
             ],
         )?;
@@ -3237,6 +3306,8 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::from([(
                 (10, 2),
                 luban_domain::PersistedWorkspaceThreadRunConfigOverride {
+                    runner: Some("amp".to_owned()),
+                    amp_mode: Some("rush".to_owned()),
                     model_id: "gpt-5.2-codex".to_owned(),
                     thinking_effort: "high".to_owned(),
                 },
@@ -3429,16 +3500,28 @@ mod tests {
 
         db.ensure_conversation("p", "w", 1).unwrap();
 
-        db.save_conversation_run_config("p", "w", 1, "gpt-5.2-codex", ThinkingEffort::High)
-            .unwrap();
+        db.save_conversation_run_config(
+            "p",
+            "w",
+            1,
+            luban_domain::AgentRunnerKind::Codex,
+            "gpt-5.2-codex",
+            ThinkingEffort::High,
+            None,
+        )
+        .unwrap();
 
         let snapshot = db.load_conversation("p", "w", 1).unwrap();
+        assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
         assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
+        assert_eq!(snapshot.amp_mode, None);
 
         let snapshot = db.load_conversation_page("p", "w", 1, None, 10).unwrap();
+        assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
         assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
+        assert_eq!(snapshot.amp_mode, None);
     }
 
     #[test]

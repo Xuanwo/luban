@@ -746,6 +746,33 @@ export function createLubanActions(args: {
     })
   }
 
+  function setChatRunner(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, runner: AgentRunnerKind) {
+    store.setConversation((prev) => {
+      if (!prev) return prev
+      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      const nextAmpMode =
+        runner === "amp" ? (prev.amp_mode ?? store.state.app?.agent.amp_mode ?? null) : null
+      return {
+        ...prev,
+        agent_runner: runner,
+        amp_mode: nextAmpMode,
+      }
+    })
+    args.sendAction({ type: "chat_runner_changed", workspace_id: workspaceId, thread_id: threadId, runner })
+  }
+
+  function setChatAmpMode(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, ampMode: string) {
+    const trimmed = ampMode.trim()
+    if (!trimmed) return
+    store.setConversation((prev) => {
+      if (!prev) return prev
+      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.agent_runner !== "amp") return prev
+      return { ...prev, amp_mode: trimmed }
+    })
+    args.sendAction({ type: "chat_amp_mode_changed", workspace_id: workspaceId, thread_id: threadId, amp_mode: trimmed })
+  }
+
   function setAppearanceTheme(theme: AppearanceTheme) {
     args.sendAction({ type: "appearance_theme_changed", theme })
   }
@@ -850,6 +877,8 @@ export function createLubanActions(args: {
     aiRenameWorkspaceBranch,
     setChatModel,
     setThinkingEffort,
+    setChatRunner,
+    setChatAmpMode,
     setAppearanceTheme,
     setAppearanceFonts,
     setGlobalZoom,

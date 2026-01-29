@@ -117,6 +117,8 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
                 (
                     (workspace_id.0, thread_id.0),
                     PersistedWorkspaceThreadRunConfigOverride {
+                        runner: run_config.runner.clone(),
+                        amp_mode: run_config.amp_mode.clone(),
                         model_id: run_config.model_id.clone(),
                         thinking_effort: run_config.thinking_effort.clone(),
                     },
