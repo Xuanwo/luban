@@ -1009,7 +1009,7 @@ test("command output renders ANSI colors without showing control sequences", asy
     )
     .toBeTruthy()
 
-  const activitySummary = page.getByRole("button", { name: /Completed \\d+ steps|Cancelled after \\d+ steps/ }).first()
+  const activitySummary = page.getByRole("button", { name: /Completed \d+ steps|Cancelled after \d+ steps/ }).first()
   await expect(activitySummary).toBeVisible({ timeout: 20_000 })
   await activitySummary.click()
 
@@ -1023,7 +1023,6 @@ test("command output renders ANSI colors without showing control sequences", asy
   await expect(output).not.toContainText("[[1A")
   await expect(output).not.toContainText("[2m")
 
-  const greenSpan = output.locator('span[style*="--terminal-ansi-green"]').first()
-  await expect(greenSpan).toBeVisible({ timeout: 20_000 })
-  await expect(greenSpan).toContainText("2 passed")
+  const greenPassed = output.locator('span[style*="--terminal-ansi-green"]').filter({ hasText: "2 passed" }).first()
+  await expect(greenPassed).toBeVisible({ timeout: 20_000 })
 })
