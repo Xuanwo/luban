@@ -22,16 +22,11 @@ See `docs/cs-web-architecture.md`.
 
 See `docs/cs-web-architecture.md`.
 
-## UI design parity
+## UI workflow (mock-first + contracts)
 
-- `design/` is a read-only git submodule pointing to `Xuanwo/luban-design`.
-- The web UI under `web/` must remain structurally and visually consistent with `design/`.
-- When there is a mismatch, the design project wins; this repository ports the changes.
-
-See `docs/ui-design-parity.md`.
-
-Note: A migration is in progress to remove `design/` and adopt contract-driven integration. See
-`docs/migrations/2026-01-22-web-mock-mode-contracts.md`.
+- `web/` is the UI source of truth.
+- UI iteration should happen in `web/` mock mode (`NEXT_PUBLIC_LUBAN_MODE=mock`).
+- Web/server integration is governed by consumer-driven contracts under `docs/contracts/`.
 
 ## UI state: durable vs device-local
 

@@ -6,13 +6,12 @@ This directory documents the current, implemented architecture of Luban.
 
 - `docs/cs-web-quickstart.md`: how to run the localhost server + web UI.
 - `docs/cs-web-architecture.md`: system architecture and API contract.
-- `docs/ui-design-parity.md`: legacy design parity requirements (current implementation during migration).
+- `docs/contracts/README.md`: consumer-driven contracts and progress tracking.
 
 ## In progress
 
 - `docs/migrations/2026-01-22-web-mock-mode-contracts.md`: migration to `web` mock mode as the only
   high-fidelity UI plus contract-driven integration.
-- `docs/contracts/README.md`: consumer-driven contracts and progress tracking.
 
 ## Deep dives
 

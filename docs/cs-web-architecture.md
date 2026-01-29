@@ -162,12 +162,10 @@ The server remains authoritative for:
 
 The server serves the built web assets so the user can open a browser and visit `http://localhost:<port>/`.
 
-**UI parity requirement (legacy):** the web UI currently follows the same frontend framework and
-design system as `Xuanwo/luban-design`. See `docs/ui-design-parity.md`.
+The UI source of truth is `web/`. For fast interaction iteration, use the UI in mock mode
+(`NEXT_PUBLIC_LUBAN_MODE=mock`) without starting the Rust server.
 
-Note: a migration is in progress to remove `design/` and adopt `web/` mock mode as the only
-high-fidelity UI environment, enforced by consumer-driven contracts. See
-`docs/migrations/2026-01-22-web-mock-mode-contracts.md`.
+Web/server integration is governed by consumer-driven contracts under `docs/contracts/`.
 
 The browser UI is built via Next.js static export (`output: "export"`), and the Rust server serves the output folder.
 

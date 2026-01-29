@@ -8,9 +8,8 @@ This document describes the current state and the conventions to follow when add
 ## Source Of Truth
 
 - Web UI tokens: `web/app/globals.css`
-- Design mock tokens: `design/app/globals.css`
 
-Both define:
+It defines:
 
 - `--base00`..`--base0f`: Base16 palette for the active theme scope
 - Semantic tokens: `--background`, `--foreground`, `--primary`, `--status-*`, `--terminal-*`, ...

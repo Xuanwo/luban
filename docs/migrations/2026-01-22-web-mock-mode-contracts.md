@@ -1,11 +1,11 @@
 # Web Mock Mode as the Only High-Fidelity UI + Contract-Driven Integration
 
 Date: 2026-01-22
-Status: Accepted (In Progress)
+Status: Accepted (UI Migration Completed; Contract Verification In Progress)
 
 ## Context
 
-The repository currently maintains:
+The repository previously maintained:
 
 - `design/`: a high-fidelity UI prototype (frontend-only)
 - `web/`: the production browser UI (integrated with the local Rust server)
@@ -64,8 +64,8 @@ We use consumer-driven contracts (CDC):
 - [x] Implement a mock terminal (local-only) for `/api/pty/*` UX iteration.
 - [ ] Add server-side contract tests that validate responses against fixtures and invariants.
 - [ ] Add a small set of real-mode E2E tests that run against `just web run`.
-- [ ] Remove `design/` from the repository and update documentation accordingly.
-- [ ] Remove "design parity" constraints from `docs/decisions.md` once the migration is complete.
+- [x] Remove `design/` from the repository and update documentation accordingly.
+- [x] Remove "design parity" constraints from `docs/decisions.md` once the migration is complete.
 
 ## Risks and mitigations
 

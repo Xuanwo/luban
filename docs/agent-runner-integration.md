@@ -9,7 +9,7 @@ Use it as a checklist and a set of guardrails when adding the next runner.
 - Keep the domain layer deterministic and testable.
 - Normalize runner-specific streaming into a stable, runner-agnostic event model (`AgentThreadEvent`).
 - Share one attachment model across runners, including images.
-- Keep UI behavior consistent via design parity (`design/` is the source of truth).
+- Keep UI behavior consistent via `web/` mock mode and explicit contracts.
 
 Non-goals:
 
@@ -38,10 +38,10 @@ Reducers should treat incoming events as already normalized.
 - Attachments are passed as structured fields (not embedded as inline tokens).
 - All runners share the same attachment kinds and storage semantics.
 
-### 4) Design-first workflow for UI
+### 4) Mock-first + contract-first workflow for UI
 
-- Update `design/` first.
-- Port the design diff into `web/`.
+- Iterate interaction and UI behavior in `web/` mock mode first.
+- Update consumer-driven contracts under `docs/contracts/` together with the UI behavior change.
 - Keep the picker interaction model stable across runners.
 
 ## Integration Checklist (End-to-End)
@@ -175,4 +175,3 @@ Manual (minimal):
   - clear override when the user selects that default
 
 See `docs/amp-support.md` for current implementation details.
-
