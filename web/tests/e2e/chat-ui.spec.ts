@@ -356,6 +356,67 @@ test("enter commits IME composition without sending", async ({ page }) => {
   await expect(page.getByTestId("user-message-bubble").filter({ hasText: marker }).first()).toBeVisible({ timeout: 20_000 })
 })
 
+test("switching IME does not commit spaced ASCII into chat input", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const runId = Math.random().toString(16).slice(2)
+  const prefix = `你好-${runId}-`
+
+  const input = page.getByTestId("chat-input")
+  await input.fill(prefix)
+
+  await input.evaluate(
+    (el, { prefix }) => {
+      const textarea = el as HTMLTextAreaElement
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
+      const setValue = (value: string) => {
+        if (setter) setter.call(textarea, value)
+        else textarea.value = value
+      }
+
+      textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "hello" }))
+      setValue(`${prefix}hello`)
+      textarea.dispatchEvent(new Event("input", { bubbles: true }))
+
+      textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "hello" }))
+      setValue(`${prefix}h e l l o`)
+      textarea.dispatchEvent(new Event("input", { bubbles: true }))
+    },
+    { prefix },
+  )
+
+  await expect(input).toHaveValue(`${prefix}hello`)
+})
+
+test("IME committed ASCII whitespace is collapsed in chat input", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const runId = Math.random().toString(16).slice(2)
+  const prefix = `e2e-ime-space-${runId}-`
+
+  const input = page.getByTestId("chat-input")
+  await input.fill(prefix)
+
+  await input.evaluate(
+    (el, { prefix }) => {
+      const textarea = el as HTMLTextAreaElement
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
+      const setValue = (value: string) => {
+        if (setter) setter.call(textarea, value)
+        else textarea.value = value
+      }
+
+      textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "da t" }))
+      textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "da t" }))
+      setValue(`${prefix}da t`)
+      textarea.dispatchEvent(new Event("input", { bubbles: true }))
+    },
+    { prefix },
+  )
+
+  await expect(input).toHaveValue(`${prefix}dat`)
+})
+
 test("scroll-to-bottom button appears only when away from bottom", async ({ page }) => {
   await ensureWorkspace(page)
 

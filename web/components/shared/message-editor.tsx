@@ -29,6 +29,38 @@ export type ComposerAttachment = {
   attachment?: AttachmentRef
 }
 
+function normalizeImeSpacedAsciiAtCursor(text: string, cursorPos: number | null) {
+  // Some IMEs can (briefly) commit ASCII composition text with spaces between each character
+  // when switching input sources (e.g. "h e l l o"). Collapse the *active* run near the cursor.
+  if (cursorPos == null) return { text, cursorPos }
+
+  const spacedAsciiRun = /(?:[0-9A-Za-z@._/:\-]\s+){2,}[0-9A-Za-z@._/:\-]/g
+  let match: RegExpExecArray | null
+  while ((match = spacedAsciiRun.exec(text)) != null) {
+    const run = match[0]
+    const start = match.index
+    const end = start + run.length
+    if (cursorPos < start || cursorPos > end) continue
+
+    const collapsed = run.replace(/\s+/g, "")
+    const next = text.slice(0, start) + collapsed + text.slice(end)
+    const cursorInRun = text.slice(start, cursorPos)
+    const nextCursorPos = start + cursorInRun.replace(/\s+/g, "").length
+    return { text: next, cursorPos: nextCursorPos }
+  }
+
+  return { text, cursorPos }
+}
+
+function normalizeImeCompositionCommit(data: string) {
+  // Some IMEs may commit ASCII composition text with extra whitespace when switching input sources
+  // (e.g. "h e l l o" or "da t"). For chat input, treat this as a single token.
+  if (!/\s/.test(data)) return data
+  if (!/^[\x00-\x7F]+$/.test(data)) return data
+  if (!/[0-9A-Za-z]/.test(data)) return data
+  return data.replace(/\s+/g, "")
+}
+
 export function MessageEditor({
   value,
   onChange,
@@ -92,6 +124,8 @@ export function MessageEditor({
 
   const isComposingRef = useRef(false)
   const ignoreEnterUntilRef = useRef<number>(0)
+  const compositionSequenceRef = useRef(0)
+  const compositionStartRef = useRef<{ sequence: number; value: string; start: number; end: number } | null>(null)
 
   const [showCommandMenu, setShowCommandMenu] = useState(false)
   const [commandQuery, setCommandQuery] = useState("")
@@ -657,12 +691,68 @@ export function MessageEditor({
           onChange={(e) => handleTextChange(e.target.value, e.target.selectionStart)}
           onCompositionStart={() => {
             isComposingRef.current = true
+            const el = textareaRef.current
+            const sequence = ++compositionSequenceRef.current
+            if (!el) return
+            compositionStartRef.current = {
+              sequence,
+              value: el.value,
+              start: el.selectionStart,
+              end: el.selectionEnd,
+            }
           }}
-          onCompositionEnd={() => {
+          onCompositionEnd={(e) => {
             isComposingRef.current = false
             const now =
               typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now()
             ignoreEnterUntilRef.current = now + 50
+            const sequence = compositionSequenceRef.current
+            const committed = normalizeImeCompositionCommit(e.data ?? "")
+            window.setTimeout(() => {
+              if (compositionSequenceRef.current !== sequence) return
+              const el = textareaRef.current
+              if (!el) return
+
+              const snapshot = compositionStartRef.current
+              if (!snapshot || snapshot.sequence !== sequence) return
+              const raw = el.value
+
+              // If the native value did not change during composition (e.g. synthetic events in tests),
+              // do not attempt to "re-commit" CompositionEvent.data.
+              if (raw === snapshot.value) {
+                compositionStartRef.current = null
+                return
+              }
+
+              if (!committed) {
+                const normalized = normalizeImeSpacedAsciiAtCursor(raw, el.selectionStart)
+                if (normalized.text !== raw) {
+                  handleTextChange(normalized.text, normalized.cursorPos)
+                  if (normalized.cursorPos != null) {
+                    window.setTimeout(() => {
+                      const el = textareaRef.current
+                      if (!el) return
+                      el.setSelectionRange(normalized.cursorPos, normalized.cursorPos)
+                    }, 0)
+                  }
+                }
+                compositionStartRef.current = null
+                return
+              }
+
+              const next = snapshot.value.slice(0, snapshot.start) + committed + snapshot.value.slice(snapshot.end)
+              if (next !== raw) {
+                const cursorPos = snapshot.start + committed.length
+                handleTextChange(next, cursorPos)
+                window.setTimeout(() => {
+                  const el = textareaRef.current
+                  if (!el) return
+                  el.setSelectionRange(cursorPos, cursorPos)
+                }, 0)
+              }
+
+              compositionStartRef.current = null
+            }, 0)
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
