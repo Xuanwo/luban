@@ -297,6 +297,22 @@ export function ChatPanel({
     return items.slice(-50)
   }, [conversation?.entries])
 
+  const chatEmptyStateText = useMemo(() => {
+    if (activeWorkspaceId == null) return "Select a workspace to start."
+    if (activeThreadId == null) {
+      if (threads.length === 0) return "Loading…"
+      return "Select a thread to load conversation."
+    }
+    if (
+      conversation == null ||
+      conversation.workspace_id !== activeWorkspaceId ||
+      conversation.thread_id !== activeThreadId
+    ) {
+      return "Loading conversation…"
+    }
+    return "No messages yet."
+  }, [activeThreadId, activeWorkspaceId, conversation, threads])
+
   const requestOlderConversationPage = useCallback(async () => {
     if (activeWorkspaceId == null || activeThreadId == null) return
     const snap = conversation
@@ -1191,9 +1207,7 @@ export function ChatPanel({
                   renderAgentRunningCard={renderAgentRunningCardForMessage}
                   emptyState={
                     <div className="text-sm text-muted-foreground">
-                      {activeWorkspaceId == null
-                        ? "Select a workspace to start."
-                        : "Select a thread to load conversation."}
+                      {chatEmptyStateText}
                     </div>
                   }
                 />
@@ -1205,12 +1219,10 @@ export function ChatPanel({
                   renderAgentRunningCard={renderAgentRunningCardForMessage}
                   emptyState={
                     <div className="text-sm text-muted-foreground">
-                      {activeWorkspaceId == null
-                        ? "Select a workspace to start."
-                      : "Select a thread to load conversation."}
-                  </div>
-                }
-              />
+                      {chatEmptyStateText}
+                    </div>
+                  }
+                />
               )}
 
               {queuedPrompts.length > 0 && (

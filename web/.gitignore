@@ -1,5 +1,6 @@
 .next/
-out/
+out/*
+!out/.gitkeep
 dist/
 next-env.d.ts
 

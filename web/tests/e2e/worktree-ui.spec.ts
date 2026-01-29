@@ -78,6 +78,20 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
   })
   await expect(page.getByText(tokenA).first()).toBeVisible({ timeout: 60_000 })
 
+  await page.evaluate(() => {
+    ;(window as any).__e2eSawChatEmptyState = false
+    const root = document.querySelector('[data-testid="chat-scroll-container"]') ?? document.body
+    const observer = new MutationObserver(() => {
+      const text = root.textContent ?? ""
+      if (text.includes("Select a thread to load conversation.")) {
+        ;(window as any).__e2eSawChatEmptyState = true
+      }
+    })
+    observer.observe(root, { subtree: true, childList: true, characterData: true })
+    ;(window as any).__e2eChatObserver?.disconnect?.()
+    ;(window as any).__e2eChatObserver = observer
+  })
+
   await sendWsAction(page, { type: "create_workspace", project_id: projectDir })
   await expect
     .poll(async () => await branchEntries.count(), { timeout: 90_000 })
@@ -106,20 +120,6 @@ test("switching between worktrees keeps chat content stable (no flash)", async (
     attachments: [],
   })
   await expect(page.getByText(tokenB).first()).toBeVisible({ timeout: 60_000 })
-
-  await page.evaluate(() => {
-    ;(window as any).__e2eSawChatEmptyState = false
-    const root = document.querySelector('[data-testid="chat-scroll-container"]') ?? document.body
-    const observer = new MutationObserver(() => {
-      const text = root.textContent ?? ""
-      if (text.includes("Select a thread to load conversation.")) {
-        ;(window as any).__e2eSawChatEmptyState = true
-      }
-    })
-    observer.observe(root, { subtree: true, childList: true, characterData: true })
-    ;(window as any).__e2eChatObserver?.disconnect?.()
-    ;(window as any).__e2eChatObserver = observer
-  })
 
   await projectContainer.getByTestId("worktree-branch-name").filter({ hasText: nameA }).first().click()
   await expect(page.getByText(tokenA).first()).toBeVisible({ timeout: 20_000 })
