@@ -138,6 +138,7 @@ type LubanContextValue = {
 
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
+  setClaudeEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
   setTaskPromptTemplate: (intentKind: TaskIntentKind, template: string) => void
@@ -379,6 +380,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setSidebarWorktreeOrder: actions.setSidebarWorktreeOrder,
     setCodexEnabled: actions.setCodexEnabled,
     setAmpEnabled: actions.setAmpEnabled,
+    setClaudeEnabled: actions.setClaudeEnabled,
     setAgentRunner: actions.setAgentRunner,
     setAgentAmpMode: actions.setAgentAmpMode,
     setTaskPromptTemplate: actions.setTaskPromptTemplate,

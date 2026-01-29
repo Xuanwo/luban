@@ -46,6 +46,7 @@ export type LubanActions = {
   toggleProjectExpanded: (projectId: ProjectId) => void
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
+  setClaudeEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
   setTaskPromptTemplate: (intentKind: TaskIntentKind, template: string) => void
@@ -205,6 +206,10 @@ export function createLubanActions(args: {
 
   function setAmpEnabled(enabled: boolean) {
     args.sendAction({ type: "amp_enabled_changed", enabled })
+  }
+
+  function setClaudeEnabled(enabled: boolean) {
+    args.sendAction({ type: "claude_enabled_changed", enabled })
   }
 
   function setAgentRunner(runner: AgentRunnerKind) {
@@ -803,6 +808,7 @@ export function createLubanActions(args: {
     toggleProjectExpanded,
     setCodexEnabled,
     setAmpEnabled,
+    setClaudeEnabled,
     setAgentRunner,
     setAgentAmpMode,
     setTaskPromptTemplate,

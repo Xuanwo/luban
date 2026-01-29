@@ -851,7 +851,11 @@ type CheckStatus = "idle" | "checking" | "success" | "error"
 
 type SaveStatus = "idle" | "unsaved" | "saving" | "saved"
 
-type CodexSelectedFile = {
+type AgentType = "codex" | "amp" | "claude"
+
+type ConfigEntry = { kind: "file" | "folder"; path: string; name: string }
+
+type SelectedFile = {
   path: string
   name: string
 }
@@ -868,7 +872,106 @@ function configEntryIcon(entry: { kind: "file" | "folder"; name: string }): { ic
   return { icon: FileText, className: "text-base0d" }
 }
 
-function CodexConfigTree({
+const AGENT_CONFIG: Record<
+  AgentType,
+  { name: string; icon: ElementType; iconClassName: string; configPath: string }
+> = {
+  codex: {
+    name: "Codex",
+    icon: ({ className }: { className?: string }) => (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
+      </svg>
+    ),
+    iconClassName: "",
+    configPath: "~/.codex",
+  },
+  amp: {
+    name: "Amp",
+    icon: Sparkle,
+    iconClassName: "text-primary",
+    configPath: "~/.config/amp",
+  },
+  claude: {
+    name: "Claude",
+    icon: Sparkles,
+    iconClassName: "text-primary",
+    configPath: "~/.claude",
+  },
+}
+
+function useAgentConfig(agentType: AgentType) {
+  const {
+    app,
+    checkCodex,
+    listCodexConfigDir,
+    readCodexConfigFile,
+    writeCodexConfigFile,
+    setCodexEnabled,
+    checkAmp,
+    listAmpConfigDir,
+    readAmpConfigFile,
+    writeAmpConfigFile,
+    setAmpEnabled,
+    checkClaude,
+    listClaudeConfigDir,
+    readClaudeConfigFile,
+    writeClaudeConfigFile,
+  } = useLuban()
+
+  const enabled = useMemo(() => {
+    if (agentType === "codex") return app?.agent?.codex_enabled ?? true
+    if (agentType === "amp") return app?.agent?.amp_enabled ?? true
+    return true
+  }, [agentType, app?.agent?.codex_enabled, app?.agent?.amp_enabled])
+
+  const setEnabled = useCallback(
+    (value: boolean) => {
+      if (agentType === "codex") setCodexEnabled(value)
+      else if (agentType === "amp") setAmpEnabled(value)
+    },
+    [agentType, setCodexEnabled, setAmpEnabled],
+  )
+
+  const check = useCallback(async () => {
+    if (agentType === "codex") return checkCodex()
+    if (agentType === "amp") return checkAmp()
+    return checkClaude()
+  }, [agentType, checkCodex, checkAmp, checkClaude])
+
+  const listDir = useCallback(
+    async (path: string) => {
+      if (agentType === "codex") return listCodexConfigDir(path)
+      if (agentType === "amp") return listAmpConfigDir(path)
+      return listClaudeConfigDir(path)
+    },
+    [agentType, listCodexConfigDir, listAmpConfigDir, listClaudeConfigDir],
+  )
+
+  const readFile = useCallback(
+    async (path: string) => {
+      if (agentType === "codex") return readCodexConfigFile(path)
+      if (agentType === "amp") return readAmpConfigFile(path)
+      return readClaudeConfigFile(path)
+    },
+    [agentType, readCodexConfigFile, readAmpConfigFile, readClaudeConfigFile],
+  )
+
+  const writeFile = useCallback(
+    async (path: string, content: string) => {
+      if (agentType === "codex") return writeCodexConfigFile(path, content)
+      if (agentType === "amp") return writeAmpConfigFile(path, content)
+      return writeClaudeConfigFile(path, content)
+    },
+    [agentType, writeCodexConfigFile, writeAmpConfigFile, writeClaudeConfigFile],
+  )
+
+  const hasSetEnabled = agentType === "codex" || agentType === "amp"
+
+  return { enabled, setEnabled, check, listDir, readFile, writeFile, hasSetEnabled }
+}
+
+function ConfigFileTree({
   entries,
   level = 0,
   selectedPath,
@@ -878,13 +981,13 @@ function CodexConfigTree({
   onSelectFile,
   onToggleFolder,
 }: {
-  entries: CodexConfigEntrySnapshot[]
+  entries: ConfigEntry[]
   level?: number
   selectedPath: string | null
   expandedFolders: Set<string>
   loadingDirs: Set<string>
-  childrenForPath: (path: string) => CodexConfigEntrySnapshot[]
-  onSelectFile: (file: CodexSelectedFile) => void
+  childrenForPath: (path: string) => ConfigEntry[]
+  onSelectFile: (file: SelectedFile) => void
   onToggleFolder: (path: string) => void
 }) {
   return (
@@ -928,7 +1031,7 @@ function CodexConfigTree({
             </button>
 
             {isFolder && isExpanded && (
-              <CodexConfigTree
+              <ConfigFileTree
                 entries={children}
                 level={level + 1}
                 selectedPath={selectedPath}
@@ -949,7 +1052,6 @@ function CodexConfigTree({
                 <span>Loading…</span>
               </div>
             )}
-
           </div>
         )
       })}
@@ -957,210 +1059,112 @@ function CodexConfigTree({
   )
 }
 
-type AmpSelectedFile = {
-  path: string
-  name: string
-}
-
-function AmpConfigTree({
-  entries,
-  level = 0,
-  selectedPath,
-  expandedFolders,
-  loadingDirs,
-  childrenForPath,
-  onSelectFile,
-  onToggleFolder,
+function AgentConfigPanel({
+  initialAgentId,
+  initialAgentFilePath,
 }: {
-  entries: AmpConfigEntrySnapshot[]
-  level?: number
-  selectedPath: string | null
-  expandedFolders: Set<string>
-  loadingDirs: Set<string>
-  childrenForPath: (path: string) => AmpConfigEntrySnapshot[]
-  onSelectFile: (file: AmpSelectedFile) => void
-  onToggleFolder: (path: string) => void
+  initialAgentId?: string | null
+  initialAgentFilePath?: string | null
 }) {
+  const agentTypes: AgentType[] = ["codex", "amp", "claude"]
+  const [selectedAgent, setSelectedAgent] = useState<AgentType>(() => {
+    if (initialAgentId && agentTypes.includes(initialAgentId as AgentType)) {
+      return initialAgentId as AgentType
+    }
+    return "codex"
+  })
+
+  const { app, setCodexEnabled, setAmpEnabled, setClaudeEnabled } = useLuban()
+  const codexEnabled = app?.agent?.codex_enabled ?? true
+  const ampEnabled = app?.agent?.amp_enabled ?? true
+  const claudeEnabled = app?.agent?.claude_enabled ?? true
+
+  const getAgentEnabled = (agent: AgentType) => {
+    if (agent === "codex") return codexEnabled
+    if (agent === "amp") return ampEnabled
+    if (agent === "claude") return claudeEnabled
+    return true
+  }
+
+  const toggleAgentEnabled = (agent: AgentType) => {
+    if (agent === "codex") setCodexEnabled(!codexEnabled)
+    else if (agent === "amp") setAmpEnabled(!ampEnabled)
+    else if (agent === "claude") setClaudeEnabled(!claudeEnabled)
+  }
+
   return (
-    <div className="space-y-0.5">
-      {entries.map((entry) => {
-        const isFolder = entry.kind === "folder"
-        const isExpanded = isFolder && expandedFolders.has(entry.path)
-        const isLoading = isFolder && loadingDirs.has(entry.path)
-        const children = isFolder ? childrenForPath(entry.path) : []
-        const isSelected = selectedPath === entry.path
-        const { icon: Icon, className } = configEntryIcon(entry)
-
-        return (
-          <div key={entry.path}>
-            <button
-              onClick={() => {
-                if (isFolder) {
-                  onToggleFolder(entry.path)
-                } else {
-                  onSelectFile({ path: entry.path, name: entry.name })
-                }
-              }}
-              className={cn(
-                "w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-colors text-xs",
-                isSelected
-                  ? "bg-primary/15 text-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
-              )}
-              style={{ paddingLeft: `${8 + level * 12}px` }}
-            >
-              {isFolder ? (
-                <ChevronRight
-                  className={cn(
-                    "w-3 h-3 text-muted-foreground transition-transform flex-shrink-0",
-                    isExpanded && "rotate-90",
-                  )}
-                />
-              ) : (
-                <div className="w-3" />
-              )}
-              <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", className)} />
-              <span className="truncate">{entry.name}</span>
-            </button>
-
-            {isFolder && isExpanded && (
-              <AmpConfigTree
-                entries={children}
-                level={level + 1}
-                selectedPath={selectedPath}
-                expandedFolders={expandedFolders}
-                loadingDirs={loadingDirs}
-                childrenForPath={childrenForPath}
-                onSelectFile={onSelectFile}
-                onToggleFolder={onToggleFolder}
-              />
-            )}
-
-            {isFolder && isExpanded && isLoading && children.length === 0 && (
+    <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm h-[400px] flex">
+      <div className="w-44 flex-shrink-0 border-r border-border bg-sidebar flex flex-col">
+        <div className="h-11 px-3 flex items-center gap-2 border-b border-border">
+          <Bot className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Agent</span>
+        </div>
+        <div className="flex-1 overflow-y-auto py-1.5">
+          {agentTypes.map((agent) => {
+            const agentConfig = AGENT_CONFIG[agent]
+            const Icon = agentConfig.icon
+            const isSelected = selectedAgent === agent
+            const isEnabled = getAgentEnabled(agent)
+            return (
               <div
-                className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left text-xs text-muted-foreground"
-                style={{ paddingLeft: `${8 + (level + 1) * 12}px` }}
+                key={agent}
+                onClick={() => setSelectedAgent(agent)}
+                className={cn(
+                  "w-full flex items-center justify-between px-3 py-2 text-left transition-colors text-sm cursor-pointer",
+                  isSelected ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                  !isEnabled && "opacity-50",
+                )}
               >
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>Loading…</span>
+                <div className="flex items-center gap-2">
+                  <Icon className={cn("w-4 h-4", agentConfig.iconClassName)} />
+                  <span className="truncate">{agentConfig.name}</span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleAgentEnabled(agent)
+                  }}
+                  className={cn("relative w-7 h-4 rounded-full transition-colors flex-shrink-0", isEnabled ? "bg-primary" : "bg-muted")}
+                  title={isEnabled ? `Disable ${agentConfig.name}` : `Enable ${agentConfig.name}`}
+                >
+                  <div
+                    className={cn(
+                      "absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform",
+                      isEnabled ? "translate-x-3.5" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
               </div>
-            )}
-          </div>
-        )
-      })}
+            )
+          })}
+        </div>
+      </div>
+
+      <AgentConfigContent
+        agentType={selectedAgent}
+        initialFilePath={selectedAgent === initialAgentId ? initialAgentFilePath : null}
+        autoFocusEditor={selectedAgent === initialAgentId && initialAgentFilePath != null}
+      />
     </div>
   )
 }
 
-type ClaudeSelectedFile = {
-  path: string
-  name: string
-}
-
-function ClaudeConfigTree({
-  entries,
-  level = 0,
-  selectedPath,
-  expandedFolders,
-  loadingDirs,
-  childrenForPath,
-  onSelectFile,
-  onToggleFolder,
-}: {
-  entries: ClaudeConfigEntrySnapshot[]
-  level?: number
-  selectedPath: string | null
-  expandedFolders: Set<string>
-  loadingDirs: Set<string>
-  childrenForPath: (path: string) => ClaudeConfigEntrySnapshot[]
-  onSelectFile: (file: ClaudeSelectedFile) => void
-  onToggleFolder: (path: string) => void
-}) {
-  return (
-    <div className="space-y-0.5">
-      {entries.map((entry) => {
-        const isFolder = entry.kind === "folder"
-        const isExpanded = isFolder && expandedFolders.has(entry.path)
-        const isLoading = isFolder && loadingDirs.has(entry.path)
-        const children = isFolder ? childrenForPath(entry.path) : []
-        const isSelected = selectedPath === entry.path
-        const { icon: Icon, className } = configEntryIcon(entry)
-
-        return (
-          <div key={entry.path}>
-            <button
-              onClick={() => {
-                if (isFolder) {
-                  onToggleFolder(entry.path)
-                } else {
-                  onSelectFile({ path: entry.path, name: entry.name })
-                }
-              }}
-              className={cn(
-                "w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-colors text-xs",
-                isSelected
-                  ? "bg-primary/15 text-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
-              )}
-              style={{ paddingLeft: `${8 + level * 12}px` }}
-            >
-              {isFolder ? (
-                <ChevronRight
-                  className={cn(
-                    "w-3 h-3 text-muted-foreground transition-transform flex-shrink-0",
-                    isExpanded && "rotate-90",
-                  )}
-                />
-              ) : (
-                <div className="w-3" />
-              )}
-              <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", className)} />
-              <span className="truncate">{entry.name}</span>
-            </button>
-
-            {isFolder && isExpanded && (
-              <ClaudeConfigTree
-                entries={children}
-                level={level + 1}
-                selectedPath={selectedPath}
-                expandedFolders={expandedFolders}
-                loadingDirs={loadingDirs}
-                childrenForPath={childrenForPath}
-                onSelectFile={onSelectFile}
-                onToggleFolder={onToggleFolder}
-              />
-            )}
-
-            {isFolder && isExpanded && isLoading && children.length === 0 && (
-              <div
-                className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left text-xs text-muted-foreground"
-                style={{ paddingLeft: `${8 + (level + 1) * 12}px` }}
-              >
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>Loading…</span>
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function CodexSettings({
-  initialSelectedFilePath,
+function AgentConfigContent({
+  agentType,
+  initialFilePath,
   autoFocusEditor = false,
 }: {
-  initialSelectedFilePath?: string | null
+  agentType: AgentType
+  initialFilePath?: string | null
   autoFocusEditor?: boolean
 }) {
-  const { app, setCodexEnabled, checkCodex, listCodexConfigDir, readCodexConfigFile, writeCodexConfigFile } = useLuban()
-  const [enabled, setEnabled] = useState(true)
-  const [checkStatus, setCheckStatus] = useState<CheckStatus>("idle")
+  const config = AGENT_CONFIG[agentType]
+  const { listDir, readFile, writeFile } = useAgentConfig(agentType)
+
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
-  const [selectedFile, setSelectedFile] = useState<CodexSelectedFile | null>(null)
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set())
-  const [dirEntries, setDirEntries] = useState<Record<string, CodexConfigEntrySnapshot[]>>({})
+  const [dirEntries, setDirEntries] = useState<Record<string, ConfigEntry[]>>({})
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(() => new Set())
   const [fileContents, setFileContents] = useState<Record<string, string>>({})
   const saveTimeoutRef = useRef<number | null>(null)
@@ -1171,22 +1175,25 @@ function CodexSettings({
   const highlighter = useShikiHighlighter()
 
   useEffect(() => {
-    const next = app?.agent?.codex_enabled ?? true
-    setEnabled(next)
-  }, [app?.rev])
+    setSaveStatus("idle")
+    setSelectedFile(null)
+    setExpandedFolders(new Set())
+    setDirEntries({})
+    setLoadingDirs(new Set())
+    setFileContents({})
+    initialSelectionRef.current = null
+  }, [agentType])
 
-  const loadDir = useCallback(
-    async (path: string): Promise<CodexConfigEntrySnapshot[]> => {
+  const loadDirInternal = useCallback(
+    async (path: string): Promise<ConfigEntry[]> => {
       setLoadingDirs((prev) => {
         const next = new Set(prev)
         next.add(path)
         return next
       })
       try {
-        const res = await listCodexConfigDir(path)
-        setDirEntries((prev) => {
-          return { ...prev, [path]: res.entries }
-        })
+        const res = await listDir(path)
+        setDirEntries((prev) => ({ ...prev, [path]: res.entries }))
         return res.entries
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err))
@@ -1199,31 +1206,29 @@ function CodexSettings({
         })
       }
     },
-    [listCodexConfigDir],
+    [listDir],
   )
 
   useEffect(() => {
-    if (!enabled) return
-    void loadDir("")
-  }, [enabled, loadDir])
+    void loadDirInternal("")
+  }, [loadDirInternal])
 
   const handleSelectFile = useCallback(
-    async (file: CodexSelectedFile) => {
+    async (file: SelectedFile) => {
       setSelectedFile(file)
       if (fileContents[file.path] != null) return
       try {
-        const contents = await readCodexConfigFile(file.path)
+        const contents = await readFile(file.path)
         setFileContents((prev) => ({ ...prev, [file.path]: contents }))
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err))
       }
     },
-    [fileContents, readCodexConfigFile],
+    [fileContents, readFile],
   )
 
   useEffect(() => {
-    if (!enabled) return
-    const target = initialSelectedFilePath?.trim()
+    const target = initialFilePath?.trim()
     if (!target) return
     if (selectedFile?.path === target) return
     if (initialSelectionRef.current === target) return
@@ -1242,7 +1247,7 @@ function CodexSettings({
           return next
         })
         if (!dirEntries[parent] && !loadingDirs.has(parent)) {
-          await loadDir(parent)
+          await loadDirInternal(parent)
         }
       }
 
@@ -1254,7 +1259,7 @@ function CodexSettings({
         await handleSelectFile({ path: entry.path, name: entry.name })
       }
     })()
-  }, [dirEntries, enabled, handleSelectFile, initialSelectedFilePath, loadDir, loadingDirs, selectedFile?.path])
+  }, [dirEntries, handleSelectFile, initialFilePath, loadDirInternal, loadingDirs, selectedFile?.path])
 
   useEffect(() => {
     if (!autoFocusEditor) return
@@ -1286,29 +1291,9 @@ function CodexSettings({
     return "markdown"
   }
 
-  const handleCheck = async (e: MouseEvent) => {
-    e.stopPropagation()
-    setCheckStatus("checking")
-    try {
-      const res = await checkCodex()
-      setCheckStatus(res.ok ? "success" : "error")
-      if (res.message) toast(res.message)
-    } catch (err) {
-      setCheckStatus("error")
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const handleToggleEnabled = (e: MouseEvent) => {
-    e.stopPropagation()
-    const next = !enabled
-    setEnabled(next)
-    setCodexEnabled(next)
-  }
-
   const handleEditInLuban = (e: MouseEvent) => {
     e.stopPropagation()
-    addProjectAndOpen("~/.codex")
+    addProjectAndOpen(config.configPath)
   }
 
   const handleToggleFolder = (path: string) => {
@@ -1321,7 +1306,7 @@ function CodexSettings({
     })
 
     if (willExpand && !dirEntries[path] && !loadingDirs.has(path)) {
-      void loadDir(path)
+      void loadDirInternal(path)
     }
   }
 
@@ -1337,7 +1322,7 @@ function CodexSettings({
     saveTimeoutRef.current = window.setTimeout(() => {
       setSaveStatus("saving")
       const path = selectedFile.path
-      void writeCodexConfigFile(path, content)
+      void writeFile(path, content)
         .then(() => {
           setSaveStatus("saved")
           saveIdleTimeoutRef.current = window.setTimeout(() => {
@@ -1352,925 +1337,85 @@ function CodexSettings({
   }
 
   const currentContent = selectedFile ? (fileContents[selectedFile.path] ?? "") : ""
-  const selectedFileIcon = selectedFile
-    ? configEntryIcon({ kind: "file", name: selectedFile.name })
-    : null
 
   return (
-    <div className={cn("rounded-xl border border-border bg-card overflow-hidden shadow-sm", !enabled && "w-44")}>
-      <div className={cn("flex", enabled ? "h-[320px]" : "h-11")}>
-        <div
-          className={cn(
-            "w-44 flex flex-col bg-sidebar",
-            enabled && "border-r border-border",
-            !enabled && "opacity-60",
-          )}
-        >
-          <div className={cn("flex items-center justify-between h-11 px-3", enabled && "border-b border-border")}>
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
-              </svg>
-              <span className="text-sm font-medium">Codex</span>
-            </div>
-            <button
-              data-testid="settings-codex-toggle"
-              onClick={handleToggleEnabled}
-              className={cn("relative w-9 h-5 rounded-full transition-colors", enabled ? "bg-primary" : "bg-muted")}
-              title={enabled ? "Disable Codex" : "Enable Codex"}
-            >
-              <div
-                className={cn(
-                  "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                  enabled ? "translate-x-4" : "translate-x-0.5",
-                )}
-              />
-            </button>
-          </div>
-
-          {enabled && (
-            <div className="flex-1 overflow-y-auto py-1.5">
-              {(dirEntries[""] ?? []).length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">No config found.</div>
-              ) : (
-                <CodexConfigTree
-                  entries={dirEntries[""] ?? []}
-                  selectedPath={selectedFile?.path ?? null}
-                  expandedFolders={expandedFolders}
-                  loadingDirs={loadingDirs}
-                  childrenForPath={(path) => dirEntries[path] ?? []}
-                  onSelectFile={handleSelectFile}
-                  onToggleFolder={handleToggleFolder}
-                />
-              )}
-            </div>
+    <div className="flex-1 flex min-w-0">
+      <div className="w-44 flex-shrink-0 border-r border-border bg-sidebar flex flex-col">
+        <div className="h-11 px-3 flex items-center gap-2 border-b border-border">
+          <Folder className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Files</span>
+        </div>
+        <div className="flex-1 overflow-y-auto py-1.5">
+          {(dirEntries[""] ?? []).length === 0 ? (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">No config found.</div>
+          ) : (
+            <ConfigFileTree
+              entries={dirEntries[""] ?? []}
+              selectedPath={selectedFile?.path ?? null}
+              expandedFolders={expandedFolders}
+              loadingDirs={loadingDirs}
+              childrenForPath={(path) => dirEntries[path] ?? []}
+              onSelectFile={handleSelectFile}
+              onToggleFolder={handleToggleFolder}
+            />
           )}
         </div>
-
-        {enabled && (
-          <div className="flex-1 flex flex-col min-w-0 bg-background">
-            <div className="flex items-center justify-between h-11 px-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                {selectedFile && selectedFileIcon ? (
-                  <>
-                    <selectedFileIcon.icon className={cn("w-4 h-4", selectedFileIcon.className)} />
-                    <span className="text-sm font-medium">{selectedFile.name}</span>
-                  </>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Select a file</span>
-                )}
-                {saveStatus !== "idle" && (
-                  <span
-                    className={cn(
-                      "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
-                      saveStatus === "saved"
-                        ? "bg-status-success/10 text-status-success"
-                        : "bg-status-warning/10 text-status-warning",
-                    )}
-                  >
-                    {saveStatus === "saving" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                    {saveStatus === "saved" && <CheckCircle2 className="w-2.5 h-2.5" />}
-                    {saveStatus === "saving" ? "Saving..." : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  data-testid="settings-codex-check"
-                  onClick={handleCheck}
-                  disabled={checkStatus === "checking"}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all",
-                    checkStatus === "checking"
-                      ? "text-muted-foreground cursor-not-allowed"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {checkStatus === "checking" ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Checking...
-                    </>
-                  ) : checkStatus === "success" ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
-                      Connected
-                    </>
-                  ) : checkStatus === "error" ? (
-                    <>
-                      <XCircle className="w-3.5 h-3.5 text-status-error" />
-                      Failed
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" />
-                      Check
-                    </>
-                  )}
-                </button>
-                <button
-                  data-testid="settings-codex-edit-in-luban"
-                  onClick={handleEditInLuban}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  Edit in Luban
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 relative overflow-hidden">
-              {selectedFile ? (
-                <>
-                  <div
-                    ref={highlightRef}
-                    className="absolute inset-0 p-4 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words overflow-hidden pointer-events-none"
-                    aria-hidden="true"
-                  >
-                    <MarkdownHighlight
-                      text={currentContent}
-                      highlighter={highlighter}
-                      lang={getFileLanguage(selectedFile.name)}
-                    />
-                  </div>
-                  <textarea
-                    ref={editorRef}
-                    data-testid="settings-codex-editor"
-                    value={currentContent}
-                    onChange={(e) => handleContentChange(e.target.value)}
-                    onScroll={handleEditorScroll}
-                    className="absolute inset-0 p-4 bg-transparent text-sm font-mono text-transparent caret-foreground leading-relaxed resize-none focus:outline-none"
-                    spellCheck={false}
-                  />
-                </>
-              ) : (
-                <div className="flex-1 h-full flex items-center justify-center text-muted-foreground">
-                  <div className="text-center">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-xs">Select a file to edit</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
-    </div>
-  )
-}
 
-function AmpSettings({
-  initialSelectedFilePath,
-  autoFocusEditor = false,
-}: {
-  initialSelectedFilePath?: string | null
-  autoFocusEditor?: boolean
-}) {
-  const { app, setAmpEnabled, checkAmp, listAmpConfigDir, readAmpConfigFile, writeAmpConfigFile } = useLuban()
-  const [enabled, setEnabled] = useState(true)
-
-  useEffect(() => {
-    const next = app?.agent?.amp_enabled ?? true
-    setEnabled(next)
-  }, [app?.rev])
-  const [checkStatus, setCheckStatus] = useState<CheckStatus>("idle")
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
-  const [selectedFile, setSelectedFile] = useState<AmpSelectedFile | null>(null)
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set())
-  const [dirEntries, setDirEntries] = useState<Record<string, AmpConfigEntrySnapshot[]>>({})
-  const [loadingDirs, setLoadingDirs] = useState<Set<string>>(() => new Set())
-  const [fileContents, setFileContents] = useState<Record<string, string>>({})
-  const saveTimeoutRef = useRef<number | null>(null)
-  const saveIdleTimeoutRef = useRef<number | null>(null)
-  const initialSelectionRef = useRef<string | null>(null)
-  const editorRef = useRef<HTMLTextAreaElement>(null)
-  const highlightRef = useRef<HTMLDivElement>(null)
-  const highlighter = useShikiHighlighter()
-
-  const loadDir = useCallback(
-    async (path: string): Promise<AmpConfigEntrySnapshot[]> => {
-      setLoadingDirs((prev) => {
-        const next = new Set(prev)
-        next.add(path)
-        return next
-      })
-      try {
-        const res = await listAmpConfigDir(path)
-        setDirEntries((prev) => {
-          return { ...prev, [path]: res.entries }
-        })
-        return res.entries
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-        return []
-      } finally {
-        setLoadingDirs((prev) => {
-          const next = new Set(prev)
-          next.delete(path)
-          return next
-        })
-      }
-    },
-    [listAmpConfigDir],
-  )
-
-  useEffect(() => {
-    if (!enabled) return
-    void loadDir("")
-  }, [enabled, loadDir])
-
-  const handleSelectFile = useCallback(
-    async (file: AmpSelectedFile) => {
-      setSelectedFile(file)
-      if (fileContents[file.path] != null) return
-      try {
-        const contents = await readAmpConfigFile(file.path)
-        setFileContents((prev) => ({ ...prev, [file.path]: contents }))
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-      }
-    },
-    [fileContents, readAmpConfigFile],
-  )
-
-  useEffect(() => {
-    if (!enabled) return
-    const target = initialSelectedFilePath?.trim()
-    if (!target) return
-    if (selectedFile?.path === target) return
-    if (initialSelectionRef.current === target) return
-    if (!dirEntries[""]) return
-
-    initialSelectionRef.current = target
-    void (async () => {
-      const segments = target.split("/").filter(Boolean)
-      let parent = ""
-
-      for (const segment of segments.slice(0, -1)) {
-        parent = parent ? `${parent}/${segment}` : segment
-        setExpandedFolders((prev) => {
-          const next = new Set(prev)
-          next.add(parent)
-          return next
-        })
-        if (!dirEntries[parent] && !loadingDirs.has(parent)) {
-          await loadDir(parent)
-        }
-      }
-
-      const container = parent || ""
-      const entries = dirEntries[container] ?? []
-      const entry = entries.find((e) => e.kind === "file" && e.path === target)
-
-      if (entry) {
-        await handleSelectFile({ path: entry.path, name: entry.name })
-      }
-    })()
-  }, [dirEntries, enabled, handleSelectFile, initialSelectedFilePath, loadDir, loadingDirs, selectedFile?.path])
-
-  useEffect(() => {
-    if (!autoFocusEditor) return
-    const target = initialSelectionRef.current
-    if (!target) return
-    if (!selectedFile || selectedFile.path !== target) return
-    if (fileContents[selectedFile.path] == null) return
-    editorRef.current?.focus()
-  }, [autoFocusEditor, fileContents, selectedFile])
-
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current != null) window.clearTimeout(saveTimeoutRef.current)
-      if (saveIdleTimeoutRef.current != null) window.clearTimeout(saveIdleTimeoutRef.current)
-    }
-  }, [])
-
-  const handleEditorScroll = () => {
-    if (!editorRef.current || !highlightRef.current) return
-    highlightRef.current.scrollTop = editorRef.current.scrollTop
-    highlightRef.current.scrollLeft = editorRef.current.scrollLeft
-  }
-
-  const getFileLanguage = (fileName: string): string => {
-    if (fileName.endsWith(".md")) return "markdown"
-    if (fileName.endsWith(".toml")) return "toml"
-    if (fileName.endsWith(".yaml") || fileName.endsWith(".yml")) return "yaml"
-    if (fileName.endsWith(".json")) return "json"
-    return "markdown"
-  }
-
-  const handleCheck = async (e: MouseEvent) => {
-    e.stopPropagation()
-    setCheckStatus("checking")
-    try {
-      const res = await checkAmp()
-      setCheckStatus(res.ok ? "success" : "error")
-      if (res.message) toast(res.message)
-    } catch (err) {
-      setCheckStatus("error")
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const handleToggleEnabled = (e: MouseEvent) => {
-    e.stopPropagation()
-    const next = !enabled
-    setEnabled(next)
-    setAmpEnabled(next)
-  }
-
-  const handleEditInLuban = (e: MouseEvent) => {
-    e.stopPropagation()
-    addProjectAndOpen("~/.config/amp")
-  }
-
-  const handleToggleFolder = (path: string) => {
-    const willExpand = !expandedFolders.has(path)
-    setExpandedFolders((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-
-    if (willExpand && !dirEntries[path] && !loadingDirs.has(path)) {
-      void loadDir(path)
-    }
-  }
-
-  const handleContentChange = (content: string) => {
-    if (!selectedFile) return
-
-    setFileContents((prev) => ({ ...prev, [selectedFile.path]: content }))
-    setSaveStatus("unsaved")
-
-    if (saveTimeoutRef.current != null) window.clearTimeout(saveTimeoutRef.current)
-    if (saveIdleTimeoutRef.current != null) window.clearTimeout(saveIdleTimeoutRef.current)
-
-    saveTimeoutRef.current = window.setTimeout(() => {
-      setSaveStatus("saving")
-      const path = selectedFile.path
-      void writeAmpConfigFile(path, content)
-        .then(() => {
-          setSaveStatus("saved")
-          saveIdleTimeoutRef.current = window.setTimeout(() => {
-            setSaveStatus("idle")
-          }, 1500)
-        })
-        .catch((err) => {
-          setSaveStatus("unsaved")
-          toast.error(err instanceof Error ? err.message : String(err))
-        })
-    }, 800)
-  }
-
-  const currentContent = selectedFile ? (fileContents[selectedFile.path] ?? "") : ""
-  const selectedFileIcon = selectedFile ? configEntryIcon({ kind: "file", name: selectedFile.name }) : null
-
-	  return (
-	    <div className={cn("rounded-xl border border-border bg-card overflow-hidden shadow-sm", !enabled && "w-44")}>
-	      <div className={cn("flex", enabled ? "h-[320px]" : "h-11")}>
-        <div className={cn("w-44 flex flex-col bg-sidebar", enabled && "border-r border-border", !enabled && "opacity-60")}>
-          <div className={cn("flex items-center justify-between h-11 px-3", enabled && "border-b border-border")}>
-            <div className="flex items-center gap-2">
-              <Sparkle className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium">Amp</span>
-            </div>
-            <button
-              data-testid="settings-amp-toggle"
-              onClick={handleToggleEnabled}
-              className={cn("relative w-9 h-5 rounded-full transition-colors", enabled ? "bg-primary" : "bg-muted")}
-              title={enabled ? "Collapse Amp settings" : "Expand Amp settings"}
-            >
-              <div
+      <div className="flex-1 flex flex-col min-w-0 bg-background">
+        <div className="flex items-center justify-between h-11 px-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            {saveStatus !== "idle" && (
+              <span
                 className={cn(
-                  "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                  enabled ? "translate-x-4" : "translate-x-0.5",
+                  "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
+                  saveStatus === "saved" ? "bg-status-success/10 text-status-success" : "bg-status-warning/10 text-status-warning",
                 )}
-              />
-            </button>
+              >
+                {saveStatus === "saving" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                {saveStatus === "saved" && <CheckCircle2 className="w-2.5 h-2.5" />}
+                {saveStatus === "saving" ? "Saving..." : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
+              </span>
+            )}
           </div>
-
-          {enabled && (
-            <div className="flex-1 overflow-y-auto py-1.5">
-              {(dirEntries[""] ?? []).length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">No config found.</div>
-              ) : (
-                <AmpConfigTree
-                  entries={dirEntries[""] ?? []}
-                  selectedPath={selectedFile?.path ?? null}
-                  expandedFolders={expandedFolders}
-                  loadingDirs={loadingDirs}
-                  childrenForPath={(path) => dirEntries[path] ?? []}
-                  onSelectFile={handleSelectFile}
-                  onToggleFolder={handleToggleFolder}
-                />
-              )}
-            </div>
-          )}
+          <button
+            data-testid={`settings-${agentType}-edit-in-luban`}
+            onClick={handleEditInLuban}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Edit in Luban
+          </button>
         </div>
 
-	        {enabled && (
-	          <div className="flex-1 flex flex-col min-w-0 bg-background">
-	            <div className="flex items-center justify-between h-11 px-3 border-b border-border">
-	              <div className="flex items-center gap-2">
-                {selectedFile && selectedFileIcon ? (
-                  <>
-                    <selectedFileIcon.icon className={cn("w-4 h-4", selectedFileIcon.className)} />
-                    <span className="text-sm font-medium">{selectedFile.name}</span>
-                  </>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Select a file</span>
-                )}
-                {saveStatus !== "idle" && (
-                  <span
-                    className={cn(
-                      "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
-                      saveStatus === "saved"
-                        ? "bg-status-success/10 text-status-success"
-                        : "bg-status-warning/10 text-status-warning",
-                    )}
-                  >
-                    {saveStatus === "saving" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                    {saveStatus === "saved" && <CheckCircle2 className="w-2.5 h-2.5" />}
-                    {saveStatus === "saving" ? "Saving..." : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
-                  </span>
-	                )}
-	              </div>
-	              <div className="flex items-center gap-1">
-	                <button
-	                  data-testid="settings-amp-check"
-	                  onClick={handleCheck}
-	                  disabled={checkStatus === "checking"}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all",
-                    checkStatus === "checking"
-                      ? "text-muted-foreground cursor-not-allowed"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {checkStatus === "checking" ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Checking...
-                    </>
-                  ) : checkStatus === "success" ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
-                      Connected
-                    </>
-                  ) : checkStatus === "error" ? (
-                    <>
-                      <XCircle className="w-3.5 h-3.5 text-status-error" />
-                      Failed
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" />
-                      Check
-                    </>
-                  )}
-	                </button>
-	                <button
-	                  data-testid="settings-amp-edit-in-luban"
-	                  onClick={handleEditInLuban}
-	                  className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-	                >
-	                  <Pencil className="w-3.5 h-3.5" />
-	                  Edit in Luban
-	                </button>
-	              </div>
-	            </div>
-
-            <div className="flex-1 relative overflow-hidden">
-              {selectedFile ? (
-                <>
-                  <div
-                    ref={highlightRef}
-                    className="absolute inset-0 p-4 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words overflow-hidden pointer-events-none"
-                    aria-hidden="true"
-                  >
-                    <MarkdownHighlight text={currentContent} highlighter={highlighter} lang={getFileLanguage(selectedFile.name)} />
-                  </div>
-                  <textarea
-                    ref={editorRef}
-                    data-testid="settings-amp-editor"
-                    value={currentContent}
-                    onChange={(e) => handleContentChange(e.target.value)}
-                    onScroll={handleEditorScroll}
-                    className="absolute inset-0 p-4 bg-transparent text-sm font-mono text-transparent caret-foreground leading-relaxed resize-none focus:outline-none"
-                    spellCheck={false}
-                  />
-                </>
-              ) : (
-                <div className="flex-1 h-full flex items-center justify-center text-muted-foreground">
-                  <div className="text-center">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-xs">Select a file to edit</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ClaudeSettings({
-  initialSelectedFilePath,
-  autoFocusEditor = false,
-}: {
-  initialSelectedFilePath?: string | null
-  autoFocusEditor?: boolean
-}) {
-  const { checkClaude, listClaudeConfigDir, readClaudeConfigFile, writeClaudeConfigFile } = useLuban()
-  const [enabled, setEnabled] = useState(true)
-  const [checkStatus, setCheckStatus] = useState<CheckStatus>("idle")
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
-  const [selectedFile, setSelectedFile] = useState<ClaudeSelectedFile | null>(null)
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set())
-  const [dirEntries, setDirEntries] = useState<Record<string, ClaudeConfigEntrySnapshot[]>>({})
-  const [loadingDirs, setLoadingDirs] = useState<Set<string>>(() => new Set())
-  const [fileContents, setFileContents] = useState<Record<string, string>>({})
-  const saveTimeoutRef = useRef<number | null>(null)
-  const saveIdleTimeoutRef = useRef<number | null>(null)
-  const initialSelectionRef = useRef<string | null>(null)
-  const editorRef = useRef<HTMLTextAreaElement>(null)
-  const highlightRef = useRef<HTMLDivElement>(null)
-  const highlighter = useShikiHighlighter()
-
-  const loadDir = useCallback(
-    async (path: string): Promise<ClaudeConfigEntrySnapshot[]> => {
-      setLoadingDirs((prev) => {
-        const next = new Set(prev)
-        next.add(path)
-        return next
-      })
-      try {
-        const res = await listClaudeConfigDir(path)
-        setDirEntries((prev) => {
-          return { ...prev, [path]: res.entries }
-        })
-        return res.entries
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-        return []
-      } finally {
-        setLoadingDirs((prev) => {
-          const next = new Set(prev)
-          next.delete(path)
-          return next
-        })
-      }
-    },
-    [listClaudeConfigDir],
-  )
-
-  useEffect(() => {
-    if (!enabled) return
-    void loadDir("")
-  }, [enabled, loadDir])
-
-  const handleSelectFile = useCallback(
-    async (file: ClaudeSelectedFile) => {
-      setSelectedFile(file)
-      if (fileContents[file.path] != null) return
-      try {
-        const contents = await readClaudeConfigFile(file.path)
-        setFileContents((prev) => ({ ...prev, [file.path]: contents }))
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-      }
-    },
-    [fileContents, readClaudeConfigFile],
-  )
-
-  useEffect(() => {
-    if (!enabled) return
-    const target = initialSelectedFilePath?.trim()
-    if (!target) return
-    if (selectedFile?.path === target) return
-    if (initialSelectionRef.current === target) return
-    if (!dirEntries[""]) return
-
-    initialSelectionRef.current = target
-    void (async () => {
-      const segments = target.split("/").filter(Boolean)
-      let parent = ""
-
-      for (const segment of segments.slice(0, -1)) {
-        parent = parent ? `${parent}/${segment}` : segment
-        setExpandedFolders((prev) => {
-          const next = new Set(prev)
-          next.add(parent)
-          return next
-        })
-        if (!dirEntries[parent] && !loadingDirs.has(parent)) {
-          await loadDir(parent)
-        }
-      }
-
-      const container = parent || ""
-      const entries = dirEntries[container] ?? []
-      const entry = entries.find((e) => e.kind === "file" && e.path === target)
-
-      if (entry) {
-        await handleSelectFile({ path: entry.path, name: entry.name })
-      }
-    })()
-  }, [dirEntries, enabled, handleSelectFile, initialSelectedFilePath, loadDir, loadingDirs, selectedFile?.path])
-
-  useEffect(() => {
-    if (!autoFocusEditor) return
-    const target = initialSelectionRef.current
-    if (!target) return
-    if (!selectedFile || selectedFile.path !== target) return
-    if (fileContents[selectedFile.path] == null) return
-    editorRef.current?.focus()
-  }, [autoFocusEditor, fileContents, selectedFile])
-
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current != null) window.clearTimeout(saveTimeoutRef.current)
-      if (saveIdleTimeoutRef.current != null) window.clearTimeout(saveIdleTimeoutRef.current)
-    }
-  }, [])
-
-  const handleEditorScroll = () => {
-    if (!editorRef.current || !highlightRef.current) return
-    highlightRef.current.scrollTop = editorRef.current.scrollTop
-    highlightRef.current.scrollLeft = editorRef.current.scrollLeft
-  }
-
-  const getFileLanguage = (fileName: string): string => {
-    if (fileName.endsWith(".md")) return "markdown"
-    if (fileName.endsWith(".toml")) return "toml"
-    if (fileName.endsWith(".yaml") || fileName.endsWith(".yml")) return "yaml"
-    if (fileName.endsWith(".json")) return "json"
-    return "markdown"
-  }
-
-  const handleCheck = async (e: MouseEvent) => {
-    e.stopPropagation()
-    setCheckStatus("checking")
-    try {
-      const res = await checkClaude()
-      setCheckStatus(res.ok ? "success" : "error")
-      if (res.message) toast(res.message)
-    } catch (err) {
-      setCheckStatus("error")
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const handleToggleEnabled = (e: MouseEvent) => {
-    e.stopPropagation()
-    const next = !enabled
-    setEnabled(next)
-  }
-
-  const handleEditInLuban = (e: MouseEvent) => {
-    e.stopPropagation()
-    addProjectAndOpen("~/.claude")
-  }
-
-  const handleToggleFolder = (path: string) => {
-    const willExpand = !expandedFolders.has(path)
-    setExpandedFolders((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-
-    if (willExpand && !dirEntries[path] && !loadingDirs.has(path)) {
-      void loadDir(path)
-    }
-  }
-
-  const handleContentChange = (content: string) => {
-    if (!selectedFile) return
-
-    setFileContents((prev) => ({ ...prev, [selectedFile.path]: content }))
-    setSaveStatus("unsaved")
-
-    if (saveTimeoutRef.current != null) window.clearTimeout(saveTimeoutRef.current)
-    if (saveIdleTimeoutRef.current != null) window.clearTimeout(saveIdleTimeoutRef.current)
-
-    saveTimeoutRef.current = window.setTimeout(() => {
-      setSaveStatus("saving")
-      const path = selectedFile.path
-      void writeClaudeConfigFile(path, content)
-        .then(() => {
-          setSaveStatus("saved")
-          saveIdleTimeoutRef.current = window.setTimeout(() => {
-            setSaveStatus("idle")
-          }, 1500)
-        })
-        .catch((err) => {
-          setSaveStatus("unsaved")
-          toast.error(err instanceof Error ? err.message : String(err))
-        })
-    }, 800)
-  }
-
-  const currentContent = selectedFile ? (fileContents[selectedFile.path] ?? "") : ""
-  const selectedFileIcon = selectedFile ? configEntryIcon({ kind: "file", name: selectedFile.name }) : null
-
-  return (
-    <div className={cn("rounded-xl border border-border bg-card overflow-hidden shadow-sm", !enabled && "w-44")}>
-      <div className={cn("flex", enabled ? "h-[320px]" : "h-11")}>
-        <div className={cn("w-44 flex flex-col bg-sidebar", enabled && "border-r border-border", !enabled && "opacity-60")}>
-          <div className={cn("flex items-center justify-between h-11 px-3", enabled && "border-b border-border")}>
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium">Claude</span>
-            </div>
-            <button
-              data-testid="settings-claude-toggle"
-              onClick={handleToggleEnabled}
-              className={cn("relative w-9 h-5 rounded-full transition-colors", enabled ? "bg-primary" : "bg-muted")}
-              title={enabled ? "Collapse Claude settings" : "Expand Claude settings"}
-            >
+        <div className="flex-1 relative overflow-hidden">
+          {selectedFile ? (
+            <>
               <div
-                className={cn(
-                  "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                  enabled ? "translate-x-4" : "translate-x-0.5",
-                )}
-              />
-            </button>
-          </div>
-
-          {enabled && (
-            <div className="flex-1 overflow-y-auto py-1.5">
-              {(dirEntries[""] ?? []).length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">No config found.</div>
-              ) : (
-                <ClaudeConfigTree
-                  entries={dirEntries[""] ?? []}
-                  selectedPath={selectedFile?.path ?? null}
-                  expandedFolders={expandedFolders}
-                  loadingDirs={loadingDirs}
-                  childrenForPath={(path) => dirEntries[path] ?? []}
-                  onSelectFile={handleSelectFile}
-                  onToggleFolder={handleToggleFolder}
-                />
-              )}
-            </div>
-          )}
-        </div>
-
-        {enabled && (
-          <div className="flex-1 flex flex-col min-w-0 bg-background">
-            <div className="flex items-center justify-between h-11 px-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                {selectedFile && selectedFileIcon ? (
-                  <>
-                    <selectedFileIcon.icon className={cn("w-4 h-4", selectedFileIcon.className)} />
-                    <span className="text-sm font-medium">{selectedFile.name}</span>
-                  </>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Select a file</span>
-                )}
-                {saveStatus !== "idle" && (
-                  <span
-                    className={cn(
-                      "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]",
-                      saveStatus === "saved"
-                        ? "bg-status-success/10 text-status-success"
-                        : "bg-status-warning/10 text-status-warning",
-                    )}
-                  >
-                    {saveStatus === "saving" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                    {saveStatus === "saved" && <CheckCircle2 className="w-2.5 h-2.5" />}
-                    {saveStatus === "saving" ? "Saving..." : saveStatus === "unsaved" ? "Unsaved" : "Saved"}
-                  </span>
-                )}
+                ref={highlightRef}
+                className="absolute inset-0 p-4 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words overflow-hidden pointer-events-none"
+                aria-hidden="true"
+              >
+                <MarkdownHighlight text={currentContent} highlighter={highlighter} lang={getFileLanguage(selectedFile.name)} />
               </div>
-              <div className="flex items-center gap-1">
-                <button
-                  data-testid="settings-claude-check"
-                  onClick={handleCheck}
-                  disabled={checkStatus === "checking"}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all",
-                    checkStatus === "checking"
-                      ? "text-muted-foreground cursor-not-allowed"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {checkStatus === "checking" ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Checking...
-                    </>
-                  ) : checkStatus === "success" ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
-                      Connected
-                    </>
-                  ) : checkStatus === "error" ? (
-                    <>
-                      <XCircle className="w-3.5 h-3.5 text-status-error" />
-                      Failed
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" />
-                      Check
-                    </>
-                  )}
-                </button>
-                <button
-                  data-testid="settings-claude-edit-in-luban"
-                  onClick={handleEditInLuban}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  Edit in Luban
-                </button>
+              <textarea
+                ref={editorRef}
+                data-testid={`settings-${agentType}-editor`}
+                value={currentContent}
+                onChange={(e) => handleContentChange(e.target.value)}
+                onScroll={handleEditorScroll}
+                className="absolute inset-0 p-4 bg-transparent text-sm font-mono text-transparent caret-foreground leading-relaxed resize-none focus:outline-none"
+                spellCheck={false}
+              />
+            </>
+          ) : (
+            <div className="flex-1 h-full flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">Select a file to edit</p>
               </div>
             </div>
-
-            <div className="flex-1 relative overflow-hidden">
-              {selectedFile ? (
-                <>
-                  <div
-                    ref={highlightRef}
-                    className="absolute inset-0 p-4 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words overflow-hidden pointer-events-none"
-                    aria-hidden="true"
-                  >
-                    <MarkdownHighlight text={currentContent} highlighter={highlighter} lang={getFileLanguage(selectedFile.name)} />
-                  </div>
-                  <textarea
-                    ref={editorRef}
-                    data-testid="settings-claude-editor"
-                    value={currentContent}
-                    onChange={(e) => handleContentChange(e.target.value)}
-                    onScroll={handleEditorScroll}
-                    className="absolute inset-0 p-4 bg-transparent text-sm font-mono text-transparent caret-foreground leading-relaxed resize-none focus:outline-none"
-                    spellCheck={false}
-                  />
-                </>
-              ) : (
-                <div className="flex-1 h-full flex items-center justify-center text-muted-foreground">
-                  <div className="text-center">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-xs">Select a file to edit</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function AgentRunnerSettings() {
-  const { app, setAgentRunner } = useLuban()
-  const runner = app?.agent?.default_runner ?? "codex"
-
-  return (
-    <div className="rounded-lg border border-border bg-secondary/20 p-4 space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-sm font-medium">Default Runner</div>
-          <div className="text-xs text-muted-foreground">Used for new turns and queued prompts.</div>
-        </div>
-        <div className="inline-flex rounded-md border border-border overflow-hidden">
-          <button
-            data-testid="settings-agent-runner-codex"
-            onClick={() => setAgentRunner("codex")}
-            className={cn(
-              "px-3 py-1.5 text-xs font-medium transition-colors",
-              runner === "codex" ? "bg-primary/10 text-primary" : "hover:bg-accent text-muted-foreground",
-            )}
-          >
-            Codex
-          </button>
-          <button
-            data-testid="settings-agent-runner-amp"
-            onClick={() => setAgentRunner("amp")}
-            className={cn(
-              "px-3 py-1.5 text-xs font-medium transition-colors border-l border-border",
-              runner === "amp" ? "bg-primary/10 text-primary" : "hover:bg-accent text-muted-foreground",
-            )}
-          >
-            Amp
-          </button>
-          <button
-            data-testid="settings-agent-runner-claude"
-            onClick={() => setAgentRunner("claude")}
-            className={cn(
-              "px-3 py-1.5 text-xs font-medium transition-colors border-l border-border",
-              runner === "claude" ? "bg-primary/10 text-primary" : "hover:bg-accent text-muted-foreground",
-            )}
-          >
-            Claude
-          </button>
+          )}
         </div>
       </div>
     </div>
@@ -2372,21 +1517,7 @@ function AllSettings({
           <Bot className="w-4 h-4 text-muted-foreground" />
           Agent
         </h3>
-        <div className="space-y-4">
-          <AgentRunnerSettings />
-          <CodexSettings
-            initialSelectedFilePath={initialAgentId === "codex" ? initialAgentFilePath : null}
-            autoFocusEditor={initialAgentId === "codex" && initialAgentFilePath != null}
-          />
-          <AmpSettings
-            initialSelectedFilePath={initialAgentId === "amp" ? initialAgentFilePath : null}
-            autoFocusEditor={initialAgentId === "amp" && initialAgentFilePath != null}
-          />
-          <ClaudeSettings
-            initialSelectedFilePath={initialAgentId === "claude" ? initialAgentFilePath : null}
-            autoFocusEditor={initialAgentId === "claude" && initialAgentFilePath != null}
-          />
-        </div>
+        <AgentConfigPanel initialAgentId={initialAgentId} initialAgentFilePath={initialAgentFilePath} />
       </section>
 
       <section id="task" className="scroll-mt-8">
