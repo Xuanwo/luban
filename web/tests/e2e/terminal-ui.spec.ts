@@ -92,15 +92,16 @@ function samplePixel(png: PNG, x: number, y: number): { r: number; g: number; b:
   }
 }
 
-test("terminal background matches card background and survives reload", async ({ page }) => {
+test("terminal background matches sidebar background and survives reload", async ({ page }) => {
   await ensureWorkspace(page)
 
   const terminal = page.getByTestId("pty-terminal")
   await waitForTerminalReady(terminal)
 
-  const expected = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
+  const sidebar = page.getByTestId("left-sidebar")
+  const expected = await sidebar.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
   const rgb = parseRgb(expected)
-  expect(rgb, `unexpected terminal background: ${expected}`).not.toBeNull()
+  expect(rgb, `unexpected sidebar background: ${expected}`).not.toBeNull()
 
   const shot = await terminal.screenshot()
   const png = PNG.sync.read(shot)
@@ -115,9 +116,9 @@ test("terminal background matches card background and survives reload", async ({
   await ensureWorkspace(page)
   await waitForTerminalReady(terminal)
 
-  const expectedAfter = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
+  const expectedAfter = await sidebar.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
   const rgbAfter = parseRgb(expectedAfter)
-  expect(rgbAfter, `unexpected terminal background after reload: ${expectedAfter}`).not.toBeNull()
+  expect(rgbAfter, `unexpected sidebar background after reload: ${expectedAfter}`).not.toBeNull()
 
   const shotAfter = await terminal.screenshot()
   const pngAfter = PNG.sync.read(shotAfter)
@@ -128,7 +129,7 @@ test("terminal background matches card background and survives reload", async ({
   expect(Math.abs(pixelAfter.b - (rgbAfter?.b ?? 0))).toBeLessThanOrEqual(tol)
 })
 
-test("terminal ANSI black background is distinct from card background", async ({ page }) => {
+test("terminal ANSI black background is distinct from sidebar background", async ({ page }) => {
   const token = `ANSI_BG_DONE_${Math.random().toString(16).slice(2)}`
   const reversed = token.split("").reverse().join("")
   const output = waitForPtyOutput(page, new RegExp(escapeRegExp(reversed)), 20_000)
@@ -145,9 +146,10 @@ test("terminal ANSI black background is distinct from card background", async ({
   await page.keyboard.press("Enter")
   await output
 
-  const expected = await terminal.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
+  const sidebar = page.getByTestId("left-sidebar")
+  const expected = await sidebar.evaluate((el) => getComputedStyle(el as Element).backgroundColor)
   const background = parseRgb(expected)
-  expect(background, `unexpected terminal background: ${expected}`).not.toBeNull()
+  expect(background, `unexpected sidebar background: ${expected}`).not.toBeNull()
 
   const samplePoint = await terminal.evaluate((outer) => {
     const target = (outer.querySelector("canvas") ?? outer.querySelector(".xterm")) as HTMLElement | null
