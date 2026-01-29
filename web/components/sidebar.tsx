@@ -463,7 +463,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
               >
                 <div
                   className={cn(
-                    "relative flex items-center mx-1 rounded-xl transition-all duration-200",
+                    "relative flex items-center mx-2 rounded-xl overflow-hidden transition-all duration-200",
                     isStandaloneMainActive
                       ? "bg-glass-surface shadow-lg"
                       : "hover:bg-glass-surface-muted/50",
@@ -594,7 +594,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2.5 py-2 mx-1 rounded-xl cursor-pointer outline-none transition-all duration-200",
+                        "group/worktree relative flex items-center gap-2 px-2.5 py-2 mx-2 rounded-xl cursor-pointer outline-none transition-all duration-200",
                         worktree.workspaceId === activeWorkspaceId
                           ? "bg-glass-surface shadow-lg"
                           : "hover:bg-glass-surface-muted/50",
