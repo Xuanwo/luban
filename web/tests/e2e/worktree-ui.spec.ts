@@ -44,6 +44,24 @@ test("worktree item shows branch name above worktree name", async ({ page }) => 
   expect((branchBox?.y ?? 0) < (nameBox?.y ?? 0)).toBeTruthy()
 })
 
+test("sidebar leading icons are aligned", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const projectPath = fs.realpathSync(requireEnv("LUBAN_E2E_PROJECT_DIR"))
+  const projectToggle = projectToggleByPath(page, projectPath)
+  await projectToggle.waitFor({ state: "visible", timeout: 15_000 })
+  const projectContainer = projectToggle.locator("..").locator("..")
+
+  const worktreeRows = projectContainer.getByTestId("worktree-row")
+  await worktreeRows.first().waitFor({ timeout: 15_000 })
+
+  const projectIconBox = await projectToggle.getByTestId("sidebar-project-leading-icon").boundingBox()
+  const worktreeIconBox = await worktreeRows.first().getByTestId("sidebar-worktree-leading-icon").boundingBox()
+  expect(projectIconBox, "project icon box should be visible").not.toBeNull()
+  expect(worktreeIconBox, "worktree icon box should be visible").not.toBeNull()
+  expect(Math.abs((projectIconBox?.x ?? 0) - (worktreeIconBox?.x ?? 0))).toBeLessThanOrEqual(1)
+})
+
 test("switching between worktrees keeps chat content stable (no flash)", async ({ page }) => {
   await ensureWorkspace(page)
 

@@ -494,19 +494,22 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                       : "cursor-default",
                   )}
                 >
-                  {canExpand ? (
-                    isExpanded ? (
-                      <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                    ) : (
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                    )
-                  ) : standaloneStatus ? (
-                    <span data-testid="project-agent-status-icon">
-                      <AgentStatusIcon status={standaloneStatus} size="sm" />
-                    </span>
-                  ) : (
-                    <span className="w-3.5 h-3.5 flex-shrink-0" />
-                  )}
+                  <span
+                    data-testid="sidebar-project-leading-icon"
+                    className="w-4 h-4 flex items-center justify-center flex-shrink-0"
+                  >
+                    {canExpand ? (
+                      isExpanded ? (
+                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                      )
+                    ) : standaloneStatus ? (
+                      <span data-testid="project-agent-status-icon" className="flex-shrink-0">
+                        <AgentStatusIcon status={standaloneStatus} size="sm" />
+                      </span>
+                    ) : null}
+                  </span>
                   <span
                     className={cn(
                       "text-sm font-semibold truncate flex-1 min-w-0 transition-colors",
@@ -594,7 +597,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2.5 py-2 mx-2 rounded-xl cursor-pointer outline-none transition-all duration-200",
+                        "group/worktree relative flex items-center gap-2 px-2 py-2 mx-2 rounded-xl cursor-pointer outline-none transition-all duration-200",
                         worktree.workspaceId === activeWorkspaceId
                           ? "bg-glass-surface shadow-lg"
                           : "hover:bg-glass-surface-muted/50",
@@ -610,16 +613,19 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                         void openWorkspace(worktree.workspaceId)
                       }}
                     >
-                      {worktree.isArchiving ? (
-                        <Loader2
-                          data-testid="worktree-archiving-spinner"
-                          className="w-3.5 h-3.5 animate-spin text-muted-foreground flex-shrink-0"
-                        />
-                      ) : (
-                        <span className="flex-shrink-0">
+                      <span
+                        data-testid="sidebar-worktree-leading-icon"
+                        className="w-4 h-4 flex items-center justify-center flex-shrink-0"
+                      >
+                        {worktree.isArchiving ? (
+                          <Loader2
+                            data-testid="worktree-archiving-spinner"
+                            className="w-3.5 h-3.5 animate-spin text-muted-foreground"
+                          />
+                        ) : (
                           <AgentStatusIcon status={worktree.agentStatus} size="sm" />
-                        </span>
-                      )}
+                        )}
+                      </span>
 
                       <div className="flex flex-col flex-1 min-w-0">
                         <div className="flex items-center gap-1">
