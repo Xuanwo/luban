@@ -1,6 +1,12 @@
 use super::{ChatScrollAnchor, WorkspaceStatus};
 use std::{collections::HashMap, path::PathBuf};
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PersistedWorkspaceThreadRunConfigOverride {
+    pub model_id: String,
+    pub thinking_effort: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersistedAppState {
     pub projects: Vec<PersistedProject>,
@@ -29,6 +35,8 @@ pub struct PersistedAppState {
     pub workspace_chat_scroll_y10: HashMap<(u64, u64), i32>,
     pub workspace_chat_scroll_anchor: HashMap<(u64, u64), ChatScrollAnchor>,
     pub workspace_unread_completions: HashMap<u64, bool>,
+    pub workspace_thread_run_config_overrides:
+        HashMap<(u64, u64), PersistedWorkspaceThreadRunConfigOverride>,
     pub task_prompt_templates: HashMap<String, String>,
 }
 

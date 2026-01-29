@@ -1,7 +1,7 @@
 use super::{
-    AppearanceFonts, AppearanceTheme, ChatScrollAnchor, MainPane, OperationStatus, ProjectId,
-    RightPane, WorkspaceConversation, WorkspaceId, WorkspaceStatus, WorkspaceTabs,
-    WorkspaceThreadId,
+    AppearanceFonts, AppearanceTheme, ChatScrollAnchor, MainPane, OperationStatus,
+    PersistedWorkspaceThreadRunConfigOverride, ProjectId, RightPane, WorkspaceConversation,
+    WorkspaceId, WorkspaceStatus, WorkspaceTabs, WorkspaceThreadId,
 };
 use crate::{SystemTaskKind, TaskIntentKind};
 use std::{
@@ -63,6 +63,8 @@ pub struct AppState {
     pub workspace_chat_scroll_y10: HashMap<(WorkspaceId, WorkspaceThreadId), i32>,
     pub workspace_chat_scroll_anchor: HashMap<(WorkspaceId, WorkspaceThreadId), ChatScrollAnchor>,
     pub workspace_unread_completions: HashSet<WorkspaceId>,
+    pub workspace_thread_run_config_overrides:
+        HashMap<(WorkspaceId, WorkspaceThreadId), PersistedWorkspaceThreadRunConfigOverride>,
     pub task_prompt_templates: HashMap<TaskIntentKind, String>,
     pub system_prompt_templates: HashMap<SystemTaskKind, String>,
 }

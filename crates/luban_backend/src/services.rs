@@ -3401,6 +3401,7 @@ mod tests {
             workspace_chat_scroll_y10: std::collections::HashMap::new(),
             workspace_chat_scroll_anchor: std::collections::HashMap::new(),
             workspace_unread_completions: std::collections::HashMap::new(),
+            workspace_thread_run_config_overrides: std::collections::HashMap::new(),
             task_prompt_templates: std::collections::HashMap::new(),
         };
 

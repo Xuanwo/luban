@@ -1,5 +1,8 @@
 use crate::time::unix_seconds;
-use crate::{AppState, PersistedAppState, PersistedProject, PersistedWorkspace};
+use crate::{
+    AppState, PersistedAppState, PersistedProject, PersistedWorkspace,
+    PersistedWorkspaceThreadRunConfigOverride,
+};
 use std::collections::HashMap;
 
 pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
@@ -106,6 +109,19 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
             .iter()
             .map(|workspace_id| (workspace_id.0, true))
             .collect::<HashMap<_, _>>(),
+        workspace_thread_run_config_overrides: state
+            .workspace_thread_run_config_overrides
+            .iter()
+            .map(|((workspace_id, thread_id), run_config)| {
+                (
+                    (workspace_id.0, thread_id.0),
+                    PersistedWorkspaceThreadRunConfigOverride {
+                        model_id: run_config.model_id.clone(),
+                        thinking_effort: run_config.thinking_effort.clone(),
+                    },
+                )
+            })
+            .collect(),
         task_prompt_templates: HashMap::new(),
     }
 }

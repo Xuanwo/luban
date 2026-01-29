@@ -17,6 +17,7 @@ const WORKSPACE_OPEN_TAB_PREFIX: &str = "workspace_open_tab_";
 const WORKSPACE_ARCHIVED_TAB_PREFIX: &str = "workspace_archived_tab_";
 const WORKSPACE_NEXT_THREAD_ID_PREFIX: &str = "workspace_next_thread_id_";
 const WORKSPACE_UNREAD_COMPLETION_PREFIX: &str = "workspace_unread_completion_";
+const WORKSPACE_THREAD_RUN_CONFIG_PREFIX: &str = "workspace_thread_run_config_";
 const LAST_OPEN_WORKSPACE_ID_KEY: &str = "last_open_workspace_id";
 const OPEN_BUTTON_SELECTION_KEY: &str = "open_button_selection";
 const SIDEBAR_PROJECT_ORDER_KEY: &str = "sidebar_project_order";
@@ -1089,6 +1090,44 @@ impl SqliteDatabase {
             task_prompt_templates.insert(kind.to_owned(), value);
         }
 
+        let mut workspace_thread_run_config_overrides = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT key, value FROM app_settings_text WHERE key LIKE 'workspace_thread_run_config_%'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (key, value) = row?;
+            let Some(raw) = key.strip_prefix(WORKSPACE_THREAD_RUN_CONFIG_PREFIX) else {
+                continue;
+            };
+            let mut parts = raw.split('_');
+            let workspace_id = match parts.next() {
+                Some(workspace_id_str) => match workspace_id_str.parse::<u64>() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                },
+                None => continue,
+            };
+            let thread_id = match parts.next() {
+                Some(thread_id_str) => match thread_id_str.parse::<u64>() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                },
+                None => continue,
+            };
+            if parts.next().is_some() {
+                continue;
+            }
+            let Ok(run_config) = serde_json::from_str::<
+                luban_domain::PersistedWorkspaceThreadRunConfigOverride,
+            >(&value) else {
+                continue;
+            };
+            workspace_thread_run_config_overrides.insert((workspace_id, thread_id), run_config);
+        }
+
         if !self.persist_ui_state {
             return Ok(PersistedAppState {
                 projects,
@@ -1117,6 +1156,7 @@ impl SqliteDatabase {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides,
                 task_prompt_templates,
             });
         }
@@ -1499,6 +1539,7 @@ impl SqliteDatabase {
             workspace_chat_scroll_y10,
             workspace_chat_scroll_anchor,
             workspace_unread_completions,
+            workspace_thread_run_config_overrides,
             task_prompt_templates,
         })
     }
@@ -1915,6 +1956,33 @@ impl SqliteDatabase {
                    value = excluded.value,
                    updated_at = excluded.updated_at",
                 params![key, trimmed, now],
+            )?;
+        }
+
+        tx.execute(
+            "DELETE FROM app_settings_text WHERE key LIKE 'workspace_thread_run_config_%'",
+            [],
+        )?;
+        for ((workspace_id, thread_id), run_config) in
+            &snapshot.workspace_thread_run_config_overrides
+        {
+            let key = format!("{WORKSPACE_THREAD_RUN_CONFIG_PREFIX}{workspace_id}_{thread_id}");
+            let model_id = run_config.model_id.trim();
+            let effort = run_config.thinking_effort.trim();
+            if model_id.is_empty() || effort.is_empty() {
+                continue;
+            }
+            let value = serde_json::to_string(run_config).unwrap_or_default();
+            if value.trim().is_empty() {
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![key, value, now],
             )?;
         }
 
@@ -3067,6 +3135,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -3129,6 +3198,13 @@ mod tests {
                 },
             )]),
             workspace_unread_completions: HashMap::from([(10, true)]),
+            workspace_thread_run_config_overrides: HashMap::from([(
+                (10, 2),
+                luban_domain::PersistedWorkspaceThreadRunConfigOverride {
+                    model_id: "gpt-5.2-codex".to_owned(),
+                    thinking_effort: "high".to_owned(),
+                },
+            )]),
             task_prompt_templates: HashMap::from([(
                 "fix".to_owned(),
                 "Fix issue template override".to_owned(),
@@ -3187,6 +3263,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
         db.save_app_state(&snapshot).unwrap();
@@ -3401,6 +3478,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
         db.save_app_state(&snapshot).unwrap();
@@ -3510,6 +3588,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -3575,6 +3654,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -3639,6 +3719,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -3688,6 +3769,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
         db.save_app_state(&empty).unwrap();

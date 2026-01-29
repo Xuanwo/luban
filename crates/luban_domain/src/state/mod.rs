@@ -17,7 +17,10 @@ pub use conversation::{
 };
 pub use ids::{ProjectId, WorkspaceId, WorkspaceThreadId};
 pub use layout::{MainPane, OperationStatus, RightPane, WorkspaceStatus};
-pub use persisted::{PersistedAppState, PersistedProject, PersistedWorkspace};
+pub use persisted::{
+    PersistedAppState, PersistedProject, PersistedWorkspace,
+    PersistedWorkspaceThreadRunConfigOverride,
+};
 pub use tabs::WorkspaceTabs;
 pub use workspace::{AppState, Project, Workspace};
 

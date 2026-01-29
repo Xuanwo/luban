@@ -194,6 +194,34 @@ pub(crate) fn apply_persisted_app_state(
         .into_iter()
         .filter_map(|(workspace_id, unread)| unread.then_some(WorkspaceId(workspace_id)))
         .collect::<HashSet<_>>();
+    let valid_workspace_ids: HashSet<WorkspaceId> = state
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .map(|w| w.id)
+        .collect();
+    state.workspace_thread_run_config_overrides = persisted
+        .workspace_thread_run_config_overrides
+        .into_iter()
+        .filter_map(|((workspace_id, thread_id), run_config)| {
+            if !valid_workspace_ids.contains(&WorkspaceId(workspace_id)) {
+                return None;
+            }
+            let model_id = run_config.model_id.trim();
+            if model_id.is_empty() || model_id.len() > 256 {
+                return None;
+            }
+            let parsed_effort = parse_thinking_effort(&run_config.thinking_effort)?;
+            let normalized = normalize_thinking_effort(model_id, parsed_effort);
+            Some((
+                (WorkspaceId(workspace_id), WorkspaceThreadId(thread_id)),
+                crate::PersistedWorkspaceThreadRunConfigOverride {
+                    model_id: model_id.to_owned(),
+                    thinking_effort: normalized.as_str().to_owned(),
+                },
+            ))
+        })
+        .collect();
 
     for workspace in state.projects.iter().flat_map(|p| &p.workspaces) {
         let workspace_id = workspace.id;
@@ -229,10 +257,20 @@ pub(crate) fn apply_persisted_app_state(
             .unwrap_or(active.0 + 1);
 
         for thread_id in open_tabs.iter().copied() {
-            state.conversations.insert(
-                (workspace_id, thread_id),
-                state.default_conversation(thread_id),
-            );
+            let mut conversation = state.default_conversation(thread_id);
+            if let Some(run_config) = state
+                .workspace_thread_run_config_overrides
+                .get(&(workspace_id, thread_id))
+                && let Some(parsed_effort) = parse_thinking_effort(&run_config.thinking_effort)
+            {
+                let normalized = normalize_thinking_effort(&run_config.model_id, parsed_effort);
+                conversation.run_config_overridden_by_user = true;
+                conversation.agent_model_id = run_config.model_id.clone();
+                conversation.thinking_effort = normalized;
+            }
+            state
+                .conversations
+                .insert((workspace_id, thread_id), conversation);
         }
 
         state.workspace_tabs.insert(
@@ -655,6 +693,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 

@@ -154,6 +154,7 @@ pub struct WorkspaceConversation {
     pub thread_id: Option<String>,
     pub draft: String,
     pub draft_attachments: Vec<DraftAttachment>,
+    pub run_config_overridden_by_user: bool,
     pub agent_model_id: String,
     pub thinking_effort: ThinkingEffort,
     pub entries: Vec<ConversationEntry>,

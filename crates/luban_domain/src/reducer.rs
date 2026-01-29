@@ -73,6 +73,7 @@ impl AppState {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashSet::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: default_task_prompt_templates(),
             system_prompt_templates: default_system_prompt_templates(),
         }
@@ -577,14 +578,19 @@ impl AppState {
                     conversation.thread_id = snapshot.thread_id.clone();
                 }
 
-                if let Some(model_id) = snapshot_model_id {
-                    let effort = snapshot_thinking_effort.unwrap_or(conversation.thinking_effort);
-                    let normalized = normalize_thinking_effort(&model_id, effort);
-                    conversation.agent_model_id = model_id;
-                    conversation.thinking_effort = normalized;
-                } else if let Some(effort) = snapshot_thinking_effort {
-                    conversation.thinking_effort =
-                        normalize_thinking_effort(&conversation.agent_model_id, effort);
+                let should_apply_snapshot_run_config = !conversation.run_config_overridden_by_user
+                    || conversation.agent_model_id.trim().is_empty();
+                if should_apply_snapshot_run_config {
+                    if let Some(model_id) = snapshot_model_id {
+                        let effort =
+                            snapshot_thinking_effort.unwrap_or(conversation.thinking_effort);
+                        let normalized = normalize_thinking_effort(&model_id, effort);
+                        conversation.agent_model_id = model_id;
+                        conversation.thinking_effort = normalized;
+                    } else if let Some(effort) = snapshot_thinking_effort {
+                        conversation.thinking_effort =
+                            normalize_thinking_effort(&conversation.agent_model_id, effort);
+                    }
                 }
 
                 let should_apply_queue_snapshot = conversation.entries.is_empty()
@@ -789,16 +795,27 @@ impl AppState {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     let normalized =
                         normalize_thinking_effort(&model_id, conversation.thinking_effort);
+                    conversation.run_config_overridden_by_user = true;
                     conversation.agent_model_id = model_id.clone();
                     conversation.thinking_effort = normalized;
                     normalized
                 };
-                vec![Effect::StoreConversationRunConfig {
-                    workspace_id,
-                    thread_id,
-                    model_id,
-                    thinking_effort,
-                }]
+                self.workspace_thread_run_config_overrides.insert(
+                    (workspace_id, thread_id),
+                    crate::PersistedWorkspaceThreadRunConfigOverride {
+                        model_id: model_id.clone(),
+                        thinking_effort: thinking_effort.as_str().to_owned(),
+                    },
+                );
+                vec![
+                    Effect::StoreConversationRunConfig {
+                        workspace_id,
+                        thread_id,
+                        model_id,
+                        thinking_effort,
+                    },
+                    Effect::SaveAppState,
+                ]
             }
             Action::ThinkingEffortChanged {
                 workspace_id,
@@ -810,15 +827,26 @@ impl AppState {
                     if !thinking_effort_supported(&conversation.agent_model_id, thinking_effort) {
                         return Vec::new();
                     }
+                    conversation.run_config_overridden_by_user = true;
                     conversation.thinking_effort = thinking_effort;
                     conversation.agent_model_id.clone()
                 };
-                vec![Effect::StoreConversationRunConfig {
-                    workspace_id,
-                    thread_id,
-                    model_id,
-                    thinking_effort,
-                }]
+                self.workspace_thread_run_config_overrides.insert(
+                    (workspace_id, thread_id),
+                    crate::PersistedWorkspaceThreadRunConfigOverride {
+                        model_id: model_id.clone(),
+                        thinking_effort: thinking_effort.as_str().to_owned(),
+                    },
+                );
+                vec![
+                    Effect::StoreConversationRunConfig {
+                        workspace_id,
+                        thread_id,
+                        model_id,
+                        thinking_effort,
+                    },
+                    Effect::SaveAppState,
+                ]
             }
             Action::ChatDraftChanged {
                 workspace_id,
@@ -1274,15 +1302,32 @@ impl AppState {
                 for meta in threads {
                     max_thread_id = max_thread_id.max(meta.thread_id.0);
                     loaded_thread_ids.push(meta.thread_id);
+                    let run_config_override = self
+                        .workspace_thread_run_config_overrides
+                        .get(&(workspace_id, meta.thread_id))
+                        .cloned();
                     let conversation = self
                         .conversations
                         .entry((workspace_id, meta.thread_id))
                         .or_insert_with(|| {
-                            Self::default_conversation_with_defaults(
+                            let mut conversation = Self::default_conversation_with_defaults(
                                 meta.thread_id,
                                 default_model_id.clone(),
                                 default_thinking_effort,
-                            )
+                            );
+                            if let Some(run_config) = run_config_override.clone()
+                                && let Some(parsed_effort) =
+                                    crate::agent_settings::parse_thinking_effort(
+                                        &run_config.thinking_effort,
+                                    )
+                            {
+                                let normalized =
+                                    normalize_thinking_effort(&run_config.model_id, parsed_effort);
+                                conversation.run_config_overridden_by_user = true;
+                                conversation.agent_model_id = run_config.model_id;
+                                conversation.thinking_effort = normalized;
+                            }
+                            conversation
                         });
                     conversation.title = meta.title;
                     conversation.thread_id = meta.remote_thread_id;
@@ -1759,18 +1804,35 @@ impl AppState {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
     ) -> &mut WorkspaceConversation {
+        use std::collections::hash_map::Entry;
+
         self.ensure_workspace_tabs_mut(workspace_id);
         let default_model_id = self.agent_default_model_id.clone();
         let default_thinking_effort = self.agent_default_thinking_effort;
-        self.conversations
-            .entry((workspace_id, thread_id))
-            .or_insert_with(|| {
-                Self::default_conversation_with_defaults(
+        let run_config_override = self
+            .workspace_thread_run_config_overrides
+            .get(&(workspace_id, thread_id))
+            .cloned();
+        match self.conversations.entry((workspace_id, thread_id)) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let mut conversation = Self::default_conversation_with_defaults(
                     thread_id,
                     default_model_id.clone(),
                     default_thinking_effort,
-                )
-            })
+                );
+                if let Some(run_config) = run_config_override
+                    && let Some(parsed_effort) =
+                        crate::agent_settings::parse_thinking_effort(&run_config.thinking_effort)
+                {
+                    let normalized = normalize_thinking_effort(&run_config.model_id, parsed_effort);
+                    conversation.run_config_overridden_by_user = true;
+                    conversation.agent_model_id = run_config.model_id;
+                    conversation.thinking_effort = normalized;
+                }
+                entry.insert(conversation)
+            }
+        }
     }
 
     fn default_conversation_with_defaults(
@@ -1784,6 +1846,7 @@ impl AppState {
             thread_id: None,
             draft: String::new(),
             draft_attachments: Vec::new(),
+            run_config_overridden_by_user: false,
             agent_model_id: model_id,
             thinking_effort,
             entries: Vec::new(),
@@ -1878,6 +1941,8 @@ impl AppState {
             self.workspace_chat_scroll_y10
                 .retain(|(wid, _), _| wid != workspace_id);
             self.workspace_chat_scroll_anchor
+                .retain(|(wid, _), _| wid != workspace_id);
+            self.workspace_thread_run_config_overrides
                 .retain(|(wid, _), _| wid != workspace_id);
             self.conversations.retain(|(wid, _), _| wid != workspace_id);
         }
@@ -2298,6 +2363,118 @@ mod tests {
     }
 
     #[test]
+    fn conversation_loaded_does_not_override_user_run_config() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        state.apply(Action::CodexDefaultsLoaded {
+            model_id: Some("gpt-5.2-codex".to_owned()),
+            thinking_effort: Some(ThinkingEffort::High),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        let thread_id = default_thread_id();
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5".to_owned(),
+        });
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert!(conversation.run_config_overridden_by_user);
+        assert_eq!(conversation.agent_model_id, "gpt-5");
+
+        let snapshot = ConversationSnapshot {
+            thread_id: None,
+            agent_model_id: Some("gpt-5.2-codex".to_owned()),
+            thinking_effort: Some(ThinkingEffort::High),
+            entries: Vec::new(),
+            entries_total: 0,
+            entries_start: 0,
+            pending_prompts: Vec::new(),
+            queue_paused: false,
+            run_started_at_unix_ms: None,
+            run_finished_at_unix_ms: None,
+        };
+
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            thread_id,
+            snapshot,
+        });
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_model_id, "gpt-5");
+    }
+
+    #[test]
+    fn thread_run_config_override_is_persisted_in_app_state() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        state.apply(Action::CodexDefaultsLoaded {
+            model_id: Some("gpt-5.2-codex".to_owned()),
+            thinking_effort: Some(ThinkingEffort::High),
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        let thread_id = default_thread_id();
+
+        state.apply(Action::ChatModelChanged {
+            workspace_id,
+            thread_id,
+            model_id: "gpt-5".to_owned(),
+        });
+
+        let persisted = state.to_persisted();
+        let saved = persisted
+            .workspace_thread_run_config_overrides
+            .get(&(workspace_id.as_u64(), thread_id.as_u64()))
+            .expect("missing persisted run config override");
+        assert_eq!(saved.model_id, "gpt-5");
+
+        let mut restored = AppState::new();
+        restored.apply(Action::AppStateLoaded {
+            persisted: Box::new(persisted),
+        });
+
+        let conversation = restored
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert!(conversation.run_config_overridden_by_user);
+        assert_eq!(conversation.agent_model_id, "gpt-5");
+    }
+
+    #[test]
     fn queued_turn_updates_current_run_config_when_started() {
         let mut state = AppState::new();
         state.apply(Action::AddProject {
@@ -2674,6 +2851,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -2720,6 +2898,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -2766,6 +2945,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -2890,6 +3070,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });

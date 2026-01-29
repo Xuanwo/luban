@@ -4804,6 +4804,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -5341,6 +5342,7 @@ mod tests {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -5510,6 +5512,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -5877,6 +5880,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -6203,6 +6207,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -6416,6 +6421,7 @@ mod tests {
                 workspace_chat_scroll_y10: HashMap::new(),
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
+                workspace_thread_run_config_overrides: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
