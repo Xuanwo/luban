@@ -72,6 +72,8 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
         onClick={onToggle}
         className="absolute right-3 top-2 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors z-10"
         title="Open sidebar"
+        aria-label="Open sidebar"
+        type="button"
       >
         <PanelRightOpen className="w-4 h-4" />
       </button>
@@ -119,12 +121,15 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
           data-testid="right-sidebar-tab-terminal"
           onClick={() => setActiveTab("terminal")}
           className={cn(
-            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-all",
+            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
             activeTab === "terminal"
-              ? "bg-primary/15 text-primary"
+              ? "luban-float-glass text-foreground"
               : "text-muted-foreground hover:text-foreground hover:bg-muted",
           )}
           title="Terminal"
+          aria-label="Terminal"
+          type="button"
+          data-active={activeTab === "terminal" ? "true" : "false"}
         >
           <Terminal className="w-4 h-4" />
           {activeTab === "terminal" && <span className="text-xs font-medium">Terminal</span>}
@@ -134,14 +139,17 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
           data-testid="right-sidebar-tab-context"
           onClick={() => setActiveTab("context")}
           className={cn(
-            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-all",
+            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
             activeTab === "context"
-              ? "bg-primary/15 text-primary"
+              ? "luban-float-glass text-foreground"
               : "text-muted-foreground hover:text-foreground hover:bg-muted",
             !canUseContext && "opacity-60",
           )}
           title="Context"
+          aria-label="Context"
           disabled={!canUseContext}
+          type="button"
+          data-active={activeTab === "context" ? "true" : "false"}
         >
           <Paperclip className="w-4 h-4" />
           {activeTab === "context" && <span className="text-xs font-medium">Context</span>}
@@ -151,14 +159,17 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
           data-testid="right-sidebar-tab-changes"
           onClick={() => setActiveTab("changes")}
           className={cn(
-            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-all",
+            "flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
             activeTab === "changes"
-              ? "bg-primary/15 text-primary"
+              ? "luban-float-glass text-foreground"
               : "text-muted-foreground hover:text-foreground hover:bg-muted",
             !canUseChanges && "opacity-60",
           )}
           title="Changes"
+          aria-label="Changes"
           disabled={!canUseChanges}
+          type="button"
+          data-active={activeTab === "changes" ? "true" : "false"}
         >
           <GitCompareArrows className="w-4 h-4" />
           {activeTab === "changes" && <span className="text-xs font-medium">Changes</span>}
@@ -170,6 +181,8 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
           onClick={onToggle}
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
           title="Close sidebar"
+          aria-label="Close sidebar"
+          type="button"
         >
           <PanelRightClose className="w-4 h-4" />
         </button>

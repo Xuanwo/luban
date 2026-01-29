@@ -40,8 +40,7 @@ export function AppearanceSync() {
     lastFontsRef.current = digest
 
     setFonts({ uiFont, chatFont, codeFont, terminalFont })
-  }, [app?.rev])
+  }, [app, fonts.chatFont, fonts.codeFont, fonts.terminalFont, fonts.uiFont, setFonts, setTheme])
 
   return null
 }
-

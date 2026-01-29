@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import Image from "next/image"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { useLuban } from "@/lib/luban-context"
@@ -460,7 +461,14 @@ export function FeedbackModal({ open, onOpenChange }: FeedbackModalProps) {
                         key={att.id}
                         className="relative group w-16 h-16 rounded-lg overflow-hidden border border-border"
                       >
-                        <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                        <Image
+                          src={att.url}
+                          alt={att.name}
+                          width={64}
+                          height={64}
+                          className="w-full h-full object-cover"
+                          unoptimized
+                        />
                         <button
                           type="button"
                           onClick={() => removeAttachment(att.id)}
@@ -541,7 +549,14 @@ export function FeedbackModal({ open, onOpenChange }: FeedbackModalProps) {
                 <div className="flex flex-wrap gap-2">
                   {attachments.map((att) => (
                     <div key={att.id} className="w-12 h-12 rounded overflow-hidden border border-border">
-                      <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                      <Image
+                        src={att.url}
+                        alt={att.name}
+                        width={48}
+                        height={48}
+                        className="w-full h-full object-cover"
+                        unoptimized
+                      />
                     </div>
                   ))}
                 </div>

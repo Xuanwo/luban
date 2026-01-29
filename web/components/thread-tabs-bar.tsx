@@ -5,12 +5,6 @@ import { ChevronDown, GitCompareArrows, MessageSquare, Plus, RotateCcw, X } from
 
 import { cn } from "@/lib/utils"
 import type { ArchivedTab, ChatTab } from "@/lib/use-thread-tabs"
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
 
 export function ThreadTabsBar(props: {
   tabs: ChatTab[]
@@ -27,6 +21,12 @@ export function ThreadTabsBar(props: {
 }) {
   const [showTabDropdown, setShowTabDropdown] = useState(false)
 
+  const tabClassName = (isActive: boolean) =>
+    cn(
+      "group relative flex items-center gap-2 h-7 px-3 cursor-pointer transition-colors transition-shadow duration-200 min-w-0 max-w-[180px] rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+      isActive ? "z-10 text-foreground luban-float-glass" : "text-muted-foreground hover:text-foreground hover:bg-muted hover:shadow-sm",
+    )
+
   return (
     <div className="flex items-center h-10 bg-background px-2 border-b border-border">
       <div className="flex-1 flex items-center gap-0.5 min-w-0 overflow-x-auto scrollbar-none py-1.5 pl-1">
@@ -35,12 +35,16 @@ export function ThreadTabsBar(props: {
             key={tab.id}
             data-testid={`thread-tab-${tab.id}`}
             onClick={() => props.onTabClick(tab.id)}
-            className={cn(
-              "group relative flex items-center gap-2 h-7 px-3 cursor-pointer transition-all duration-200 min-w-0 max-w-[180px] rounded-md",
-              props.activePanel === "thread" && tab.id === props.activeTabId
-                ? "z-10 text-foreground bg-card ring-1 ring-border/80 shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] dark:ring-white/10"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted hover:shadow-sm",
-            )}
+            className={tabClassName(props.activePanel === "thread" && tab.id === props.activeTabId)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return
+              e.preventDefault()
+              props.onTabClick(tab.id)
+            }}
+            role="button"
+            tabIndex={0}
+            aria-current={props.activePanel === "thread" && tab.id === props.activeTabId ? "page" : undefined}
+            data-active={props.activePanel === "thread" && tab.id === props.activeTabId ? "true" : "false"}
           >
             <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
             <span data-testid="thread-tab-title" className="text-xs truncate flex-1">
@@ -49,7 +53,9 @@ export function ThreadTabsBar(props: {
             {props.tabs.length > 1 && (
               <button
                 onClick={(e) => props.onCloseTab(tab.id, e)}
-                className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center bg-muted rounded-r-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all"
+                className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center bg-muted rounded-r-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity"
+                type="button"
+                aria-label="Close tab"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -61,19 +67,25 @@ export function ThreadTabsBar(props: {
           <div
             key="diff-tab"
             onClick={props.onDiffTabClick}
-            className={cn(
-              "group relative flex items-center gap-2 h-7 px-3 cursor-pointer transition-all duration-200 min-w-0 max-w-[180px] rounded-md",
-              props.activePanel === "diff"
-                ? "z-10 text-foreground bg-card ring-1 ring-border/80 shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] dark:ring-white/10"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted hover:shadow-sm",
-            )}
+            className={tabClassName(props.activePanel === "diff")}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return
+              e.preventDefault()
+              props.onDiffTabClick()
+            }}
+            role="button"
+            tabIndex={0}
+            aria-current={props.activePanel === "diff" ? "page" : undefined}
+            data-active={props.activePanel === "diff" ? "true" : "false"}
           >
             <GitCompareArrows className="w-3.5 h-3.5 flex-shrink-0" />
             <span className="text-xs truncate flex-1">Changes</span>
             <button
               onClick={props.onCloseDiffTab}
-              className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center bg-muted rounded-r-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all"
+              className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center bg-muted rounded-r-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity"
               title="Close changes tab"
+              type="button"
+              aria-label="Close changes tab"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -84,6 +96,8 @@ export function ThreadTabsBar(props: {
           onClick={props.onAddTab}
           className="flex items-center justify-center w-8 h-10 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors flex-shrink-0"
           title="New tab"
+          aria-label="New tab"
+          type="button"
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -98,6 +112,8 @@ export function ThreadTabsBar(props: {
               showTabDropdown && "bg-muted text-foreground",
             )}
             title="All tabs"
+            aria-label="All tabs"
+            type="button"
           >
             <ChevronDown className="w-4 h-4" />
           </button>

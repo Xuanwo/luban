@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { AlignJustify, ChevronDown, ChevronRight, Columns2, GitCompareArrows } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -111,7 +111,7 @@ function AllFilesDiffViewer({
     return out
   }, [files])
 
-  const flushPendingRenderedFiles = () => {
+  const flushPendingRenderedFiles = useCallback(() => {
     flushTimerRef.current = null
     const pending = pendingRenderIdsRef.current
     if (pending.size === 0) return
@@ -121,9 +121,9 @@ function AllFilesDiffViewer({
       pending.clear()
       return next
     })
-  }
+  }, [])
 
-  const renderFilesImmediately = (ids: string[]) => {
+  const renderFilesImmediately = useCallback((ids: string[]) => {
     const unique = ids.filter((id) => !renderedFilesRef.current.has(id))
     if (unique.length === 0) return
     setRenderedFiles((prev) => {
@@ -131,9 +131,9 @@ function AllFilesDiffViewer({
       for (const id of unique) next.add(id)
       return next
     })
-  }
+  }, [])
 
-  const scheduleRenderFiles = (ids: string[]) => {
+  const scheduleRenderFiles = useCallback((ids: string[]) => {
     for (const id of ids) {
       if (renderedFilesRef.current.has(id)) continue
       pendingRenderIdsRef.current.add(id)
@@ -149,7 +149,7 @@ function AllFilesDiffViewer({
     }
 
     flushTimerRef.current = globalThis.setTimeout(flushPendingRenderedFiles, 0) as unknown as number
-  }
+  }, [flushPendingRenderedFiles])
 
   useEffect(() => {
     collapsedFilesRef.current = collapsedFiles
@@ -177,7 +177,7 @@ function AllFilesDiffViewer({
     renderFilesImmediately([activeFileId])
     el.scrollIntoView({ behavior: "smooth", block: "start" })
     prevActiveFileIdRef.current = activeFileId
-  }, [activeFileId, collapsedFiles])
+  }, [activeFileId, collapsedFiles, renderFilesImmediately])
 
   useEffect(() => {
     const root = scrollContainerRef.current
@@ -217,7 +217,7 @@ function AllFilesDiffViewer({
     return () => {
       observer.disconnect()
     }
-  }, [fileIndexById, files])
+  }, [fileIndexById, files, scheduleRenderFiles])
 
   useLayoutEffect(() => {
     if (files.length === 0) return
@@ -226,7 +226,7 @@ function AllFilesDiffViewer({
     if (activeFileId) initial.push(activeFileId)
     initial.push(files[0].file.id)
     renderFilesImmediately(initial)
-  }, [activeFileId, files])
+  }, [activeFileId, files, renderFilesImmediately])
 
   const getStatusColor = (status: ChangedFile["status"]) => {
     switch (status) {

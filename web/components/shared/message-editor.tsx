@@ -88,7 +88,7 @@ export function MessageEditor({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [isFocused, setIsFocused] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
-  const history = messageHistory ?? []
+  const history = useMemo(() => messageHistory ?? [], [messageHistory])
 
   const isComposingRef = useRef(false)
   const ignoreEnterUntilRef = useRef<number>(0)

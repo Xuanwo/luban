@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createContext, useContext, useEffect, useRef } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 
 import type {
@@ -237,22 +237,31 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     })()
   }, [wsConnected, store])
 
-  const actions = createLubanActions({
-    store,
-    sendAction: sendActionTransport,
-    request: requestTransport,
-  })
+  const actions = useMemo(
+    () =>
+      createLubanActions({
+        store,
+        sendAction: sendActionTransport,
+        request: requestTransport,
+      }),
+    [requestTransport, sendActionTransport, store],
+  )
 
-  eventHandlerRef.current = createLubanServerEventHandler({
-    store,
-    onToast: (message) => {
-      console.warn("server toast:", message)
-      toast(message)
-    },
-    onSelectThreadInWorkspace: (workspaceId, threadId) => {
-      void actions.selectThreadInWorkspace(workspaceId, threadId)
-    },
-  })
+  const serverEventHandler = useMemo(
+    () =>
+      createLubanServerEventHandler({
+        store,
+        onToast: (message) => {
+          console.warn("server toast:", message)
+          toast(message)
+        },
+        onSelectThreadInWorkspace: (workspaceId, threadId) => {
+          void actions.selectThreadInWorkspace(workspaceId, threadId)
+        },
+      }),
+    [actions, store],
+  )
+  eventHandlerRef.current = serverEventHandler
 
   useEffect(() => {
     if (app == null) return
@@ -265,7 +274,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     )
     if (!existsAndActive) return
     void actions.openWorkspace(stored)
-  }, [app, activeWorkspaceId])
+  }, [actions, activeWorkspaceId, app])
 
   useEffect(() => {
     if (app == null) return
@@ -330,7 +339,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
       pendingAutoOpenWorkspaceIdRef.current = null
       focusChatInput()
     })
-  }, [app?.rev, activeWorkspaceId, activeWorkspace?.status])
+  }, [actions, activeWorkspace?.status, activeWorkspaceId, app])
 
   const value: LubanContextValue = {
     app,

@@ -95,24 +95,26 @@ function attachment(args: {
   }
 }
 
-function agentMessage(text: string): AgentItem {
-  return { id: nextFixtureId("agent_message"), kind: "agent_message", payload: { text } }
+function agentMessage(text: string): ConversationEntry {
+  return { type: "agent_item", id: nextFixtureId("agent_message"), kind: "agent_message", payload: { text } }
 }
 
-function reasoning(text: string): AgentItem {
-  return { id: nextFixtureId("reasoning"), kind: "reasoning", payload: { text } }
+function reasoning(text: string): ConversationEntry {
+  return { type: "agent_item", id: nextFixtureId("reasoning"), kind: "reasoning", payload: { text } }
 }
 
-function commandExecution(command: string, aggregatedOutput: string): AgentItem {
+function commandExecution(command: string, aggregatedOutput: string): ConversationEntry {
   return {
+    type: "agent_item",
     id: nextFixtureId("cmd"),
     kind: "command_execution",
     payload: { command, aggregated_output: aggregatedOutput, status: "done" },
   }
 }
 
-function fileChange(paths: string[]): AgentItem {
+function fileChange(paths: string[]): ConversationEntry {
   return {
+    type: "agent_item",
     id: nextFixtureId("file_change"),
     kind: "file_change",
     payload: { changes: paths.map((path) => ({ kind: "update", path })) },

@@ -126,6 +126,8 @@ export type LubanActions = {
 
   setChatModel: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, modelId: string) => void
   setThinkingEffort: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, effort: ThinkingEffort) => void
+  setChatRunner: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, runner: AgentRunnerKind) => void
+  setChatAmpMode: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, ampMode: string) => void
   setAppearanceTheme: (theme: AppearanceTheme) => void
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setGlobalZoom: (zoom: number) => void

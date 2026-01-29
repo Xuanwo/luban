@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useState, useCallback } from "react"
+import Image from "next/image"
 
 import { Brain, Check, Clock, Copy, FileCode, FileText, Wrench } from "lucide-react"
 
@@ -160,7 +161,14 @@ export function ConversationMessage({
                     >
                       <div className="w-20 h-20 rounded-lg overflow-hidden border border-border/50 hover:border-border transition-colors bg-muted/40 flex items-center justify-center">
                         {attachment.kind === "image" && href ? (
-                          <img src={href} alt={attachment.name} className="w-full h-full object-cover" />
+                          <Image
+                            src={href}
+                            alt={attachment.name}
+                            width={80}
+                            height={80}
+                            className="w-full h-full object-cover"
+                            unoptimized
+                          />
                         ) : (
                           <div className="flex flex-col items-center gap-1.5 px-2">
                             {attachment.extension.toLowerCase() === "json" ? (

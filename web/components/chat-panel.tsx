@@ -137,7 +137,7 @@ export function ChatPanel({
     [],
   )
 
-  const queuedPrompts = conversation?.pending_prompts ?? []
+  const queuedPrompts = useMemo(() => conversation?.pending_prompts ?? [], [conversation?.pending_prompts])
   const queuePaused = conversation?.queue_paused ?? false
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<number | null>(null)
   const [draggingQueuedPromptId, setDraggingQueuedPromptId] = useState<number | null>(null)
@@ -334,13 +334,15 @@ export function ChatPanel({
     setIsLoadingOlder(false)
   }, [activeThreadId, activeWorkspaceId, conversation, loadConversationBefore])
 
+  const conversationEntriesStart = conversation?.entries_start ?? null
+
   useEffect(() => {
     const pending = prependLoadRef.current
     if (!pending) return
     const el = scrollContainerRef.current
     if (!el) return
-    if (!conversation) return
-    const start = conversation.entries_start ?? 0
+    if (conversationEntriesStart == null) return
+    const start = conversationEntriesStart
     if (start >= pending.prevEntriesStart) return
 
     prependLoadRef.current = null
@@ -355,7 +357,7 @@ export function ChatPanel({
         programmaticScrollRef.current = false
       })
     })
-  }, [conversation?.entries_start])
+  }, [conversationEntriesStart])
 
   useEffect(() => {
     void fetchCodexCustomPrompts()
@@ -535,7 +537,7 @@ export function ChatPanel({
     setQueuedDraftAttachments([])
     setQueuedDraftModelId(null)
     setQueuedDraftThinkingEffort(null)
-  }, [activeWorkspaceId, activeThreadId, startPinToBottom])
+  }, [activeThreadId, activeWorkspaceId, attachmentScope, attachmentsFromRefs, startPinToBottom])
 
   useEffect(() => {
     if (!followTail) stopPinToBottom()
@@ -595,7 +597,7 @@ export function ChatPanel({
     })()
   }, [onDiffFileOpened, openDiffTab, pendingDiffFile])
 
-  function scheduleScrollToBottom() {
+  const scheduleScrollToBottom = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
 
@@ -606,14 +608,14 @@ export function ChatPanel({
         if (!isPinningBottom()) programmaticScrollRef.current = false
       })
     })
-  }
+  }, [isPinningBottom])
 
   useEffect(() => {
     if (freezeConversationRender) return
     if (!followTail) return
     if (displayMessages.length === 0) return
     scheduleScrollToBottom()
-  }, [displayMessages.length, followTail, activeWorkspaceId, activeThreadId, freezeConversationRender])
+  }, [displayMessages.length, followTail, freezeConversationRender, scheduleScrollToBottom])
 
   const handleTabClick = (tabId: string) => {
     const id = Number(tabId)
@@ -729,25 +731,25 @@ export function ChatPanel({
     onCancel: handleAgentCancel,
   })
 
-  const clearAgentEditor = () => {
+  const clearAgentEditor = useCallback(() => {
     setAgentEditorValue("")
     setAgentEditorAttachments([])
-  }
+  }, [])
 
-  const handleAgentDismiss = () => {
+  const handleAgentDismiss = useCallback(() => {
     if (agentOverrideStatus === "cancelling") {
       cancelAgentTurn()
     }
     setAgentOverrideStatus(null)
     clearAgentEditor()
-  }
+  }, [agentOverrideStatus, cancelAgentTurn, clearAgentEditor])
 
-	  const handleAgentSubmit = () => {
-	    if (activeWorkspaceId == null || activeThreadId == null) return
-	    const text = agentEditorValue.trim()
-	    const hasUploading = agentEditorAttachments.some((a) => a.status === "uploading")
-	    if (hasUploading) return
-	    const ready = agentEditorAttachments
+  const handleAgentSubmit = useCallback(() => {
+		    if (activeWorkspaceId == null || activeThreadId == null) return
+		    const text = agentEditorValue.trim()
+		    const hasUploading = agentEditorAttachments.some((a) => a.status === "uploading")
+		    if (hasUploading) return
+		    const ready = agentEditorAttachments
 	      .filter((a) => a.status === "ready" && a.attachment != null)
 	      .map((a) => a.attachment!)
 	    if (text.length === 0 && ready.length === 0) return
@@ -759,13 +761,23 @@ export function ChatPanel({
 	    }
 
     setAgentOverrideStatus(null)
-    clearAgentEditor()
-    setFollowTail(true)
-    if (activeWorkspaceId != null && activeThreadId != null) {
-      localStorage.setItem(followTailKey(activeWorkspaceId, activeThreadId), "true")
-      scheduleScrollToBottom()
-    }
-  }
+	    clearAgentEditor()
+	    setFollowTail(true)
+	    if (activeWorkspaceId != null && activeThreadId != null) {
+	      localStorage.setItem(followTailKey(activeWorkspaceId, activeThreadId), "true")
+	      scheduleScrollToBottom()
+	    }
+  }, [
+    activeThreadId,
+    activeWorkspaceId,
+    agentEditorAttachments,
+    agentEditorValue,
+    agentOverrideStatus,
+    cancelAndSendAgentMessage,
+    clearAgentEditor,
+    scheduleScrollToBottom,
+    sendAgentMessage,
+  ])
 
   const handleStartQueuedEdit = (promptId: number) => {
     if (activeWorkspaceId == null || activeThreadId == null) return
@@ -932,7 +944,7 @@ export function ChatPanel({
     }
   }
 
-  const handleAgentFileSelect = (files: FileList | null) => {
+  const handleAgentFileSelect = useCallback((files: FileList | null) => {
     if (!files) return
     if (activeWorkspaceId == null || activeThreadId == null) return
 
@@ -973,7 +985,7 @@ export function ChatPanel({
           setAgentEditorAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, status: "failed" } : a)))
         })
     }
-  }
+  }, [activeThreadId, activeWorkspaceId])
 
   const handlePaste = (e: React.ClipboardEvent) => {
     if (activeWorkspaceId == null || activeThreadId == null) return
@@ -992,7 +1004,7 @@ export function ChatPanel({
     handleFileSelect(dt.files)
   }
 
-  const handleAgentPaste = (e: React.ClipboardEvent) => {
+  const handleAgentPaste = useCallback((e: React.ClipboardEvent) => {
     if (activeWorkspaceId == null || activeThreadId == null) return
     const items = e.clipboardData?.items
     if (!items) return
@@ -1007,7 +1019,7 @@ export function ChatPanel({
       if (file) dt.items.add(file)
     }
     handleAgentFileSelect(dt.files)
-  }
+  }, [activeThreadId, activeWorkspaceId, handleAgentFileSelect])
 
   const handleQueuedPaste = (e: React.ClipboardEvent) => {
     if (activeWorkspaceId == null || activeThreadId == null) return
@@ -1031,9 +1043,9 @@ export function ChatPanel({
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }
 
-  const removeAgentEditorAttachment = (id: string) => {
+  const removeAgentEditorAttachment = useCallback((id: string) => {
     setAgentEditorAttachments((prev) => prev.filter((a) => a.id !== id))
-  }
+  }, [])
 
   const renderAgentRunningCardForMessage = useCallback(
     (message: (typeof messages)[number]) => {

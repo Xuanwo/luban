@@ -80,6 +80,8 @@
   --glass-surface: var(--base00);
   --glass-surface-muted: var(--base01);
   --glass-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.1);
+  --nav-float-ring: 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+  --nav-float-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 
   --luban-font-ui: "Inter";
   --luban-font-chat: "Inter";
@@ -189,6 +191,8 @@
   --glass-surface: color-mix(in srgb, var(--base02) 80%, var(--base03));
   --glass-surface-muted: var(--base02);
   --glass-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.5);
+  --nav-float-ring: 0 0 0 1px color-mix(in srgb, var(--base07) 10%, transparent);
+  --nav-float-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 
   --terminal-bright-mix: var(--base07);
   --terminal-ansi-black: var(--base00);
@@ -309,6 +313,13 @@
 
 .luban-font-chat {
   font-family: var(--luban-font-chat), sans-serif;
+}
+
+@layer components {
+  .luban-float-glass {
+    background-color: var(--card);
+    box-shadow: var(--nav-float-ring), var(--nav-float-shadow);
+  }
 }
 
 @layer base {

@@ -201,7 +201,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
       }
     }
 
-  }, [app?.rev, setSidebarProjectOrder, setSidebarWorktreeOrder])
+  }, [app, setSidebarProjectOrder, setSidebarWorktreeOrder])
 
   useEffect(() => {
     if (newlyCreatedWorkspaceId == null) return
@@ -358,7 +358,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
       projectId: running.id,
       existingWorkspaceIds: new Set(running.workspaces.map((w) => w.id)),
     }
-  }, [app?.rev])
+  }, [app, deletingProjectId, ensureMainWorkspace, openWorkspace, optimisticCreatingProjectId, toggleProjectExpanded])
 
   const projects: SidebarProjectVm[] = buildSidebarProjects(app, {
     optimisticArchivingWorkspaceIds,
@@ -463,9 +463,9 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
               >
                 <div
                   className={cn(
-                    "relative flex items-center mx-2 rounded-xl overflow-hidden transition-all duration-200",
+                    "relative flex items-center mx-2 rounded-xl overflow-hidden transition-colors transition-shadow duration-200",
                     isStandaloneMainActive
-                      ? "z-10 bg-card ring-1 ring-border/80 shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] dark:ring-white/10"
+                      ? "z-10 luban-float-glass"
                       : "hover:bg-muted hover:shadow-sm",
                   )}
                 >
@@ -534,14 +534,15 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     isStandaloneMainActive
                       ? "from-glass-surface via-glass-surface/90"
                       : "from-sidebar via-sidebar/90 group-hover/project:from-glass-surface-muted/50 group-hover/project:via-glass-surface-muted/30",
-                    "group-hover/project:opacity-100",
+                    "group-hover/project:opacity-100 group-focus-within/project:opacity-100",
                   )}
                 />
-                <div className="absolute right-1 top-1/2 -translate-y-1/2 z-20 flex items-center gap-0 opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto transition-opacity duration-150">
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 z-20 flex items-center gap-0 opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-focus-within/project:opacity-100 group-focus-within/project:pointer-events-auto transition-opacity duration-150">
                   {project.isGit && (
                     <button
                       className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                       title="Add worktree"
+                      aria-label="Add worktree"
                       onClick={() => {
                         if (isCreating) return
                         if (!project.expanded) {
@@ -570,6 +571,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     disabled={isDeleting}
                     className="p-1 text-muted-foreground hover:text-destructive transition-colors"
                     title="Delete project"
+                    aria-label="Delete project"
                   >
                     {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                   </button>
@@ -597,12 +599,12 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2 py-2 mx-2 rounded-xl cursor-pointer outline-none transition-all duration-200",
+                        "group/worktree relative flex items-center gap-2 px-2 py-2 mx-2 rounded-xl cursor-pointer transition-colors transition-shadow duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                         worktree.workspaceId === activeWorkspaceId
-                          ? "z-10 bg-card ring-1 ring-border/80 shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] dark:ring-white/10"
+                          ? "z-10 luban-float-glass"
                           : "hover:bg-muted hover:shadow-sm",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
-                          "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
+                          "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30 motion-reduce:animate-none",
                         worktree.isArchiving && "animate-pulse opacity-50 pointer-events-none",
                       )}
                       style={{
@@ -612,6 +614,17 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                       onClick={() => {
                         void openWorkspace(worktree.workspaceId)
                       }}
+                      onKeyDown={(e) => {
+                        if (worktree.isArchiving) return
+                        if (e.key !== "Enter" && e.key !== " ") return
+                        e.preventDefault()
+                        void openWorkspace(worktree.workspaceId)
+                      }}
+                      role="button"
+                      tabIndex={worktree.isArchiving ? -1 : 0}
+                      aria-disabled={worktree.isArchiving ? true : undefined}
+                      aria-current={worktree.workspaceId === activeWorkspaceId ? "page" : undefined}
+                      data-active={worktree.workspaceId === activeWorkspaceId ? "true" : "false"}
                     >
                       <span
                         data-testid="sidebar-worktree-leading-icon"
@@ -656,11 +669,11 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                       />
 
                       {/* Action buttons - fixed position, opacity only */}
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 transition-opacity">
                         {worktree.isHome ? (
                           <span
                             data-testid="worktree-home-icon"
-                            className="p-0.5 text-muted-foreground/50 opacity-0 group-hover/worktree:opacity-100 transition-opacity"
+                            className="p-0.5 text-muted-foreground/50 opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 transition-opacity"
                             title="Main worktree"
                           >
                             <Home className="w-3.5 h-3.5" />
@@ -672,6 +685,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                               worktree.isArchiving && "opacity-50",
                             )}
                             title="Archive worktree"
+                            aria-label="Archive worktree"
                             onClick={(e) => {
                               e.stopPropagation()
                               setOptimisticArchivingWorkspaceIds((prev) => {
@@ -753,28 +767,30 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
           <Sparkles className="w-4 h-4 text-primary" />
           New Task
         </button>
-        <button
-          data-testid="sidebar-open-feedback"
-          onClick={() => setFeedbackOpen(true)}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded transition-colors"
-          title="Send Feedback"
-        >
-          <MessageCircleQuestion className="w-4 h-4" />
-        </button>
-        <button
+          <button
+            data-testid="sidebar-open-feedback"
+            onClick={() => setFeedbackOpen(true)}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded transition-colors"
+            title="Send Feedback"
+            aria-label="Send Feedback"
+          >
+            <MessageCircleQuestion className="w-4 h-4" />
+          </button>
+          <button
           data-testid="sidebar-open-settings"
           onClick={() => {
             setSettingsInitialSectionId(null)
             setSettingsInitialAgentId(null)
             setSettingsInitialAgentFilePath(null)
-            setSettingsOpen(true)
-          }}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded transition-colors"
-          title="Settings"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
-      </div>
+              setSettingsOpen(true)
+            }}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded transition-colors"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
 
       <NewTaskModal open={newTaskOpen} onOpenChange={setNewTaskOpen} />
       <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />

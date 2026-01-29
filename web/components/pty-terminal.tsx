@@ -347,6 +347,7 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
 export function PtyTerminal() {
   const { activeWorkspaceId, activeWorkspace } = useLuban()
   const { fonts } = useAppearance()
+  const fontsRef = useRef(fonts)
   const { resolvedTheme } = useTheme()
   const outerRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -354,6 +355,10 @@ export function PtyTerminal() {
   const fitAddonRef = useRef<FitAddon | null>(null)
   const webglAddonRef = useRef<WebglAddon | null>(null)
   const lastThemeDigestRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    fontsRef.current = fonts
+  }, [fonts])
 
   useEffect(() => {
     const term = termRef.current
@@ -431,7 +436,7 @@ export function PtyTerminal() {
     webglAddonRef.current = webglAddon
 
     const term = new Terminal({
-      fontFamily: terminalFontFamily(fonts.terminalFont),
+      fontFamily: terminalFontFamily(fontsRef.current.terminalFont),
       fontSize: look.fontSize,
       lineHeight: look.lineHeight,
       letterSpacing: look.letterSpacing,
