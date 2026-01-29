@@ -1112,7 +1112,7 @@ function AgentConfigPanel({
                 className={cn(
                   "w-full flex items-center justify-between px-3 py-2 text-left transition-colors text-sm cursor-pointer",
                   isSelected ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  !isEnabled && "opacity-50",
+                  !isEnabled && "opacity-40 text-muted-foreground/60",
                 )}
               >
                 <div className="flex items-center gap-2">
@@ -1124,7 +1124,7 @@ function AgentConfigPanel({
                     e.stopPropagation()
                     toggleAgentEnabled(agent)
                   }}
-                  className={cn("relative w-7 h-4 rounded-full transition-colors flex-shrink-0", isEnabled ? "bg-primary" : "bg-muted")}
+                  className={cn("relative w-7 h-4 rounded-full transition-colors flex-shrink-0", isEnabled ? "bg-primary" : "bg-muted-foreground/30")}
                   title={isEnabled ? `Disable ${agentConfig.name}` : `Enable ${agentConfig.name}`}
                 >
                   <div
