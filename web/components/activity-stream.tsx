@@ -94,7 +94,7 @@ function ActivityEventItem({
       </button>
       {isExpanded && hasExpandableDetail && (
         <div className="ml-5 pl-2 border-l border-border text-[11px] text-muted-foreground py-1 mb-1">
-          <pre className="whitespace-pre-wrap font-mono">
+          <pre className="whitespace-pre-wrap break-words font-mono">
             {detail.trim().length > 0 ? detail : "No output."}
           </pre>
         </div>

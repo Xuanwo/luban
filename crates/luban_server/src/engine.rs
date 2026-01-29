@@ -2670,6 +2670,7 @@ impl Engine {
                         let emit_markdown_reasoning = prompt.contains("e2e-thinking-markdown");
                         let emit_file_change = prompt.contains("e2e-file-change");
                         let emit_streaming_message = prompt.contains("e2e-streaming-message");
+                        let emit_long_output = prompt.contains("e2e-long-output");
 
                         if emit_many_steps || emit_pagination_steps {
                             let count = if emit_pagination_steps {
@@ -2867,6 +2868,16 @@ impl Engine {
                                 }
                                 if !sent_2_done && elapsed >= Duration::from_millis(1750) {
                                     sent_2_done = true;
+                                    let aggregated_output = if emit_long_output {
+                                        [
+                                            "test io::commit::conflict_resolver::tests::test_conflicting_rebase::ours_1__update_full__::other_1__update_full__ ... ok",
+                                            "test io::commit::conflict_resolver::tests::test_conflicting_rebase::ours_1__update_full__::other_2__update_partial__ ... ok",
+                                            "test io::commit::conflict_resolver::tests::test_conflicting_rebase::ours_2__update_partial__::other_4__delete_partial__ ... ok",
+                                        ]
+                                        .join("\n")
+                                    } else {
+                                        "ok".to_owned()
+                                    };
                                     let _ = tx.blocking_send(EngineCommand::DispatchAction {
                                         action: Box::new(Action::AgentEventReceived {
                                             workspace_id,
@@ -2876,7 +2887,7 @@ impl Engine {
                                                 item: luban_domain::CodexThreadItem::CommandExecution {
                                                     id: "e2e_cmd_2".to_owned(),
                                                     command: "echo 2".to_owned(),
-                                                    aggregated_output: "ok".to_owned(),
+                                                    aggregated_output,
                                                     exit_code: Some(0),
                                                     status: luban_domain::CodexCommandExecutionStatus::Completed,
                                                 },

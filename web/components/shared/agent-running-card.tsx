@@ -296,7 +296,7 @@ export function AgentRunningCard({
 
                 {isEventExpanded && hasExpandableDetail && (
                   <div className="ml-6 mt-1 mb-2 p-2 rounded bg-muted/30 border border-border/50">
-                    <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-mono">
+                    <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words font-mono">
                       {detail.trim().length > 0 ? detail : "No output."}
                     </pre>
                   </div>
