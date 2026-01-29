@@ -801,6 +801,12 @@ export function mockDispatchAction(args: {
     return
   }
 
+  if (a.type === "claude_enabled_changed") {
+    state.app.agent.claude_enabled = a.enabled
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "agent_runner_changed") {
     state.app.agent.default_runner = a.runner
     emitAppChanged({ state, onEvent: args.onEvent })

@@ -450,6 +450,7 @@ export function defaultMockFixtures(): MockFixtures {
     agent: {
       codex_enabled: true,
       amp_enabled: true,
+      claude_enabled: true,
       default_model_id: "gpt-5",
       default_thinking_effort: "medium",
       default_runner: "codex",

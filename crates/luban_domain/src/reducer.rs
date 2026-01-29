@@ -62,6 +62,7 @@ impl AppState {
             agent_amp_mode: crate::default_amp_mode().to_owned(),
             agent_codex_enabled: true,
             agent_amp_enabled: true,
+            agent_claude_enabled: true,
             conversations: HashMap::new(),
             workspace_tabs: HashMap::new(),
             dashboard_preview_workspace_id: None,
@@ -1465,6 +1466,13 @@ impl AppState {
                 self.agent_amp_enabled = enabled;
                 vec![Effect::SaveAppState]
             }
+            Action::AgentClaudeEnabledChanged { enabled } => {
+                if self.agent_claude_enabled == enabled {
+                    return Vec::new();
+                }
+                self.agent_claude_enabled = enabled;
+                vec![Effect::SaveAppState]
+            }
             Action::AgentRunnerChanged { runner } => {
                 if self.agent_default_runner == runner {
                     return Vec::new();
@@ -2840,6 +2848,7 @@ mod tests {
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
+                agent_claude_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -2887,6 +2896,7 @@ mod tests {
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
+                agent_claude_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -2934,6 +2944,7 @@ mod tests {
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
+                agent_claude_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -3059,6 +3070,7 @@ mod tests {
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
+                agent_claude_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),

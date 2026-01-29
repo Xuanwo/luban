@@ -57,6 +57,7 @@ fn default_global_zoom() -> f64 {
 pub struct AgentSettingsSnapshot {
     pub codex_enabled: bool,
     pub amp_enabled: bool,
+    pub claude_enabled: bool,
     #[serde(default)]
     pub default_model_id: Option<String>,
     #[serde(default)]
@@ -72,6 +73,7 @@ impl Default for AgentSettingsSnapshot {
         Self {
             codex_enabled: true,
             amp_enabled: true,
+            claude_enabled: true,
             default_model_id: None,
             default_thinking_effort: None,
             default_runner: None,
@@ -793,6 +795,9 @@ pub enum ClientAction {
         enabled: bool,
     },
     AmpEnabledChanged {
+        enabled: bool,
+    },
+    ClaudeEnabledChanged {
         enabled: bool,
     },
     AgentRunnerChanged {

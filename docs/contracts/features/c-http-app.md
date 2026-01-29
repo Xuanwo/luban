@@ -25,6 +25,12 @@ This includes persisted UI preferences for the sidebar:
 - `ui.sidebar_project_order`: stable ordering for the project list.
 - `ui.sidebar_worktree_order`: stable ordering for worktrees per project.
 
+This includes Agent settings:
+
+- `agent.codex_enabled` / `agent.amp_enabled` / `agent.claude_enabled`
+- `agent.default_runner` / `agent.amp_mode`
+- `agent.default_model_id` / `agent.default_thinking_effort`
+
 ## Response
 
 - `200 OK`

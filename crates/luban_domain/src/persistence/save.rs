@@ -47,6 +47,7 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         agent_amp_mode: Some(state.agent_amp_mode.clone()),
         agent_codex_enabled: Some(state.agent_codex_enabled),
         agent_amp_enabled: Some(state.agent_amp_enabled),
+        agent_claude_enabled: Some(state.agent_claude_enabled),
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         open_button_selection: state.open_button_selection.clone(),
         sidebar_project_order: state.sidebar_project_order.clone(),

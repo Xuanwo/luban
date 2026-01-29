@@ -3390,6 +3390,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

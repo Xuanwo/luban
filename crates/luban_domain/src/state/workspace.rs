@@ -52,6 +52,7 @@ pub struct AppState {
     pub(crate) agent_amp_mode: String,
     pub(crate) agent_codex_enabled: bool,
     pub(crate) agent_amp_enabled: bool,
+    pub(crate) agent_claude_enabled: bool,
     pub conversations: HashMap<(WorkspaceId, WorkspaceThreadId), WorkspaceConversation>,
     pub workspace_tabs: HashMap<WorkspaceId, WorkspaceTabs>,
     pub dashboard_preview_workspace_id: Option<WorkspaceId>,
@@ -76,6 +77,10 @@ impl AppState {
 
     pub fn agent_amp_enabled(&self) -> bool {
         self.agent_amp_enabled
+    }
+
+    pub fn agent_claude_enabled(&self) -> bool {
+        self.agent_claude_enabled
     }
 
     pub fn agent_default_model_id(&self) -> &str {

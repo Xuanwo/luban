@@ -29,6 +29,7 @@ const AGENT_DEFAULT_RUNNER_KEY: &str = "agent_default_runner";
 const AGENT_AMP_MODE_KEY: &str = "agent_amp_mode";
 const AGENT_CODEX_ENABLED_KEY: &str = "agent_codex_enabled";
 const AGENT_AMP_ENABLED_KEY: &str = "agent_amp_enabled";
+const AGENT_CLAUDE_ENABLED_KEY: &str = "agent_claude_enabled";
 const TASK_PROMPT_TEMPLATE_PREFIX: &str = "task_prompt_template_";
 const APPEARANCE_THEME_KEY: &str = "appearance_theme";
 const APPEARANCE_UI_FONT_KEY: &str = "appearance_ui_font";
@@ -1072,6 +1073,17 @@ impl SqliteDatabase {
             .context("failed to load agent amp enabled flag")?
             .map(|value| value != 0);
 
+        let agent_claude_enabled = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![AGENT_CLAUDE_ENABLED_KEY],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .context("failed to load agent claude enabled flag")?
+            .map(|value| value != 0);
+
         let mut task_prompt_templates = HashMap::new();
         let mut stmt = self.conn.prepare(
             "SELECT key, value FROM app_settings_text WHERE key LIKE 'task_prompt_template_%'",
@@ -1145,6 +1157,7 @@ impl SqliteDatabase {
                 agent_amp_mode,
                 agent_codex_enabled,
                 agent_amp_enabled,
+                agent_claude_enabled,
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -1528,6 +1541,7 @@ impl SqliteDatabase {
             agent_amp_mode,
             agent_codex_enabled,
             agent_amp_enabled,
+            agent_claude_enabled,
             last_open_workspace_id,
             open_button_selection,
             sidebar_project_order,
@@ -1936,6 +1950,26 @@ impl SqliteDatabase {
             tx.execute(
                 "DELETE FROM app_settings WHERE key = ?1",
                 params![AGENT_AMP_ENABLED_KEY],
+            )?;
+        }
+
+        if let Some(enabled) = snapshot.agent_claude_enabled {
+            tx.execute(
+                "INSERT INTO app_settings (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![
+                    AGENT_CLAUDE_ENABLED_KEY,
+                    if enabled { 1i64 } else { 0i64 },
+                    now
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings WHERE key = ?1",
+                params![AGENT_CLAUDE_ENABLED_KEY],
             )?;
         }
 
@@ -3124,6 +3158,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3180,6 +3215,7 @@ mod tests {
             agent_amp_mode: Some("rush".to_owned()),
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             sidebar_project_order: vec!["/tmp/my-project".to_owned()],
@@ -3252,6 +3288,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3467,6 +3504,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3577,6 +3615,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3643,6 +3682,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3708,6 +3748,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -3758,6 +3799,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

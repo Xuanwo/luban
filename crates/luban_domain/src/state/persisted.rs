@@ -24,6 +24,7 @@ pub struct PersistedAppState {
     pub agent_amp_mode: Option<String>,
     pub agent_codex_enabled: Option<bool>,
     pub agent_amp_enabled: Option<bool>,
+    pub agent_claude_enabled: Option<bool>,
     pub last_open_workspace_id: Option<u64>,
     pub open_button_selection: Option<String>,
     pub sidebar_project_order: Vec<String>,

@@ -80,6 +80,7 @@ pub(crate) fn apply_persisted_app_state(
     state.agent_amp_mode = agent_amp_mode;
     state.agent_codex_enabled = persisted.agent_codex_enabled.unwrap_or(true);
     state.agent_amp_enabled = persisted.agent_amp_enabled.unwrap_or(true);
+    state.agent_claude_enabled = persisted.agent_claude_enabled.unwrap_or(true);
 
     state.task_prompt_templates = default_task_prompt_templates();
     state.system_prompt_templates = default_system_prompt_templates();
@@ -682,6 +683,7 @@ mod tests {
             agent_amp_mode: None,
             agent_codex_enabled: None,
             agent_amp_enabled: None,
+            agent_claude_enabled: None,
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

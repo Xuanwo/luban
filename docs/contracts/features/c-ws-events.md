@@ -125,6 +125,8 @@ update this section.
 - `AppearanceFontsChanged`
 - `AppearanceGlobalZoomChanged`
 - `CodexEnabledChanged`
+- `AmpEnabledChanged`
+- `ClaudeEnabledChanged`
 - `AgentRunnerChanged`
 - `AgentAmpModeChanged`
 - `TaskPromptTemplateChanged`
