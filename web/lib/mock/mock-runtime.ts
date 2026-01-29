@@ -350,10 +350,7 @@ function emitAppChanged(args: { state: MockRuntimeState; onEvent: (event: Server
 
 function normalizeTabsAfterRemoval(tabs: WorkspaceTabsSnapshot) {
   const open = tabs.open_tabs
-  if (open.length === 0) {
-    tabs.active_tab = tabs.active_tab
-    return
-  }
+  if (open.length === 0) return
   if (!open.includes(tabs.active_tab)) tabs.active_tab = open[0]!
 }
 
@@ -628,8 +625,20 @@ export function mockDispatchAction(args: {
 
   if (a.type === "close_workspace_thread_tab") {
     const snap = getThreads(state, a.workspace_id)
-    snap.tabs.open_tabs = snap.tabs.open_tabs.filter((id) => id !== a.thread_id)
+    const openBefore = snap.tabs.open_tabs.slice()
+    if (openBefore.length <= 1) return
+
+    const wasActive = snap.tabs.active_tab === a.thread_id
+    const closingIndex = openBefore.indexOf(a.thread_id)
+
+    snap.tabs.open_tabs = openBefore.filter((id) => id !== a.thread_id)
     if (!snap.tabs.archived_tabs.includes(a.thread_id)) snap.tabs.archived_tabs.push(a.thread_id)
+    if (wasActive) {
+      let nextActive: number | null = null
+      if (closingIndex > 0) nextActive = openBefore[closingIndex - 1]!
+      else if (closingIndex >= 0 && closingIndex + 1 < openBefore.length) nextActive = openBefore[closingIndex + 1]!
+      if (nextActive != null && snap.tabs.open_tabs.includes(nextActive)) snap.tabs.active_tab = nextActive
+    }
     normalizeTabsAfterRemoval(snap.tabs)
     if (state.app.ui.active_workspace_id === a.workspace_id) {
       state.app.ui.active_thread_id = snap.tabs.active_tab

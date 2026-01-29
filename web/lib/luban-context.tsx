@@ -42,6 +42,7 @@ import { createLubanServerEventHandler } from "./luban-store-events"
 import { useExternalLinkInterceptor } from "./external-link-interceptor"
 import { useLubanTransport } from "./luban-transport"
 import { focusChatInput } from "./focus-chat-input"
+import { normalizeWorkspaceTabsSnapshot } from "./workspace-tabs"
 
 function normalizePathLike(raw: string): string {
   return raw.trim().replace(/\/+$/, "")
@@ -212,13 +213,16 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
 
       store.cacheThreads(wid, threadsSnap.threads)
       store.setThreads(threadsSnap.threads)
-      store.cacheWorkspaceTabs(wid, threadsSnap.tabs)
-      store.setWorkspaceTabs(threadsSnap.tabs)
+      const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: threadsSnap.tabs, threads: threadsSnap.threads })
+      store.cacheWorkspaceTabs(wid, normalizedTabs)
+      store.setWorkspaceTabs(normalizedTabs)
 
       const threadIds = new Set(threadsSnap.threads.map((t) => t.thread_id))
+      const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
       const currentTid = store.refs.activeThreadIdRef.current
-      const preferred = currentTid != null && threadIds.has(currentTid) ? currentTid : threadsSnap.tabs.active_tab
-      const resolvedTid = threadIds.has(preferred) ? preferred : threadsSnap.threads[0]?.thread_id ?? null
+      const currentIsOpen = currentTid != null && openThreadIds.includes(currentTid)
+      const preferredOpen = (openThreadIds.includes(normalizedTabs.active_tab) ? normalizedTabs.active_tab : null) ?? openThreadIds[0] ?? null
+      const resolvedTid = (currentIsOpen ? currentTid : preferredOpen) ?? threadsSnap.threads[0]?.thread_id ?? null
       store.setActiveThreadId(resolvedTid)
 
       if (resolvedTid == null) {

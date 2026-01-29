@@ -311,6 +311,7 @@ test("closing the active tab removes it from the strip", async ({ page }) => {
   await closingTab.locator("button").click()
 
   await expect(tabs).toHaveCount(beforeCount, { timeout: 20_000 })
+  await expect(tabs.last().locator("..")).toHaveAttribute("data-active", "true")
   const titles = (await tabs.allTextContents()).map((t) => t.trim()).filter(Boolean)
   expect(titles).not.toContain(String(closingTitle))
 

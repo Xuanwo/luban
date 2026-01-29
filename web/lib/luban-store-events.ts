@@ -26,6 +26,8 @@ export function createLubanServerEventHandler(args: {
         args.store.cacheWorkspaceTabs(wid, normalizedTabs)
         args.store.setWorkspaceTabs(normalizedTabs)
         const current = args.store.refs.activeThreadIdRef.current
+        const threadIds = new Set(event.threads.map((t) => t.thread_id))
+        const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
 
         const pending = args.store.refs.pendingCreateThreadRef.current
         if (pending && pending.workspaceId === wid) {
@@ -44,15 +46,16 @@ export function createLubanServerEventHandler(args: {
           }
         }
 
-        if (current == null || !event.threads.some((t) => t.thread_id === current)) {
-          const preferred = event.tabs.active_tab
+        const currentExists = current != null && threadIds.has(current)
+        const currentIsOpen = current != null && openThreadIds.includes(current)
+        if (!currentExists || !currentIsOpen) {
+          const preferred = normalizedTabs.active_tab
           const next =
-            (event.threads.some((t) => t.thread_id === preferred) ? preferred : null) ??
+            (openThreadIds.includes(preferred) && threadIds.has(preferred) ? preferred : null) ??
+            openThreadIds[0] ??
             event.threads[0]?.thread_id ??
             null
-          if (next != null) {
-            args.onSelectThreadInWorkspace(wid, next)
-          }
+          if (next != null) args.onSelectThreadInWorkspace(wid, next)
         }
         return
       }

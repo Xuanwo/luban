@@ -403,11 +403,17 @@ export function createLubanActions(args: {
     store.cacheWorkspaceTabs(workspaceId, normalizedTabs)
     store.setWorkspaceTabs(normalizedTabs)
 
+    const threadIds = new Set(snap.threads.map((t) => t.thread_id))
+    const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
     const current = store.refs.activeThreadIdRef.current
-    const initial = pickThreadId({
-      threads: snap.threads,
-      preferredThreadId: current ?? snap.tabs.active_tab,
-    })
+    const currentIsOpen = current != null && openThreadIds.includes(current)
+    const preferredOpen = (openThreadIds.includes(normalizedTabs.active_tab) ? normalizedTabs.active_tab : null) ?? openThreadIds[0] ?? null
+    const initial =
+      (currentIsOpen ? current : preferredOpen) ??
+      pickThreadId({
+        threads: snap.threads,
+        preferredThreadId: normalizedTabs.active_tab,
+      })
 
     store.setActiveThreadId(initial)
     if (initial == null) {
