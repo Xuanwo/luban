@@ -442,10 +442,10 @@ export function createLubanActions(args: {
     store.setActiveWorkspaceId(workspaceId)
 
     const cachedThreads = store.getCachedThreads(workspaceId)
-    if (cachedThreads) store.setThreads(cachedThreads)
+    store.setThreads(cachedThreads ?? [])
 
     const cachedTabs = store.getCachedWorkspaceTabs(workspaceId)
-    if (cachedTabs) store.setWorkspaceTabs(cachedTabs)
+    store.setWorkspaceTabs(cachedTabs)
 
     const initialFromCache = pickThreadId({
       threads: cachedThreads ?? [],
