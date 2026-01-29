@@ -23,6 +23,7 @@ import type { ActivityEvent } from "@/lib/conversation-ui"
 import type { AttachmentRef, CodexCustomPromptSnapshot } from "@/lib/luban-api"
 import { useActivityTiming } from "@/lib/activity-timing"
 import { MessageEditor, type ComposerAttachment } from "@/components/shared/message-editor"
+import { AnsiOutput } from "@/components/shared/ansi-output"
 
 const eventIcons: Record<ActivityEvent["type"], React.ElementType> = {
   thinking: Brain,
@@ -296,9 +297,7 @@ export function AgentRunningCard({
 
                 {isEventExpanded && hasExpandableDetail && (
                   <div className="ml-6 mt-1 mb-2 p-2 rounded bg-muted/30 border border-border/50">
-                    <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words font-mono">
-                      {detail.trim().length > 0 ? detail : "No output."}
-                    </pre>
+                    <AnsiOutput text={detail} className="text-[11px] text-muted-foreground" />
                   </div>
                 )}
               </div>

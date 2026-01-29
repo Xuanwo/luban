@@ -2609,6 +2609,8 @@ impl Engine {
                         || prompt.contains("e2e-streaming-message")
                     {
                         Duration::from_millis(3500)
+                    } else if prompt.contains("e2e-ansi-output") {
+                        Duration::from_millis(600)
                     } else if prompt.contains("e2e-cancel") {
                         Duration::from_millis(2500)
                     } else if prompt.contains("e2e-queued") {
@@ -2733,6 +2735,7 @@ impl Engine {
                         let mut sent_2_start = false;
                         let mut sent_2_done = false;
                         let mut sent_3_start = false;
+                        let mut sent_ansi_output = false;
                         let mut streaming_started = false;
                         let mut streaming_completed = false;
                         let streaming_id = "e2e_stream_msg_1".to_owned();
@@ -2806,6 +2809,39 @@ impl Engine {
                                         }),
                                     });
                                 }
+                            }
+
+                            if prompt.contains("e2e-ansi-output")
+                                && !sent_ansi_output
+                                && elapsed >= Duration::from_millis(75)
+                            {
+                                sent_ansi_output = true;
+                                let aggregated_output = [
+                                    "[[2m[WebServer] [[22m Finished 'dev' profile [unoptimized + debuginfo] target(s) in 0.33s",
+                                    "[[2m[WebServer] [[22m Running 'target/debug/luban_server'",
+                                    "",
+                                    "(node:4596) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.",
+                                    "",
+                                    "[[1A[[2K[[0G [[32m√[[39m [[2mtests/e2e/chat-ui.spec.ts:334:5 › enter commits IME composition without sending[[22m",
+                                    "[[32m  2 passed[[39m[[2m (14.1s)[[22m",
+                                ]
+                                .join("\n");
+                                let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                                    action: Box::new(Action::AgentEventReceived {
+                                        workspace_id,
+                                        thread_id,
+                                        run_id,
+                                        event: luban_domain::CodexThreadEvent::ItemCompleted {
+                                            item: luban_domain::CodexThreadItem::CommandExecution {
+                                                id: "e2e_ansi_cmd_1".to_owned(),
+                                                command: "zsh -lc \"just test-ui\"".to_owned(),
+                                                aggregated_output,
+                                                exit_code: Some(0),
+                                                status: luban_domain::CodexCommandExecutionStatus::Completed,
+                                            },
+                                        },
+                                    }),
+                                });
                             }
 
                             if prompt.contains("e2e-running-card") {

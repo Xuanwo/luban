@@ -977,3 +977,53 @@ test("@mention autocompletes workspace files", async ({ page }) => {
   await expect.poll(async () => await input.inputValue(), { timeout: 10_000 }).toBe("@docs/README.md ")
   await expect(menu).toHaveCount(0)
 })
+
+test("command output renders ANSI colors without showing control sequences", async ({ page }) => {
+  await ensureWorkspace(page)
+
+  const runId = Math.random().toString(16).slice(2)
+  const marker = `e2e-ansi-${runId}`
+  const prompt = `${marker} e2e-ansi-output`
+
+  const workspaceId = await activeWorkspaceId(page)
+  const threadId = await createThreadViaUi(page, workspaceId)
+
+  await page.getByTestId("chat-input").fill(prompt)
+  await page.getByTestId("chat-input").press("Enter")
+
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/api/workspaces/${workspaceId}/conversations/${threadId}`)
+        if (!res.ok()) return false
+        const snapshot = (await res.json()) as any
+        const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : []
+        return entries.some(
+          (entry: any) =>
+            entry?.type === "agent_item" &&
+            entry?.kind === "command_execution" &&
+            String(entry?.payload?.id ?? "") === "e2e_ansi_cmd_1",
+        )
+      },
+      { timeout: 20_000 },
+    )
+    .toBeTruthy()
+
+  const activitySummary = page.getByRole("button", { name: /Completed \\d+ steps|Cancelled after \\d+ steps/ }).first()
+  await expect(activitySummary).toBeVisible({ timeout: 20_000 })
+  await activitySummary.click()
+
+  const commandRow = page.getByRole("button", { name: /just test-ui/ }).first()
+  await expect(commandRow).toBeVisible({ timeout: 20_000 })
+  await commandRow.click()
+
+  const output = commandRow.locator("..").locator("pre").first()
+  await expect(output).toContainText("[WebServer]", { timeout: 20_000 })
+  await expect(output).not.toContainText("[[2m")
+  await expect(output).not.toContainText("[[1A")
+  await expect(output).not.toContainText("[2m")
+
+  const greenSpan = output.locator('span[style*="--terminal-ansi-green"]').first()
+  await expect(greenSpan).toBeVisible({ timeout: 20_000 })
+  await expect(greenSpan).toContainText("2 passed")
+})

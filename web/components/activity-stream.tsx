@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { ActivityEvent } from "@/lib/conversation-ui"
 import { useActivityTiming } from "@/lib/activity-timing"
+import { AnsiOutput } from "@/components/shared/ansi-output"
 
 function ActivityEventItem({
   event,
@@ -94,9 +95,7 @@ function ActivityEventItem({
       </button>
       {isExpanded && hasExpandableDetail && (
         <div className="ml-5 pl-2 border-l border-border text-[11px] text-muted-foreground py-1 mb-1">
-          <pre className="whitespace-pre-wrap break-words font-mono">
-            {detail.trim().length > 0 ? detail : "No output."}
-          </pre>
+          <AnsiOutput text={detail} />
         </div>
       )}
     </div>
