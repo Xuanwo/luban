@@ -58,7 +58,7 @@ export function WorkspaceChatHeader({
   }
 
   return (
-    <div className="flex items-center h-11 border-b border-border bg-card px-4">
+    <div className="flex items-center h-11 border-b border-border bg-secondary px-4">
       <div className="flex items-center gap-2 min-w-0">
         <span data-testid="active-project-name" className="text-sm font-medium text-foreground truncate">
           {projectName}
@@ -103,7 +103,7 @@ export function WorkspaceChatHeader({
               {isBranchRenaming ? (
                 <Loader2 className="w-3 h-3 animate-spin text-primary ml-1" />
               ) : (
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex items-center gap-0.5 opacity-0 group-hover/branch:opacity-100 transition-opacity bg-card px-0.5">
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex items-center gap-0.5 opacity-0 group-hover/branch:opacity-100 transition-opacity bg-secondary px-0.5">
                   {allowRenameButtons && (
                     <>
                       <button

@@ -22,18 +22,18 @@ export function ThreadTabsBar(props: {
   const [showTabDropdown, setShowTabDropdown] = useState(false)
 
   return (
-    <div className="flex items-center h-10 border-b border-border bg-muted/30">
-      <div className="flex-1 flex items-center min-w-0 overflow-x-auto scrollbar-none">
+    <div className="flex items-center h-11 border-b border-border bg-secondary px-2">
+      <div className="flex-1 flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-none py-1.5">
         {props.tabs.map((tab) => (
           <div
             key={tab.id}
             data-testid={`thread-tab-${tab.id}`}
             onClick={() => props.onTabClick(tab.id)}
             className={cn(
-              "group relative flex items-center gap-2 h-10 px-3 cursor-pointer transition-colors min-w-0 max-w-[180px]",
+              "group relative flex items-center gap-2 h-8 px-3 cursor-pointer transition-all duration-200 min-w-0 max-w-[180px] rounded-lg",
               props.activePanel === "thread" && tab.id === props.activeTabId
-                ? "text-foreground bg-background"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                ? "text-foreground bg-glass-surface shadow-lg"
+                : "text-muted-foreground hover:text-foreground hover:bg-glass-surface-muted/50",
             )}
           >
             <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
@@ -48,9 +48,6 @@ export function ThreadTabsBar(props: {
                 <X className="w-3 h-3" />
               </button>
             )}
-            {props.activePanel === "thread" && tab.id === props.activeTabId && (
-              <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
-            )}
           </div>
         ))}
 
@@ -59,10 +56,10 @@ export function ThreadTabsBar(props: {
             key="diff-tab"
             onClick={props.onDiffTabClick}
             className={cn(
-              "group relative flex items-center gap-2 h-10 px-3 cursor-pointer transition-colors min-w-0 max-w-[180px]",
+              "group relative flex items-center gap-2 h-8 px-3 cursor-pointer transition-all duration-200 min-w-0 max-w-[180px] rounded-lg",
               props.activePanel === "diff"
-                ? "text-foreground bg-background"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                ? "text-foreground bg-glass-surface shadow-lg"
+                : "text-muted-foreground hover:text-foreground hover:bg-glass-surface-muted/50",
             )}
           >
             <GitCompareArrows className="w-3.5 h-3.5 flex-shrink-0" />
@@ -74,9 +71,6 @@ export function ThreadTabsBar(props: {
             >
               <X className="w-3 h-3" />
             </button>
-            {props.activePanel === "diff" && (
-              <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
-            )}
           </div>
         )}
 

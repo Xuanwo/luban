@@ -496,8 +496,10 @@ export function Sidebar({ viewMode, onViewModeChange }: SidebarProps) {
                           })
                         }
                         className={cn(
-                          "group/worktree relative flex items-center gap-2 px-2 py-1.5 transition-all cursor-pointer",
-                          isWorktreeActive ? "bg-primary/6" : "hover:bg-sidebar-accent/30",
+                          "group/worktree relative flex items-center gap-2 px-2.5 py-2 rounded-xl transition-all duration-200 cursor-pointer",
+                          isWorktreeActive
+                            ? "bg-glass-surface shadow-[var(--shadow-glass)]"
+                            : "hover:bg-glass-surface-muted/50",
                           newlyCreatedId === worktree.id &&
                             "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
                           archivingId === worktree.id && "animate-pulse opacity-50 pointer-events-none",
@@ -551,10 +553,7 @@ export function Sidebar({ viewMode, onViewModeChange }: SidebarProps) {
                           </button>
                         )}
 
-                        {/* Bottom underline for active worktree (tab-style) */}
-                        {isWorktreeActive && (
-                          <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
-                        )}
+
                       </div>
                     )
                   })}

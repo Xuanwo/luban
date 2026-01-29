@@ -73,6 +73,12 @@
   --status-warning: var(--base09);
   --status-error: var(--base08);
   --status-info: var(--base0e);
+
+  /* Floating Glass selection tokens */
+  --glass-surface: var(--base00);
+  --glass-surface-muted: var(--base01);
+  --glass-shadow: 0 4px 20px -4px color-mix(in srgb, var(--base07) 12%, transparent);
+  --glass-shadow-subtle: 0 2px 8px -2px color-mix(in srgb, var(--base07) 6%, transparent);
 }
 
 .dark {
@@ -143,6 +149,12 @@
   --status-warning: var(--base0a);
   --status-error: var(--base08);
   --status-info: var(--base0e);
+
+  /* Floating Glass selection tokens (dark mode) */
+  --glass-surface: var(--base01);
+  --glass-surface-muted: var(--base02);
+  --glass-shadow: 0 4px 20px -4px color-mix(in srgb, var(--base00) 40%, transparent);
+  --glass-shadow-subtle: 0 2px 8px -2px color-mix(in srgb, var(--base00) 20%, transparent);
 }
 
 @theme inline {
@@ -195,6 +207,12 @@
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
   --color-status-info: var(--status-info);
+
+  /* Floating Glass tokens */
+  --color-glass-surface: var(--glass-surface);
+  --color-glass-surface-muted: var(--glass-surface-muted);
+  --shadow-glass: var(--glass-shadow);
+  --shadow-glass-subtle: var(--glass-shadow-subtle);
 
   /* Base16 palette colors (for theme-aligned accents and syntax). */
   --color-base00: var(--base00);

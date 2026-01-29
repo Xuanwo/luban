@@ -402,7 +402,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
   return (
     <aside
       data-testid="left-sidebar"
-      className="flex-shrink-0 border-r border-border bg-sidebar flex flex-col overflow-x-hidden"
+      className="flex-shrink-0 border-r border-border bg-secondary flex flex-col overflow-x-hidden"
       style={{ width: `${widthPx}px` }}
     >
       <div className="flex items-center justify-between h-11 px-3 border-b border-border">
@@ -463,8 +463,10 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
               >
                 <div
                   className={cn(
-                    "relative flex items-center mx-1 rounded-md transition-colors",
-                    isStandaloneMainActive ? "bg-primary/6" : "hover:bg-primary/4",
+                    "relative flex items-center mx-1 rounded-xl transition-all duration-200",
+                    isStandaloneMainActive
+                      ? "bg-glass-surface shadow-lg"
+                      : "hover:bg-glass-surface-muted/50",
                   )}
                 >
                 <button
@@ -520,19 +522,15 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     </span>
                   )}
                 </button>
-                {isStandaloneMainActive && (
-                  <div
-                    data-testid="project-active-indicator"
-                    className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary rounded-l-md"
-                  />
-                )}
+
                 <div
                   aria-hidden="true"
                   className={cn(
                     "absolute right-0 top-0 bottom-0 w-32 opacity-0 pointer-events-none transition-opacity duration-150 z-10",
-                    "bg-gradient-to-l from-sidebar via-sidebar/90 to-transparent",
-                    isStandaloneMainActive && "from-[hsl(var(--primary)/0.06)] via-[hsl(var(--primary)/0.04)]",
-                    !isStandaloneMainActive && "group-hover/project:from-[hsl(var(--primary)/0.04)] group-hover/project:via-[hsl(var(--primary)/0.02)]",
+                    "bg-gradient-to-l to-transparent",
+                    isStandaloneMainActive
+                      ? "from-glass-surface via-glass-surface/90"
+                      : "from-sidebar via-sidebar/90 group-hover/project:from-glass-surface-muted/50 group-hover/project:via-glass-surface-muted/30",
                     "group-hover/project:opacity-100",
                   )}
                 />
@@ -586,7 +584,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     items={project.worktrees.map((w) => w.workspaceId)}
                     strategy={verticalListSortingStrategy}
                   >
-                <div className="">
+                <div>
                   {project.worktrees.map((worktree, idx) => (
                     <SortableWorktree
                       key={worktree.workspaceId}
@@ -596,8 +594,10 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                     <div
                       data-testid="worktree-row"
                       className={cn(
-                        "group/worktree relative flex items-center gap-2 px-2 py-1.5 mx-1 rounded-md cursor-pointer outline-none",
-                        worktree.workspaceId === activeWorkspaceId ? "bg-primary/6" : "hover:bg-primary/4",
+                        "group/worktree relative flex items-center gap-2 px-2.5 py-2 mx-1 rounded-xl cursor-pointer outline-none transition-all duration-200",
+                        worktree.workspaceId === activeWorkspaceId
+                          ? "bg-glass-surface shadow-lg"
+                          : "hover:bg-glass-surface-muted/50",
                         newlyCreatedWorkspaceId === worktree.workspaceId &&
                           "animate-in slide-in-from-left-2 fade-in duration-300 ring-1 ring-primary/30",
                         worktree.isArchiving && "animate-pulse opacity-50 pointer-events-none",
@@ -682,12 +682,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
                         )}
                       </div>
 
-                      {worktree.workspaceId === activeWorkspaceId && (
-                        <div
-                          data-testid="worktree-active-indicator"
-                          className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary rounded-l-md"
-                        />
-                      )}
+
                     </div>
                     </SortableWorktree>
                   ))}
@@ -736,7 +731,7 @@ export function Sidebar({ viewMode, onViewModeChange, widthPx }: SidebarProps) {
 
         <button
           onClick={() => void handleAddProjectClick()}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-muted-foreground/60 hover:text-muted-foreground hover:bg-sidebar-accent/50 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-1.5 text-left text-muted-foreground/60 hover:text-muted-foreground hover:bg-glass-surface-muted/50 rounded-lg transition-colors"
         >
           <Plus className="w-3 h-3 flex-shrink-0" />
           <span className="text-[13px]">Add project</span>

@@ -846,17 +846,17 @@ export const config = {
         </div>
       </div>
 
-      <div className="flex items-center h-10 border-b border-border bg-muted/30">
-        <div className="flex-1 flex items-center min-w-0 overflow-x-auto scrollbar-none">
+      <div className="flex items-center h-11 border-b border-border bg-muted/30 px-1">
+        <div className="flex-1 flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-none py-1">
           {tabs.map((tab) => (
             <div
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
               className={cn(
-                "group relative flex items-center gap-2 h-10 px-3 cursor-pointer transition-colors min-w-0 max-w-[180px]",
+                "group relative flex items-center gap-2 h-8 px-3 cursor-pointer transition-all duration-200 min-w-0 max-w-[180px] rounded-lg",
                 tab.id === activeTabId
-                  ? "text-foreground bg-background"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  ? "text-foreground bg-glass-surface shadow-[var(--shadow-glass)]"
+                  : "text-muted-foreground hover:text-foreground hover:bg-glass-surface-muted/50",
               )}
             >
               {tab.type === "diff" ? (
@@ -872,9 +872,6 @@ export const config = {
                 >
                   <X className="w-3 h-3" />
                 </button>
-              )}
-              {tab.id === activeTabId && (
-                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
               )}
             </div>
           ))}

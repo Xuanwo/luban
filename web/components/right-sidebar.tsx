@@ -106,7 +106,7 @@ export function RightSidebar({ isOpen, onToggle, widthPx, onOpenDiffTab }: Right
   return (
     <div
       className={cn(
-        "border-l border-border bg-card flex flex-col transition-colors",
+        "border-l border-border bg-secondary flex flex-col transition-colors",
         isDragOver && "bg-primary/5 border-primary/50",
       )}
       style={{ width: `${widthPx}px` }}

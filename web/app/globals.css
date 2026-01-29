@@ -75,6 +75,11 @@
   --status-error: var(--base08);
   --status-info: var(--base0e);
 
+  /* Floating Glass selection tokens */
+  --glass-surface: var(--base00);
+  --glass-surface-muted: var(--base01);
+  --glass-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.1);
+
   --luban-font-ui: "Inter";
   --luban-font-chat: "Inter";
   --luban-font-code: "Geist Mono";
@@ -178,6 +183,11 @@
   --status-error: var(--base08);
   --status-info: var(--base0e);
 
+  /* Floating Glass selection tokens (dark mode) */
+  --glass-surface: color-mix(in srgb, var(--base02) 80%, var(--base03));
+  --glass-surface-muted: var(--base02);
+  --glass-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.5);
+
   --terminal-bright-mix: var(--base07);
   --terminal-ansi-black: var(--base00);
   --terminal-ansi-cyan: var(--base0c);
@@ -242,6 +252,11 @@
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
   --color-status-info: var(--status-info);
+
+  /* Floating Glass tokens */
+  --color-glass-surface: var(--glass-surface);
+  --color-glass-surface-muted: var(--glass-surface-muted);
+  --shadow-glass: var(--glass-shadow);
 
   /* Base16 palette colors (for theme-aligned accents and syntax). */
   --color-base00: var(--base00);
