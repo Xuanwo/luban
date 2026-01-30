@@ -35,7 +35,6 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
   const resolvedTitle =
     taskTitle ??
     (activeThreadId != null ? threads.find((t) => t.task_id === activeThreadId)?.title : null) ??
-    activeWorkspace?.workdir_name ??
     "Task"
 
   const resolvedProjectColor = (() => {

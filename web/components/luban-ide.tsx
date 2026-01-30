@@ -92,6 +92,7 @@ export function LubanIDE() {
         onTaskClick={(task) => {
           void (async () => {
             await openWorkspace(task.workspaceId)
+            await activateTask(task.taskId)
             setSelectedTask(task)
             setShowDetail(true)
           })()

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -14,12 +14,15 @@ import { ProjectIcon, type ProjectInfo } from "./shared/task-header"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
+import { fetchTasks } from "@/lib/luban-http"
+import type { TaskSummarySnapshot, TasksSnapshot } from "@/lib/luban-api"
 
 type TaskStatus = "todo" | "in-progress" | "done" | "cancelled"
 
 export interface Task {
   id: string
   workspaceId: number
+  taskId: number
   title: string
   status: TaskStatus
   workdir: string
@@ -134,45 +137,90 @@ function taskStatusFromWorkspace(args: { agentRunStatus: string; hasUnreadComple
 
 export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps) {
   const { app } = useLuban()
+  const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
   const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
     args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
 
+  useEffect(() => {
+    if (!app) {
+      setTasksSnapshot(null)
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const snap = await fetchTasks(activeProjectId ? { projectId: activeProjectId } : {})
+        if (cancelled) return
+        setTasksSnapshot(snap)
+      } catch (err) {
+        console.warn("fetchTasks failed", err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectId, app?.rev])
+
   const tasks = useMemo(() => {
-    if (!app) return [] as Task[]
+    if (!app || !tasksSnapshot) return [] as Task[]
 
     const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
-    const out: Task[] = []
-
+    const projectInfoById = new Map<string, { name: string; color: string }>()
     for (const p of app.projects) {
-      if (activeProjectId && p.id !== activeProjectId) continue
-      const projectName = displayNames.get(p.path) ?? p.slug
-      const projectColor = projectColorClass(p.id)
+      projectInfoById.set(p.path, {
+        name: displayNames.get(p.path) ?? p.slug,
+        color: projectColorClass(p.id),
+      })
+    }
+
+    const workdirById = new Map<number, { projectPath: string; workdirName: string; workdirPath: string; status: string }>()
+    for (const p of app.projects) {
       for (const w of p.workdirs) {
-        if (w.status !== "active") continue
-        if (isImplicitProjectRootWorkdir(p.path, { workdirName: w.workdir_name, workdirPath: w.workdir_path })) {
-          continue
-        }
-        out.push({
-          id: String(w.id),
-          workspaceId: w.id,
-          title: w.workdir_name || w.branch_name,
-          status: taskStatusFromWorkspace({
-            agentRunStatus: w.agent_run_status,
-            hasUnreadCompletion: w.has_unread_completion,
-          }),
-          workdir: w.branch_name || w.workdir_name,
-          projectName,
-          projectColor,
-          createdAt: "",
+        workdirById.set(w.id, {
+          projectPath: p.path,
+          workdirName: w.workdir_name,
+          workdirPath: w.workdir_path,
+          status: w.status,
         })
       }
     }
 
+    const out: Task[] = []
+
+    const filtered = tasksSnapshot.tasks.filter((t) => {
+      const workdir = workdirById.get(t.workdir_id) ?? null
+      if (!workdir) return false
+      if (workdir.status !== "active") return false
+      if (isImplicitProjectRootWorkdir(workdir.projectPath, { workdirName: workdir.workdirName, workdirPath: workdir.workdirPath })) {
+        return false
+      }
+      return true
+    })
+
+    filtered.sort((a, b) => b.updated_at_unix_seconds - a.updated_at_unix_seconds)
+
+    for (const t of filtered) {
+      const project = projectInfoById.get(t.project_id) ?? { name: t.project_id, color: "bg-violet-500" }
+      out.push({
+        id: `task-${t.workdir_id}-${t.task_id}`,
+        workspaceId: t.workdir_id,
+        taskId: t.task_id,
+        title: t.title,
+        status: taskStatusFromWorkspace({ agentRunStatus: t.agent_run_status, hasUnreadCompletion: t.has_unread_completion }),
+        workdir: t.workdir_name || t.branch_name,
+        projectName: project.name,
+        projectColor: project.color,
+        createdAt: "",
+      })
+    }
+
     return out
-  }, [activeProjectId, app])
+  }, [activeProjectId, app, tasksSnapshot])
 
   const headerProject: ProjectInfo = useMemo(() => {
     if (!app) return { name: "Projects", color: "bg-violet-500" }
