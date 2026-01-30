@@ -52,7 +52,9 @@ Legend:
 
 - `C-WS-EVENTS`: `ClientAction::ChatRunnerChanged` and `ClientAction::ChatAmpModeChanged` are implemented in mock + provider and enforced in CI via `crates/luban_server/src/engine.rs` unit tests (see `agent_turn_uses_pinned_chat_runner_and_amp_mode`).
 - `C-WS-EVENTS`: `ClientAction::SidebarWorktreeOrderChanged` was removed (task-first UI no longer persists worktree ordering).
+- `C-WS-EVENTS`: `ClientAction::TaskStarSet` is implemented in mock + provider and verified in CI via `crates/luban_server/tests/contracts_http.rs` (roundtrip: WS toggle then `GET /api/tasks`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
+- `C-HTTP-TASKS`: `TaskSummarySnapshot` includes `is_starred` for rendering Favorites and in-view star toggles.
 
 ## Feature contracts
 

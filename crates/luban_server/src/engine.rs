@@ -97,6 +97,17 @@ impl EngineHandle {
         rx.await.context("engine stopped")?
     }
 
+    pub async fn starred_tasks_snapshot(
+        &self,
+    ) -> anyhow::Result<std::collections::HashSet<(u64, u64)>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::GetStarredTasks { reply: tx })
+            .await
+            .context("engine unavailable")?;
+        rx.await.context("engine stopped")?
+    }
+
     pub async fn apply_client_action(
         &self,
         request_id: String,
@@ -141,6 +152,9 @@ pub enum EngineCommand {
     GetWorkspaceWorktreePath {
         workspace_id: luban_api::WorkspaceId,
         reply: oneshot::Sender<anyhow::Result<Option<PathBuf>>>,
+    },
+    GetStarredTasks {
+        reply: oneshot::Sender<anyhow::Result<std::collections::HashSet<(u64, u64)>>>,
     },
     ApplyClientAction {
         request_id: String,
@@ -445,6 +459,15 @@ impl Engine {
                 let id = WorkspaceId::from_u64(workspace_id.0);
                 let path = self.state.workspace(id).map(|w| w.worktree_path.clone());
                 let _ = reply.send(Ok(path));
+            }
+            EngineCommand::GetStarredTasks { reply } => {
+                let starred = self
+                    .state
+                    .starred_tasks
+                    .iter()
+                    .map(|(workspace_id, thread_id)| (workspace_id.as_u64(), thread_id.as_u64()))
+                    .collect::<std::collections::HashSet<_>>();
+                let _ = reply.send(Ok(starred));
             }
             EngineCommand::ApplyClientAction {
                 request_id,
@@ -4190,6 +4213,15 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         luban_api::ClientAction::AddProjectAndOpen { .. } => None,
         luban_api::ClientAction::TaskPreview { .. } => None,
         luban_api::ClientAction::TaskExecute { .. } => None,
+        luban_api::ClientAction::TaskStarSet {
+            workspace_id,
+            thread_id,
+            starred,
+        } => Some(Action::TaskStarSet {
+            workspace_id: WorkspaceId::from_u64(workspace_id.0),
+            thread_id: WorkspaceThreadId::from_u64(thread_id.0),
+            starred,
+        }),
         luban_api::ClientAction::FeedbackSubmit { .. } => None,
         luban_api::ClientAction::DeleteProject { .. } => None,
         luban_api::ClientAction::ToggleProjectExpanded { .. } => None,
@@ -4765,6 +4797,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -5303,6 +5336,7 @@ mod tests {
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
             workspace_thread_run_config_overrides: HashMap::new(),
+            starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 
@@ -5473,6 +5507,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -5841,6 +5876,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -6168,6 +6204,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }
@@ -6382,6 +6419,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             })
         }

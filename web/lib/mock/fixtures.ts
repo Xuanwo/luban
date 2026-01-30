@@ -451,6 +451,7 @@ export function defaultMockFixtures(): MockFixtures {
         workdir_name: "main",
         agent_run_status: "idle",
         has_unread_completion: false,
+        is_starred: false,
       } satisfies TaskSummarySnapshot,
       {
         project_id: project1,
@@ -462,6 +463,7 @@ export function defaultMockFixtures(): MockFixtures {
         workdir_name: "feat-ui",
         agent_run_status: "running",
         has_unread_completion: true,
+        is_starred: false,
       } satisfies TaskSummarySnapshot,
     ],
   }
@@ -482,4 +484,3 @@ export function defaultMockFixtures(): MockFixtures {
     claudeConfig: { tree: claudeConfigTree, files: { "claude.yaml": "claude: true\n" } },
   }
 }
-

@@ -331,6 +331,12 @@ pub enum Action {
         anchor: ChatScrollAnchor,
     },
 
+    TaskStarSet {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        starred: bool,
+    },
+
     SidebarProjectOrderChanged {
         project_ids: Vec<String>,
     },

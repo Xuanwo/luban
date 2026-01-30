@@ -34,6 +34,7 @@ export interface InboxNotification {
   description: string
   timestamp: string
   read: boolean
+  isStarred: boolean
 }
 
 interface InboxViewProps {
@@ -126,7 +127,7 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
 }
 
 export function InboxView({ onOpenFullView }: InboxViewProps) {
-  const { app, openWorkdir, activateTask } = useLuban()
+  const { app, openWorkdir, activateTask, setTaskStarred } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
@@ -223,6 +224,7 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
         description: t.has_unread_completion ? "Unread completion" : "Read completion",
         timestamp: formatTimestamp(t.updated_at_unix_seconds),
         read: !t.has_unread_completion,
+        isStarred: t.is_starred,
       })
     }
     return out
@@ -307,6 +309,21 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
               workdir={selectedNotification.workdir}
               project={{ name: selectedNotification.projectName, color: selectedNotification.projectColor }}
               showFullActions
+              isStarred={selectedNotification.isStarred}
+              onToggleStar={(nextStarred) => {
+                setTaskStarred(selectedNotification.workdirId, selectedNotification.taskId, nextStarred)
+                setTasksSnapshot((prev) => {
+                  if (!prev) return prev
+                  return {
+                    ...prev,
+                    tasks: prev.tasks.map((t) =>
+                      t.workdir_id === selectedNotification.workdirId && t.task_id === selectedNotification.taskId
+                        ? { ...t, is_starred: nextStarred }
+                        : t,
+                    ),
+                  }
+                })
+              }}
             />
 
             {/* Chat Preview */}

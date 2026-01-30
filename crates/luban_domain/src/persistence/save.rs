@@ -115,6 +115,11 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
                 )
             })
             .collect(),
+        starred_tasks: state
+            .starred_tasks
+            .iter()
+            .map(|(workspace_id, thread_id)| ((workspace_id.0, thread_id.0), true))
+            .collect(),
         task_prompt_templates: HashMap::new(),
     }
 }

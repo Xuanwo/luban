@@ -159,6 +159,21 @@ pub(crate) fn apply_persisted_app_state(
         .flat_map(|p| &p.workspaces)
         .map(|w| w.id)
         .collect();
+
+    state.starred_tasks = persisted
+        .starred_tasks
+        .into_iter()
+        .filter_map(|((workspace_id, thread_id), starred)| {
+            if !starred {
+                return None;
+            }
+            let wid = WorkspaceId(workspace_id);
+            if !valid_workspace_ids.contains(&wid) {
+                return None;
+            }
+            Some((wid, WorkspaceThreadId(thread_id)))
+        })
+        .collect();
     state.workspace_thread_run_config_overrides = persisted
         .workspace_thread_run_config_overrides
         .into_iter()
@@ -695,6 +710,7 @@ mod tests {
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashMap::new(),
             workspace_thread_run_config_overrides: HashMap::new(),
+            starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
         };
 

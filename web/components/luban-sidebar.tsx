@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
 import { buildSidebarProjects } from "@/lib/sidebar-view-model"
 import { projectColorClass } from "@/lib/project-colors"
+import { fetchTasks } from "@/lib/luban-http"
+import type { TaskSummarySnapshot } from "@/lib/luban-api"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -32,6 +34,7 @@ interface LubanSidebarProps {
   activeProjectId?: string | null
   onProjectSelected?: (projectId: string | null) => void
   onNewTask?: () => void
+  onFavoriteTaskSelected?: (task: TaskSummarySnapshot) => void
 }
 
 interface NavItemProps {
@@ -134,12 +137,15 @@ export function LubanSidebar({
   activeProjectId,
   onProjectSelected,
   onNewTask,
+  onFavoriteTaskSelected,
 }: LubanSidebarProps) {
   const {
     app,
     pickProjectPath,
     addProject,
   } = useLuban()
+
+  const [favoriteTasks, setFavoriteTasks] = useState<TaskSummarySnapshot[]>([])
 
   const projects = useMemo(
     () => buildSidebarProjects(app, { projectOrder: app?.ui.sidebar_project_order ?? [] }),
@@ -155,6 +161,31 @@ export function LubanSidebar({
     }
     return count
   }, [app])
+
+  useEffect(() => {
+    if (!app) {
+      setFavoriteTasks([])
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const snap = await fetchTasks()
+        if (cancelled) return
+        const starred = snap.tasks
+          .filter((t) => t.is_starred)
+          .sort((a, b) => b.updated_at_unix_seconds - a.updated_at_unix_seconds)
+        setFavoriteTasks(starred)
+      } catch (err) {
+        console.warn("fetchTasks failed", err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [app?.rev])
 
   const handleNavClick = (view: NavView) => {
     onViewChange?.(view)
@@ -241,15 +272,21 @@ export function LubanSidebar({
           />
         </div>
 
-        {/* Favorites Section */}
-        <Section title="Favorites" defaultExpanded={true}>
-          <NavItem
-            icon={<Star className="w-4 h-4 text-yellow-500" />}
-            label="Important Tasks"
-            active={activeView === "favorites-1"}
-            onClick={() => handleNavClick("favorites-1")}
-          />
-        </Section>
+        {/* Favorites Section (only shown when non-empty) */}
+        {favoriteTasks.length > 0 && (
+          <Section title="Favorites" defaultExpanded={true}>
+            {favoriteTasks.map((t) => (
+              <NavItem
+                key={`fav-${t.workdir_id}-${t.task_id}`}
+                icon={<Star className="w-4 h-4" fill="#f2c94c" style={{ color: "#f2c94c" }} />}
+                label={t.title || "Untitled Task"}
+                testId={`favorite-task-${t.workdir_id}-${t.task_id}`}
+                active={false}
+                onClick={() => onFavoriteTaskSelected?.(t)}
+              />
+            ))}
+          </Section>
+        )}
 
         {/* Projects Section */}
         <Section title="Projects">

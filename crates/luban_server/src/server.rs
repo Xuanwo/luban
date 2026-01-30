@@ -258,6 +258,8 @@ async fn get_tasks(
         }
     };
 
+    let starred = state.engine.starred_tasks_snapshot().await.unwrap_or_default();
+
     let mut tasks = Vec::<luban_api::TaskSummarySnapshot>::new();
     let selected_project_id = query
         .project_id
@@ -305,6 +307,7 @@ async fn get_tasks(
                     workspace_name: w.workspace_name.clone(),
                     agent_run_status,
                     has_unread_completion,
+                    is_starred: starred.contains(&(w.id.0, t.thread_id.0)),
                 });
             }
         }

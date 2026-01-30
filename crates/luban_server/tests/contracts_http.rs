@@ -249,6 +249,80 @@ async fn ensure_task_via_ws(server_addr: SocketAddr, workdir_id: u64) {
     assert!(saw_ack, "expected ack for create_task");
 }
 
+async fn set_task_star_via_ws(
+    server_addr: SocketAddr,
+    workdir_id: u64,
+    task_id: u64,
+    starred: bool,
+) {
+    let url = format!("ws://{}/api/events", server_addr);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("connect websocket");
+
+    let first = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+    assert!(matches!(first, luban_api::WsServerMessage::Hello { .. }));
+
+    let hello = luban_api::WsClientMessage::Hello {
+        protocol_version: luban_api::PROTOCOL_VERSION,
+        last_seen_rev: None,
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&hello)
+                .expect("serialize hello")
+                .into(),
+        ))
+        .await
+        .expect("send hello");
+
+    let mut saw_resync = false;
+    for _ in 0..20 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        if let luban_api::WsServerMessage::Event { event, .. } = msg
+            && matches!(*event, luban_api::ServerEvent::AppChanged { .. })
+        {
+            saw_resync = true;
+            break;
+        }
+    }
+    assert!(
+        saw_resync,
+        "expected an AppChanged resync event after hello"
+    );
+
+    let action = luban_api::WsClientMessage::Action {
+        request_id: "req-task-star".to_owned(),
+        action: Box::new(luban_api::ClientAction::TaskStarSet {
+            workspace_id: luban_api::WorkspaceId(workdir_id),
+            thread_id: luban_api::WorkspaceThreadId(task_id),
+            starred,
+        }),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&action)
+                .expect("serialize task_star_set action")
+                .into(),
+        ))
+        .await
+        .expect("send task_star_set action");
+
+    let mut saw_ack = false;
+    for _ in 0..60 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        if matches!(
+            msg,
+            luban_api::WsServerMessage::Ack { ref request_id, .. }
+                if request_id == "req-task-star"
+        ) {
+            saw_ack = true;
+            break;
+        }
+    }
+    assert!(saw_ack, "expected ack for task_star_set");
+}
+
 async fn upload_text_attachment(
     client: &reqwest::Client,
     base: &str,
@@ -398,6 +472,39 @@ async fn http_contracts_smoke() {
             snap.tasks.iter().any(|t| t.workspace_id.0 == workdir_id),
             "expected tasks to include the active workdir"
         );
+
+        let active = snap
+            .tasks
+            .iter()
+            .find(|t| t.workspace_id.0 == workdir_id && t.thread_id.0 == task_id)
+            .expect("task should exist in tasks snapshot");
+        assert!(
+            !active.is_starred,
+            "expected tasks to be unstarred by default"
+        );
+    }
+
+    set_task_star_via_ws(server.addr, workdir_id, task_id, true).await;
+
+    // C-HTTP-TASKS (starred)
+    {
+        let snap: luban_api::TasksSnapshot = client
+            .get(format!("{base}/api/tasks"))
+            .send()
+            .await
+            .expect("GET /api/tasks")
+            .error_for_status()
+            .expect("tasks status")
+            .json()
+            .await
+            .expect("tasks json");
+
+        let active = snap
+            .tasks
+            .iter()
+            .find(|t| t.workspace_id.0 == workdir_id && t.thread_id.0 == task_id)
+            .expect("task should exist in tasks snapshot");
+        assert!(active.is_starred, "expected task to be starred");
     }
 
     // C-HTTP-CONVERSATION (pagination)

@@ -505,6 +505,8 @@ pub struct TaskSummarySnapshot {
     pub workspace_name: String,
     pub agent_run_status: OperationStatus,
     pub has_unread_completion: bool,
+    #[serde(default)]
+    pub is_starred: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -683,6 +685,13 @@ pub enum ClientAction {
         mode: TaskExecuteMode,
         #[serde(default, rename = "workdir_id", alias = "workspace_id")]
         workdir_id: Option<WorkspaceId>,
+    },
+    TaskStarSet {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
+        workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
+        thread_id: WorkspaceThreadId,
+        starred: bool,
     },
     FeedbackSubmit {
         title: String,

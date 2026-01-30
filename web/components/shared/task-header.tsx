@@ -21,6 +21,10 @@ interface TaskHeaderProps {
   onProjectClick?: () => void
   /** Whether to show the full action buttons (star, open in vscode, etc.) */
   showFullActions?: boolean
+  /** Whether the task is starred */
+  isStarred?: boolean
+  /** Called with the next starred state when toggled */
+  onToggleStar?: (nextStarred: boolean) => void
   /** Custom actions to render on the right side */
   customActions?: React.ReactNode
 }
@@ -49,6 +53,8 @@ export function TaskHeader({
   project,
   onProjectClick,
   showFullActions = false,
+  isStarred = false,
+  onToggleStar,
   customActions,
 }: TaskHeaderProps) {
   return (
@@ -93,10 +99,14 @@ export function TaskHeader({
         {showFullActions && (
           <div className="flex items-center gap-0.5 ml-1 flex-shrink-0">
             <button
+              data-testid="task-star-button"
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-              style={{ color: '#9b9b9b' }}
+              style={{ color: isStarred ? '#f2c94c' : '#9b9b9b' }}
+              title={isStarred ? "Unstar" : "Star"}
+              aria-pressed={isStarred}
+              onClick={() => onToggleStar?.(!isStarred)}
             >
-              <Star className="w-4 h-4" />
+              <Star className="w-4 h-4" fill={isStarred ? "#f2c94c" : "none"} />
             </button>
             <button
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"

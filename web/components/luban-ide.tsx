@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { LubanLayout } from "./luban-layout"
 import { LubanSidebar, type NavView } from "./luban-sidebar"
 import { TaskListView, Task } from "./task-list-view"
@@ -9,6 +9,9 @@ import { InboxView, type InboxNotification } from "./inbox-view"
 import { SettingsPanel } from "./settings-panel"
 import { NewTaskModal } from "./new-task-modal"
 import { useLuban } from "@/lib/luban-context"
+import type { TaskSummarySnapshot } from "@/lib/luban-api"
+import { computeProjectDisplayNames } from "@/lib/project-display-names"
+import { projectColorClass } from "@/lib/project-colors"
 
 /**
  * Luban IDE main layout
@@ -21,7 +24,7 @@ import { useLuban } from "@/lib/luban-context"
  *   - Task detail view (when a task is selected)
  */
 export function LubanIDE() {
-  const { openWorkdir: openWorkspace, activateTask } = useLuban()
+  const { app, openWorkdir: openWorkspace, activateTask } = useLuban()
 
   const [activeView, setActiveView] = useState<NavView>("tasks")
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
@@ -44,7 +47,7 @@ export function LubanIDE() {
   const handleOpenFullViewFromInbox = (notification: InboxNotification) => {
     void (async () => {
       await openWorkspace(notification.workdirId)
-      await activateTask(notification.taskId)
+            await activateTask(notification.taskId)
         setSelectedTask({
           id: notification.id,
           workspaceId: notification.workdirId,
@@ -63,6 +66,43 @@ export function LubanIDE() {
       setActiveView("tasks")
       setShowDetail(true)
     })()
+  }
+
+  const projectInfoById = useMemo(() => {
+    if (!app) return new Map<string, { name: string; color: string }>()
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    const out = new Map<string, { name: string; color: string }>()
+    for (const p of app.projects) {
+      out.set(p.id, {
+        name: displayNames.get(p.path) ?? p.slug,
+        color: projectColorClass(p.id),
+      })
+    }
+    return out
+  }, [app])
+
+  const taskStatusFromSummary = (args: { agentRunStatus: string; hasUnreadCompletion: boolean }): Task["status"] => {
+    if (args.agentRunStatus === "running") return "in-progress"
+    if (args.hasUnreadCompletion) return "done"
+    return "todo"
+  }
+
+  const taskFromSummary = (summary: TaskSummarySnapshot): Task => {
+    const project = projectInfoById.get(summary.project_id) ?? { name: summary.project_id, color: "bg-violet-500" }
+    return {
+      id: `task-${summary.workdir_id}-${summary.task_id}`,
+      workspaceId: summary.workdir_id,
+      taskId: summary.task_id,
+      title: summary.title,
+      status: taskStatusFromSummary({
+        agentRunStatus: summary.agent_run_status,
+        hasUnreadCompletion: summary.has_unread_completion,
+      }),
+      workdir: summary.workdir_name || summary.branch_name,
+      projectName: project.name,
+      projectColor: project.color,
+      createdAt: "",
+    }
   }
 
   const renderContent = () => {
@@ -111,6 +151,15 @@ export function LubanIDE() {
             activeProjectId={activeProjectId}
             onProjectSelected={(projectId) => setActiveProjectId(projectId)}
             onNewTask={() => setNewTaskOpen(true)}
+            onFavoriteTaskSelected={(task) => {
+              void (async () => {
+                await openWorkspace(task.workdir_id)
+                await activateTask(task.task_id)
+                setSelectedTask(taskFromSummary(task))
+                setActiveView("tasks")
+                setShowDetail(true)
+              })()
+            }}
           />
         }
       >

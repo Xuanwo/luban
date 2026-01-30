@@ -66,6 +66,17 @@ async function waitForDataAttribute(locator, attr, expected, timeoutMs) {
   throw new Error(`expected ${attr}=${expected}, got ${value ?? 'null'}`);
 }
 
+async function waitForLocatorCount(locator, expected, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const count = await locator.count();
+    if (count === expected) return;
+    await sleep(250);
+  }
+  const count = await locator.count();
+  throw new Error(`expected ${expected} matches, got ${count}`);
+}
+
 async function main() {
   const pnpmCommand = await resolvePnpmCommand();
   if (!pnpmCommand) {
@@ -177,6 +188,20 @@ async function main() {
     await row0.click();
     await row0.waitFor({ state: 'visible' });
     await waitForDataAttribute(row0, 'data-read', 'true', 20_000);
+
+    const starButton = page.getByTestId('task-star-button');
+    await starButton.waitFor({ state: 'visible' });
+
+    const favoriteItems = page.locator('[data-testid^="favorite-task-"]');
+    await waitForLocatorCount(favoriteItems, 0, 5_000);
+
+    await starButton.click();
+    await waitForDataAttribute(starButton, 'aria-pressed', 'true', 10_000);
+    await waitForLocatorCount(favoriteItems, 1, 20_000);
+
+    await starButton.click();
+    await waitForDataAttribute(starButton, 'aria-pressed', 'false', 10_000);
+    await waitForLocatorCount(favoriteItems, 0, 20_000);
 
     await page.getByTestId('workspace-switcher-button').click();
     await page.getByTestId('open-settings-button').click();

@@ -156,6 +156,7 @@ export type TaskSummarySnapshot = {
   workdir_name: string
   agent_run_status: OperationStatus
   has_unread_completion: boolean
+  is_starred: boolean
 }
 
 export type TasksSnapshot = {
@@ -361,6 +362,7 @@ export type ClientAction =
   | { type: "add_project_and_open"; path: string }
   | { type: "task_preview"; input: string }
   | { type: "task_execute"; draft: TaskDraft; mode: TaskExecuteMode; workdir_id: WorkspaceId }
+  | { type: "task_star_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; starred: boolean }
   | {
       type: "feedback_submit"
       title: string

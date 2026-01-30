@@ -36,6 +36,7 @@ type RuntimeState = {
   rev: number
   app: AppSnapshot
   threadsByWorkdir: Map<WorkspaceId, ThreadsSnapshot>
+  starredTasks: Set<string>
   conversationsByWorkdirTask: Map<string, ConversationSnapshot>
   contextItemsByWorkdir: Map<WorkspaceId, ContextItemSnapshot[]>
   attachmentUrlsById: Map<string, string>
@@ -122,6 +123,7 @@ function initRuntime(): RuntimeState {
     rev: fixtures.app.rev,
     app: clone(fixtures.app),
     threadsByWorkdir,
+    starredTasks: new Set<string>(),
     conversationsByWorkdirTask,
     contextItemsByWorkdir,
     attachmentUrlsById,
@@ -203,6 +205,7 @@ export async function mockFetchTasks(args: { projectId?: string } = {}): Promise
           workdir_name: workdir.workdir_name,
           agent_run_status: workdir.agent_run_status,
           has_unread_completion: workdir.has_unread_completion,
+          is_starred: state.starredTasks.has(workdirTaskKey(workdir.id, t.task_id)),
         })
       }
     }
@@ -534,6 +537,17 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     const next: ConversationEntry[] = [...convo.entries, { type: "user_message", text: a.text, attachments: a.attachments ?? [] }]
     state.conversationsByWorkdirTask.set(key, { ...convo, entries: next, entries_total: next.length })
     emitConversationChanged({ state, workdirId: a.workdir_id, taskId: a.task_id, onEvent: args.onEvent })
+    return
+  }
+
+  if (a.type === "task_star_set") {
+    const key = workdirTaskKey(a.workdir_id, a.task_id)
+    if (a.starred) {
+      state.starredTasks.add(key)
+    } else {
+      state.starredTasks.delete(key)
+    }
+    emitAppChanged({ state, onEvent: args.onEvent })
     return
   }
 

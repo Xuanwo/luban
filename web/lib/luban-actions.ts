@@ -69,6 +69,7 @@ export type LubanActions = {
 
   previewTask: (input: string) => Promise<TaskDraft>
   executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
+  setTaskStarred: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) => void
   submitFeedback: (args: {
     title: string
     body: string
@@ -354,6 +355,10 @@ export function createLubanActions(args: {
 
   function executeTask(draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId): Promise<TaskExecuteResult> {
     return args.request<TaskExecuteResult>({ type: "task_execute", draft, mode, workdir_id: workdirId })
+  }
+
+  function setTaskStarred(workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) {
+    args.sendAction({ type: "task_star_set", workdir_id: workdirId, task_id: taskId, starred })
   }
 
   function submitFeedback(args2: {
@@ -847,6 +852,7 @@ export function createLubanActions(args: {
     writeClaudeConfigFile,
     previewTask,
     executeTask,
+    setTaskStarred,
     submitFeedback,
     openWorkdir,
     activateTask,

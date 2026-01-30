@@ -41,6 +41,7 @@ pub struct PersistedAppState {
     pub workspace_unread_completions: HashMap<u64, bool>,
     pub workspace_thread_run_config_overrides:
         HashMap<(u64, u64), PersistedWorkspaceThreadRunConfigOverride>,
+    pub starred_tasks: HashMap<(u64, u64), bool>,
     pub task_prompt_templates: HashMap<String, String>,
 }
 

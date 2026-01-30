@@ -73,6 +73,7 @@ impl AppState {
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
             workspace_unread_completions: HashSet::new(),
+            starred_tasks: HashSet::new(),
             workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: default_task_prompt_templates(),
             system_prompt_templates: default_system_prompt_templates(),
@@ -1793,6 +1794,24 @@ impl AppState {
                 self.workspace_chat_scroll_anchor.insert(key, anchor);
                 vec![Effect::SaveAppState]
             }
+            Action::TaskStarSet {
+                workspace_id,
+                thread_id,
+                starred,
+            } => {
+                let key = (workspace_id, thread_id);
+                if starred {
+                    if self.starred_tasks.insert(key) {
+                        vec![Effect::SaveAppState]
+                    } else {
+                        Vec::new()
+                    }
+                } else if self.starred_tasks.remove(&key) {
+                    vec![Effect::SaveAppState]
+                } else {
+                    Vec::new()
+                }
+            }
             Action::SidebarProjectOrderChanged { project_ids } => {
                 let mut seen = HashSet::<String>::new();
                 let valid: HashSet<String> = self
@@ -3019,6 +3038,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -3066,6 +3086,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -3113,6 +3134,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });
@@ -3203,6 +3225,7 @@ mod tests {
                 workspace_chat_scroll_anchor: HashMap::new(),
                 workspace_unread_completions: HashMap::new(),
                 workspace_thread_run_config_overrides: HashMap::new(),
+                starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
             }),
         });

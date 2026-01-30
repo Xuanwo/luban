@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChatPanel } from "./chat-panel"
 import { RightSidebar } from "./right-sidebar"
 import { TaskHeader } from "./shared/task-header"
@@ -8,6 +8,7 @@ import type { ChangedFile } from "./right-sidebar"
 import { useLuban } from "@/lib/luban-context"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
 import { projectColorClass } from "@/lib/project-colors"
+import { fetchTasks } from "@/lib/luban-http"
 
 interface TaskDetailViewProps {
   taskId?: string
@@ -25,9 +26,11 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
     activeWorkdir: activeWorkspace,
     activeTaskId: activeThreadId,
     tasks: threads,
+    setTaskStarred,
   } = useLuban()
   const [rightSidebarWidthPx, setRightSidebarWidthPx] = useState(320)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
+  const [isStarred, setIsStarred] = useState(false)
 
   const projectInfo = getActiveProjectInfo(app, activeWorkspaceId)
   const resolvedProjectName = projectName ?? projectInfo.name
@@ -47,6 +50,37 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
     }
     return "bg-violet-500"
   })()
+
+  useEffect(() => {
+    if (!app || activeWorkspaceId == null || activeThreadId == null) {
+      setIsStarred(false)
+      return
+    }
+
+    const projectPath = (() => {
+      for (const p of app.projects) {
+        if (p.workdirs.some((w) => w.id === activeWorkspaceId)) return p.path
+      }
+      return null
+    })()
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const snap = await fetchTasks(projectPath ? { projectId: projectPath } : {})
+        if (cancelled) return
+        const found =
+          snap.tasks.find((t) => t.workdir_id === activeWorkspaceId && t.task_id === activeThreadId) ?? null
+        setIsStarred(found?.is_starred ?? false)
+      } catch (err) {
+        console.warn("fetchTasks failed", err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [app?.rev, activeThreadId, activeWorkspaceId])
 
   function clamp(n: number, min: number, max: number) {
     return Math.round(Math.max(min, Math.min(max, n)))
@@ -88,6 +122,12 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
           project={{ name: resolvedProjectName, color: resolvedProjectColor }}
           onProjectClick={onBack}
           showFullActions
+          isStarred={isStarred}
+          onToggleStar={(nextStarred) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setTaskStarred(activeWorkspaceId, activeThreadId, nextStarred)
+            setIsStarred(nextStarred)
+          }}
         />
 
         {/* Chat Panel */}

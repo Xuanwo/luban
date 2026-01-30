@@ -73,6 +73,7 @@ type LubanContextValue = {
 
   previewTask: (input: string) => Promise<TaskDraft>
   executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
+  setTaskStarred: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) => void
   submitFeedback: (args: {
     title: string
     body: string
@@ -376,6 +377,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     toggleProjectExpanded: actions.toggleProjectExpanded,
     previewTask: actions.previewTask,
     executeTask: actions.executeTask,
+    setTaskStarred: actions.setTaskStarred,
     submitFeedback: actions.submitFeedback,
     openWorkdir: actions.openWorkdir,
     activateTask: actions.activateTask,

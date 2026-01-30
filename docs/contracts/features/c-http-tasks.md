@@ -24,6 +24,11 @@ client to iterate all workdirs and fan out requests.
 - `200 OK`
 - JSON body: `TasksSnapshot`
 
+## Schema notes
+
+- `TasksSnapshot.tasks[]` items are `TaskSummarySnapshot`.
+- `TaskSummarySnapshot.is_starred` indicates whether the user has starred the task.
+
 ## Invariants
 
 - The response must be deserializable into `TasksSnapshot`.
@@ -32,4 +37,3 @@ client to iterate all workdirs and fan out requests.
 ## Web usage
 
 - `web/lib/luban-http.ts` `fetchTasks({ projectId? })`
-
