@@ -14,7 +14,9 @@ Download a previously uploaded attachment.
 
 ## Query (optional)
 
-- `ext`: string (file extension hint used by the UI)
+## Query
+
+- `ext`: string (required; file extension used by the UI and provider to resolve and type the blob)
 
 ## Response
 

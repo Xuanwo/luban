@@ -7,6 +7,8 @@ import { TaskListView, Task } from "./task-list-view"
 import { TaskDetailView } from "./task-detail-view"
 import { InboxView, type InboxNotification } from "./inbox-view"
 import { SettingsPanel } from "./settings-panel"
+import { NewTaskModal } from "./new-task-modal"
+import { useLuban } from "@/lib/luban-context"
 
 /**
  * Luban IDE main layout
@@ -19,9 +21,14 @@ import { SettingsPanel } from "./settings-panel"
  *   - Task detail view (when a task is selected)
  */
 export function LubanIDE() {
-  const [activeView, setActiveView] = useState<NavView>("inbox")
+  const { openWorkspace } = useLuban()
+
+  const [activeView, setActiveView] = useState<NavView>("tasks")
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [showDetail, setShowDetail] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
 
   const handleViewChange = (view: NavView) => {
     if (view === "settings") {
@@ -29,23 +36,32 @@ export function LubanIDE() {
       return
     }
     setActiveView(view)
-    setSelectedTask(null) // Clear selected task when switching views
+    setSelectedTask(null)
+    setShowDetail(false)
   }
 
   // Handle opening full view from inbox notification
   const handleOpenFullViewFromInbox = (notification: InboxNotification) => {
-    // Convert notification to task format
-    const task: Task = {
-      id: notification.id,
-      title: notification.taskTitle,
-      status: notification.type === "completed" ? "done" : notification.type === "failed" ? "cancelled" : "in-progress",
-      worktree: notification.worktree,
-      projectName: notification.projectName,
-      projectColor: notification.projectColor,
-      createdAt: notification.timestamp,
-    }
-    setSelectedTask(task)
-    setActiveView("tasks") // Switch to tasks view to show full detail
+    void (async () => {
+      await openWorkspace(notification.workspaceId)
+      setSelectedTask({
+        id: notification.id,
+        workspaceId: notification.workspaceId,
+        title: notification.taskTitle,
+        status:
+          notification.type === "completed"
+            ? "done"
+            : notification.type === "failed"
+              ? "cancelled"
+              : "in-progress",
+        worktree: notification.worktree,
+        projectName: notification.projectName,
+        projectColor: notification.projectColor,
+        createdAt: notification.timestamp,
+      })
+      setActiveView("tasks")
+      setShowDetail(true)
+    })()
   }
 
   const renderContent = () => {
@@ -53,20 +69,34 @@ export function LubanIDE() {
       return <InboxView onOpenFullView={handleOpenFullViewFromInbox} />
     }
 
-    if (selectedTask) {
+    if (showDetail) {
       return (
         <TaskDetailView
-          taskId={selectedTask.id}
-          taskTitle={selectedTask.title}
-          worktree={selectedTask.worktree}
-          projectName={selectedTask.projectName}
-          projectColor={selectedTask.projectColor}
-          onBack={() => setSelectedTask(null)}
+          taskId={selectedTask?.id}
+          taskTitle={selectedTask?.title}
+          worktree={selectedTask?.worktree}
+          projectName={selectedTask?.projectName}
+          projectColor={selectedTask?.projectColor}
+          onBack={() => {
+            setSelectedTask(null)
+            setShowDetail(false)
+          }}
         />
       )
     }
 
-    return <TaskListView onTaskClick={(task) => setSelectedTask(task)} />
+    return (
+      <TaskListView
+        activeProjectId={activeProjectId}
+        onTaskClick={(task) => {
+          void (async () => {
+            await openWorkspace(task.workspaceId)
+            setSelectedTask(task)
+            setShowDetail(true)
+          })()
+        }}
+      />
+    )
   }
 
   return (
@@ -76,6 +106,13 @@ export function LubanIDE() {
           <LubanSidebar
             activeView={activeView}
             onViewChange={handleViewChange}
+            activeProjectId={activeProjectId}
+            onProjectSelected={(projectId) => setActiveProjectId(projectId)}
+            onWorkspaceOpened={() => {
+              setSelectedTask(null)
+              setShowDetail(true)
+            }}
+            onNewTask={() => setNewTaskOpen(true)}
           />
         }
       >
@@ -84,6 +121,13 @@ export function LubanIDE() {
       <SettingsPanel
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+      />
+      <NewTaskModal
+        open={newTaskOpen}
+        onOpenChange={(open) => {
+          setNewTaskOpen(open)
+          if (!open) setShowDetail(true)
+        }}
       />
     </>
   )

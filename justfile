@@ -116,17 +116,17 @@ app cmd profile="debug":
 
 test-ui:
   if ! command -v pnpm >/dev/null 2>&1 && ! command -v pnpm.cmd >/dev/null 2>&1; then \
-    echo "pnpm not found; cannot run Playwright tests"; \
+    echo "pnpm not found; cannot run UI tests"; \
     exit 1; \
   fi; \
-  (cd web && pnpm test:e2e)
+  (cd web && pnpm test:ui)
 
 test-ui-headed:
   if ! command -v pnpm >/dev/null 2>&1 && ! command -v pnpm.cmd >/dev/null 2>&1; then \
-    echo "pnpm not found; cannot run Playwright tests"; \
+    echo "pnpm not found; cannot run UI tests"; \
     exit 1; \
   fi; \
-  (cd web && pnpm test:e2e:headed)
+  (cd web && LUBAN_AGENT_BROWSER_HEADED=1 pnpm test:ui)
 
 run profile="debug":
   just web run "{{profile}}"

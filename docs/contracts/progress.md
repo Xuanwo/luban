@@ -27,18 +27,18 @@ Legend:
 
 | Contract | Surface | Server handler | Web entrypoint | Status | Mock | Provider | CI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| C-HTTP-HEALTH | `GET /api/health` | `crates/luban_server/src/server.rs:health` | n/a | Draft | n/a | ✅ | ⬜ |
-| C-HTTP-APP | `GET /api/app` | `crates/luban_server/src/server.rs:get_app` | `web/lib/luban-http.ts:fetchApp` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-CODEX-PROMPTS | `GET /api/codex/prompts` | `crates/luban_server/src/server.rs:get_codex_prompts` | `web/lib/luban-http.ts:fetchCodexCustomPrompts` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-THREADS | `GET /api/workspaces/{workspace_id}/threads` | `crates/luban_server/src/server.rs:get_threads` | `web/lib/luban-http.ts:fetchThreads` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-CONVERSATION | `GET /api/workspaces/{workspace_id}/conversations/{thread_id}` | `crates/luban_server/src/server.rs:get_conversation` | `web/lib/luban-http.ts:fetchConversation` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-CHANGES | `GET /api/workspaces/{workspace_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | `web/lib/luban-http.ts:fetchWorkspaceChanges` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-DIFF | `GET /api/workspaces/{workspace_id}/diff` | `crates/luban_server/src/server.rs:get_diff` | `web/lib/luban-http.ts:fetchWorkspaceDiff` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-CONTEXT | `GET /api/workspaces/{workspace_id}/context` | `crates/luban_server/src/server.rs:get_context` | `web/lib/luban-http.ts:fetchContext` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-CONTEXT-DELETE | `DELETE /api/workspaces/{workspace_id}/context/{context_id}` | `crates/luban_server/src/server.rs:delete_context_item` | `web/lib/luban-http.ts:deleteContextItem` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-MENTIONS | `GET /api/workspaces/{workspace_id}/mentions` | `crates/luban_server/src/server.rs:get_workspace_mentions` | `web/lib/luban-http.ts:fetchMentionItems` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-ATTACHMENTS-UPLOAD | `POST /api/workspaces/{workspace_id}/attachments` | `crates/luban_server/src/server.rs:upload_attachment` | `web/lib/luban-http.ts:uploadAttachment` | Draft | ✅ | ✅ | ⬜ |
-| C-HTTP-ATTACHMENTS-DOWNLOAD | `GET /api/workspaces/{workspace_id}/attachments/{attachment_id}` | `crates/luban_server/src/server.rs:download_attachment` | `web/components/*` (direct link usage) | Draft | ✅ | ✅ | ⬜ |
+| C-HTTP-HEALTH | `GET /api/health` | `crates/luban_server/src/server.rs:health` | n/a | Draft | n/a | ✅ | ✅ |
+| C-HTTP-APP | `GET /api/app` | `crates/luban_server/src/server.rs:get_app` | `web/lib/luban-http.ts:fetchApp` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CODEX-PROMPTS | `GET /api/codex/prompts` | `crates/luban_server/src/server.rs:get_codex_prompts` | `web/lib/luban-http.ts:fetchCodexCustomPrompts` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-THREADS | `GET /api/workspaces/{workspace_id}/threads` | `crates/luban_server/src/server.rs:get_threads` | `web/lib/luban-http.ts:fetchThreads` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CONVERSATION | `GET /api/workspaces/{workspace_id}/conversations/{thread_id}` | `crates/luban_server/src/server.rs:get_conversation` | `web/lib/luban-http.ts:fetchConversation` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CHANGES | `GET /api/workspaces/{workspace_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | `web/lib/luban-http.ts:fetchWorkspaceChanges` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-DIFF | `GET /api/workspaces/{workspace_id}/diff` | `crates/luban_server/src/server.rs:get_diff` | `web/lib/luban-http.ts:fetchWorkspaceDiff` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CONTEXT | `GET /api/workspaces/{workspace_id}/context` | `crates/luban_server/src/server.rs:get_context` | `web/lib/luban-http.ts:fetchContext` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CONTEXT-DELETE | `DELETE /api/workspaces/{workspace_id}/context/{context_id}` | `crates/luban_server/src/server.rs:delete_context_item` | `web/lib/luban-http.ts:deleteContextItem` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-MENTIONS | `GET /api/workspaces/{workspace_id}/mentions` | `crates/luban_server/src/server.rs:get_workspace_mentions` | `web/lib/luban-http.ts:fetchMentionItems` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-ATTACHMENTS-UPLOAD | `POST /api/workspaces/{workspace_id}/attachments` | `crates/luban_server/src/server.rs:upload_attachment` | `web/lib/luban-http.ts:uploadAttachment` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-ATTACHMENTS-DOWNLOAD | `GET /api/workspaces/{workspace_id}/attachments/{attachment_id}` | `crates/luban_server/src/server.rs:download_attachment` | `web/components/*` (direct link usage) | Draft | ✅ | ✅ | ✅ |
 
 ## WebSocket endpoints
 
@@ -50,7 +50,7 @@ Legend:
 ## Notes
 
 - `C-WS-EVENTS`: `ClientAction::ChatRunnerChanged` and `ClientAction::ChatAmpModeChanged` are implemented in mock + provider and enforced in CI via `crates/luban_server/src/engine.rs` unit tests (see `agent_turn_uses_pinned_chat_runner_and_amp_mode`).
-- `C-HTTP-CONVERSATION`: `ConversationSnapshot` now includes `agent_runner` and `amp_mode` (mock + provider implemented; CI not yet enforced).
+- `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 
 ## Feature contracts
 

@@ -5,6 +5,9 @@ import { ChatPanel } from "./chat-panel"
 import { RightSidebar } from "./right-sidebar"
 import { TaskHeader } from "./shared/task-header"
 import type { ChangedFile } from "./right-sidebar"
+import { useLuban } from "@/lib/luban-context"
+import { getActiveProjectInfo } from "@/lib/active-project-info"
+import { projectColorClass } from "@/lib/project-colors"
 
 interface TaskDetailViewProps {
   taskId?: string
@@ -15,9 +18,30 @@ interface TaskDetailViewProps {
   onBack?: () => void
 }
 
-export function TaskDetailView({ taskId, taskTitle, worktree, projectName = "Luban", projectColor = "bg-violet-500", onBack }: TaskDetailViewProps) {
+export function TaskDetailView({ taskId, taskTitle, worktree, projectName, projectColor, onBack }: TaskDetailViewProps) {
+  const { app, activeWorkspaceId, activeWorkspace, activeThreadId, threads } = useLuban()
   const [rightSidebarWidthPx, setRightSidebarWidthPx] = useState(320)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
+
+  const projectInfo = getActiveProjectInfo(app, activeWorkspaceId)
+  const resolvedProjectName = projectName ?? projectInfo.name
+  const resolvedWorktree = worktree ?? activeWorkspace?.workspace_name ?? activeWorkspace?.branch_name ?? "main"
+  const resolvedTitle =
+    taskTitle ??
+    (activeThreadId != null ? threads.find((t) => t.thread_id === activeThreadId)?.title : null) ??
+    activeWorkspace?.workspace_name ??
+    "Task"
+
+  const resolvedProjectColor = (() => {
+    if (projectColor) return projectColor
+    if (!app || activeWorkspaceId == null) return "bg-violet-500"
+    for (const p of app.projects) {
+      if (p.workspaces.some((w) => w.id === activeWorkspaceId)) {
+        return projectColorClass(p.id)
+      }
+    }
+    return "bg-violet-500"
+  })()
 
   function clamp(n: number, min: number, max: number) {
     return Math.round(Math.max(min, Math.min(max, n)))
@@ -54,9 +78,9 @@ export function TaskDetailView({ taskId, taskTitle, worktree, projectName = "Lub
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Header / Breadcrumb */}
         <TaskHeader
-          title={taskTitle || "Untitled Task"}
-          worktree={worktree || "main"}
-          project={{ name: projectName, color: projectColor }}
+          title={resolvedTitle}
+          worktree={resolvedWorktree}
+          project={{ name: resolvedProjectName, color: resolvedProjectColor }}
           onProjectClick={onBack}
           showFullActions
         />

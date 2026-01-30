@@ -128,5 +128,5 @@ Persisted app state includes:
   - Closing tabs archives them and preserves thread state (draft/messages preserved).
   - Restoring an archived tab returns it to `open_tabs`.
   - Concurrent turns are isolated per thread.
-- UI tests (Playwright):
-  - Tab strip ordering and restore behavior match this document and the tracked contracts.
+- UI tests (agent-browser):
+  - Smoke coverage is maintained in `web/tests/agent-browser/`.

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -11,11 +11,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ProjectIcon, type ProjectInfo } from "./shared/task-header"
+import { useLuban } from "@/lib/luban-context"
+import { computeProjectDisplayNames } from "@/lib/project-display-names"
+import { projectColorClass } from "@/lib/project-colors"
 
 type TaskStatus = "todo" | "in-progress" | "done" | "cancelled"
 
 export interface Task {
   id: string
+  workspaceId: number
   title: string
   status: TaskStatus
   worktree: string
@@ -67,12 +71,11 @@ function TaskRow({ task, selected, onClick }: TaskRowProps) {
         {task.worktree}
       </span>
       <span className="flex-1" />
-      <span
-        className="text-[12px] flex-shrink-0"
-        style={{ color: '#9b9b9b' }}
-      >
-        {task.createdAt}
-      </span>
+      {task.createdAt ? (
+        <span className="text-[12px] flex-shrink-0" style={{ color: "#9b9b9b" }}>
+          {task.createdAt}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -118,96 +121,68 @@ function TaskGroup({ title, count, defaultExpanded = true, children }: TaskGroup
   )
 }
 
-// Mock data
-const mockTasks: Task[] = [
-  {
-    id: "1",
-    title: "Implement new layout for Luban dashboard",
-    status: "in-progress",
-    worktree: "miracle-main",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 29",
-  },
-  {
-    id: "2",
-    title: "Add task filtering and sorting functionality",
-    status: "in-progress",
-    worktree: "feature-filter",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 28",
-  },
-  {
-    id: "3",
-    title: "Design new sidebar navigation structure",
-    status: "in-progress",
-    worktree: "miracle-main",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 28",
-  },
-  {
-    id: "4",
-    title: "Set up keyboard shortcuts for task management",
-    status: "todo",
-    worktree: "feature-shortcuts",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 27",
-  },
-  {
-    id: "5",
-    title: "Create task detail panel component",
-    status: "todo",
-    worktree: "miracle-main",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 27",
-  },
-  {
-    id: "6",
-    title: "Implement drag and drop for task reordering",
-    status: "todo",
-    worktree: "feature-dnd",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    createdAt: "Jan 26",
-  },
-  {
-    id: "7",
-    title: "Add dark mode support",
-    status: "done",
-    worktree: "feature-dark",
-    projectName: "Frontend",
-    projectColor: "bg-blue-500",
-    createdAt: "Jan 25",
-  },
-  {
-    id: "8",
-    title: "Initial project setup and configuration",
-    status: "done",
-    worktree: "main",
-    projectName: "Backend",
-    projectColor: "bg-emerald-500",
-    createdAt: "Jan 24",
-  },
-]
-
 interface TaskListViewProps {
-  project?: ProjectInfo
+  activeProjectId?: string | null
   onTaskClick?: (task: Task) => void
 }
 
-export function TaskListView({ project = { name: "Luban", color: "bg-violet-500" }, onTaskClick }: TaskListViewProps) {
+function taskStatusFromWorkspace(args: { agentRunStatus: string; hasUnreadCompletion: boolean }): TaskStatus {
+  if (args.agentRunStatus === "running") return "in-progress"
+  if (args.hasUnreadCompletion) return "done"
+  return "todo"
+}
+
+export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps) {
+  const { app } = useLuban()
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
 
-  const inProgressTasks = mockTasks.filter((t) => t.status === "in-progress")
-  const todoTasks = mockTasks.filter((t) => t.status === "todo")
-  const doneTasks = mockTasks.filter((t) => t.status === "done")
+  const tasks = useMemo(() => {
+    if (!app) return [] as Task[]
+
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    const out: Task[] = []
+
+    for (const p of app.projects) {
+      if (activeProjectId && p.id !== activeProjectId) continue
+      const projectName = displayNames.get(p.path) ?? p.slug
+      const projectColor = projectColorClass(p.id)
+      for (const w of p.workspaces) {
+        if (w.status !== "active") continue
+        out.push({
+          id: String(w.id),
+          workspaceId: w.id,
+          title: w.workspace_name || w.branch_name,
+          status: taskStatusFromWorkspace({
+            agentRunStatus: w.agent_run_status,
+            hasUnreadCompletion: w.has_unread_completion,
+          }),
+          worktree: w.workspace_name,
+          projectName,
+          projectColor,
+          createdAt: "",
+        })
+      }
+    }
+
+    return out
+  }, [activeProjectId, app])
+
+  const headerProject: ProjectInfo = useMemo(() => {
+    if (!app) return { name: "Projects", color: "bg-violet-500" }
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    if (activeProjectId) {
+      const p = app.projects.find((p) => p.id === activeProjectId)
+      if (p) return { name: displayNames.get(p.path) ?? p.slug, color: projectColorClass(p.id) }
+    }
+    return { name: "Projects", color: "bg-violet-500" }
+  }, [activeProjectId, app])
+
+  const inProgressTasks = tasks.filter((t) => t.status === "in-progress")
+  const todoTasks = tasks.filter((t) => t.status === "todo")
+  const doneTasks = tasks.filter((t) => t.status === "done")
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" data-testid="task-list-view">
       {/* Header */}
       <div
         className="flex items-center h-[39px] flex-shrink-0"
@@ -215,9 +190,9 @@ export function TaskListView({ project = { name: "Luban", color: "bg-violet-500"
       >
         {/* Project Indicator */}
         <div className="flex items-center gap-1">
-          <ProjectIcon name={project.name} color={project.color} />
+          <ProjectIcon name={headerProject.name} color={headerProject.color} />
           <span className="text-[13px] font-medium" style={{ color: '#1b1b1b' }}>
-            {project.name}
+            {headerProject.name}
           </span>
         </div>
 

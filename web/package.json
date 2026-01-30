@@ -7,8 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed",
+    "test:ui": "bash tests/agent-browser/smoke.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -77,7 +76,6 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^22",
     "@types/pngjs": "^6.0.5",

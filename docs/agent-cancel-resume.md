@@ -50,14 +50,7 @@ When the running card is expanded, the scroll container should auto-compensate s
 
 ## Regression Coverage
 
-Playwright tests cover:
+UI automation coverage:
 
-- Cancel → type message → submit:
-  - the old turn becomes a cancelled activity stream
-  - a new user message is appended
-- Cancel → Escape with queued prompts:
-  - the UI transitions to `paused`
-  - the **Resume** button is shown
-- Cancel → Escape without queued prompts:
-  - the running card disappears
-  - the cancelled activity stream is shown
+- `agent-browser` smoke tests cover basic rendering and modal interactions.
+- Cancel/resume flows should be validated via domain tests + targeted UI automation as follow-up.

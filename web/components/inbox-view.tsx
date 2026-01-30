@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   CheckCircle2,
   AlertCircle,
@@ -14,11 +14,15 @@ import { cn } from "@/lib/utils"
 import { ChatPanel } from "./chat-panel"
 import { TaskHeader, ProjectIcon } from "./shared/task-header"
 import type { ChangedFile } from "./right-sidebar"
+import { useLuban } from "@/lib/luban-context"
+import { computeProjectDisplayNames } from "@/lib/project-display-names"
+import { projectColorClass } from "@/lib/project-colors"
 
 type NotificationType = "completed" | "failed" | "needs-review"
 
 export interface InboxNotification {
   id: string
+  workspaceId: number
   taskTitle: string
   worktree: string
   projectName: string
@@ -115,70 +119,43 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
   )
 }
 
-// Mock data
-const mockNotifications: InboxNotification[] = [
-  {
-    id: "1",
-    taskTitle: "Implement new layout for Luban dashboard",
-    worktree: "miracle-main",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    type: "completed",
-    description: "Agent completed: All components updated with new styling",
-    timestamp: "2m",
-    read: false,
-  },
-  {
-    id: "2",
-    taskTitle: "Add task filtering and sorting functionality",
-    worktree: "feature-filter",
-    projectName: "Luban",
-    projectColor: "bg-violet-500",
-    type: "needs-review",
-    description: "Agent needs review: Found 3 potential approaches for implementation",
-    timestamp: "15m",
-    read: false,
-  },
-  {
-    id: "3",
-    taskTitle: "Fix authentication bug in login flow",
-    worktree: "fix-auth",
-    projectName: "Backend",
-    projectColor: "bg-emerald-500",
-    type: "failed",
-    description: "Agent failed: Could not reproduce the issue in test environment",
-    timestamp: "1h",
-    read: true,
-  },
-  {
-    id: "4",
-    taskTitle: "Optimize database queries for better performance",
-    worktree: "perf-opt",
-    projectName: "Backend",
-    projectColor: "bg-emerald-500",
-    type: "completed",
-    description: "Agent completed: Reduced query time by 40%",
-    timestamp: "3h",
-    read: true,
-  },
-  {
-    id: "5",
-    taskTitle: "Create API documentation for new endpoints",
-    worktree: "docs-api",
-    projectName: "Frontend",
-    projectColor: "bg-blue-500",
-    type: "completed",
-    description: "Agent completed: Generated documentation for 12 endpoints",
-    timestamp: "1d",
-    read: true,
-  },
-]
-
 export function InboxView({ onOpenFullView }: InboxViewProps) {
+  const { app, openWorkspace } = useLuban()
   const [selectedNotification, setSelectedNotification] = useState<InboxNotification | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
+  const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
 
-  const unreadCount = mockNotifications.filter((n) => !n.read).length
+  const notifications = useMemo(() => {
+    if (!app) return [] as InboxNotification[]
+
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+
+    const out: InboxNotification[] = []
+    for (const p of app.projects) {
+      const projectName = displayNames.get(p.path) ?? p.slug
+      const projectColor = projectColorClass(p.id)
+      for (const w of p.workspaces) {
+        if (w.status !== "active") continue
+        if (!w.has_unread_completion) continue
+        const id = `workspace-${w.id}`
+        out.push({
+          id,
+          workspaceId: w.id,
+          taskTitle: w.workspace_name || w.branch_name,
+          worktree: w.workspace_name,
+          projectName,
+          projectColor,
+          type: "completed",
+          description: "Workspace has unread completion",
+          timestamp: "",
+          read: readIds.has(id),
+        })
+      }
+    }
+    return out
+  }, [app, readIds])
+
+  const unreadCount = notifications.filter((n) => !n.read).length
 
   return (
     <div className="h-full flex">
@@ -223,12 +200,20 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
 
         {/* Notification List */}
         <div className="flex-1 overflow-y-auto">
-          {mockNotifications.map((notification) => (
+          {notifications.map((notification) => (
             <NotificationRow
               key={notification.id}
               notification={notification}
               selected={selectedNotification?.id === notification.id}
-              onClick={() => setSelectedNotification(notification)}
+              onClick={() => {
+                setSelectedNotification(notification)
+                setReadIds((prev) => {
+                  const next = new Set(prev)
+                  next.add(notification.id)
+                  return next
+                })
+                void openWorkspace(notification.workspaceId)
+              }}
               onDoubleClick={() => onOpenFullView?.(notification)}
             />
           ))}

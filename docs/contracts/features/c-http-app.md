@@ -44,4 +44,4 @@ This includes Agent settings:
 ## Web usage
 
 - `web/lib/luban-http.ts` `fetchApp()`
-- Playwright E2E uses it as a readiness/hydration primitive.
+- UI smoke tests treat it as a hydration primitive (indirectly via the app shell).

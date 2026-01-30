@@ -22,4 +22,4 @@ This directory documents the current, implemented architecture of Luban.
 - `docs/codex-cli.md`: how Codex CLI streaming maps to conversation entries.
 - `docs/claude-code.md`: how Claude Code streaming maps to conversation entries.
 - `docs/agent-runner-integration.md`: playbook for adding new agent runners (Amp learnings).
-- `docs/ui-testing.md`: UI regression testing guidance (Playwright-first).
+- `docs/ui-testing.md`: UI regression testing guidance (agent-browser).

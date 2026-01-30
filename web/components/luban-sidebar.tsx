@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +12,9 @@ import {
   Settings,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useLuban } from "@/lib/luban-context"
+import { buildSidebarProjects } from "@/lib/sidebar-view-model"
+import { projectColorClass } from "@/lib/project-colors"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -25,6 +28,10 @@ interface LubanSidebarProps {
   width?: number
   activeView?: NavView
   onViewChange?: (view: NavView) => void
+  activeProjectId?: string | null
+  onProjectSelected?: (projectId: string | null) => void
+  onWorkspaceOpened?: () => void
+  onNewTask?: () => void
 }
 
 interface NavItemProps {
@@ -118,13 +125,50 @@ function ProjectItem({ name, color = "bg-[#5e6ad2]", active, onClick }: ProjectI
   )
 }
 
-export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }: LubanSidebarProps) {
+export function LubanSidebar({
+  width = 244,
+  activeView = "tasks",
+  onViewChange,
+  activeProjectId,
+  onProjectSelected,
+  onWorkspaceOpened,
+  onNewTask,
+}: LubanSidebarProps) {
+  const {
+    app,
+    pickProjectPath,
+    addProjectAndOpen,
+    createWorkspace,
+    toggleProjectExpanded,
+    openWorkspace,
+  } = useLuban()
+
+  const projects = useMemo(() => buildSidebarProjects(app), [app])
+  const inboxUnread = useMemo(() => {
+    if (!app) return 0
+    let count = 0
+    for (const p of app.projects) {
+      for (const w of p.workspaces) {
+        if (w.status === "active" && w.has_unread_completion) count += 1
+      }
+    }
+    return count
+  }, [app])
+
   const handleNavClick = (view: NavView) => {
     onViewChange?.(view)
   }
 
+  const handleAddProject = async () => {
+    const path = await pickProjectPath()
+    if (!path) return
+    const { workspaceId } = await addProjectAndOpen(path)
+    await openWorkspace(workspaceId)
+  }
+
   return (
     <div
+      data-testid="nav-sidebar"
       className="h-full flex flex-col"
       style={{ width: `${width}px` }}
     >
@@ -132,7 +176,10 @@ export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }
       <div className="flex items-center justify-between h-[52px] px-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-2 hover:bg-[#eeeeee] px-2 py-1 rounded transition-colors outline-none">
+            <button
+              className="flex items-center gap-2 hover:bg-[#eeeeee] px-2 py-1 rounded transition-colors outline-none"
+              data-testid="workspace-switcher-button"
+            >
               <div className="w-5 h-5 rounded bg-[#5e6ad2] flex items-center justify-center">
                 <Layers className="w-3 h-3 text-white" />
               </div>
@@ -149,6 +196,7 @@ export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }
               onClick={() => onViewChange?.("settings")}
               className="flex items-center gap-2.5 px-2.5 py-2 text-[13px] rounded-md cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5]"
               style={{ color: '#1b1b1b' }}
+              data-testid="open-settings-button"
             >
               <Settings className="w-4 h-4" style={{ color: '#6b6b6b' }} />
               Settings
@@ -164,9 +212,11 @@ export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }
             <Search className="w-4 h-4" />
           </button>
           <button
+            onClick={() => onNewTask?.()}
             className="p-1.5 rounded hover:bg-[#eeeeee] transition-colors"
             style={{ color: '#6b6b6b' }}
             title="New task"
+            data-testid="new-task-button"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -180,7 +230,7 @@ export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }
           <NavItem
             icon={<Inbox className="w-4 h-4" />}
             label="Inbox"
-            badge={3}
+            badge={inboxUnread}
             active={activeView === "inbox"}
             onClick={() => handleNavClick("inbox")}
           />
@@ -198,24 +248,83 @@ export function LubanSidebar({ width = 244, activeView = "tasks", onViewChange }
 
         {/* Projects Section */}
         <Section title="Projects">
-          <ProjectItem
-            name="Luban"
-            color="bg-violet-500"
-            active={activeView === "project-luban"}
-            onClick={() => handleNavClick("project-luban")}
-          />
-          <ProjectItem
-            name="Backend"
-            color="bg-emerald-500"
-            active={activeView === "project-backend"}
-            onClick={() => handleNavClick("project-backend")}
-          />
-          <ProjectItem
-            name="Frontend"
-            color="bg-blue-500"
-            active={activeView === "project-frontend"}
-            onClick={() => handleNavClick("project-frontend")}
-          />
+          {projects.map((p) => {
+            const active = p.id === activeProjectId
+            const color = projectColorClass(p.id)
+            return (
+              <div key={p.id} className="space-y-0.5">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => toggleProjectExpanded(p.id)}
+                    className="p-1 rounded hover:bg-[#eeeeee] transition-colors"
+                    style={{ color: "#9b9b9b" }}
+                    title={p.expanded ? "Collapse project" : "Expand project"}
+                  >
+                    {p.expanded ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <ProjectItem
+                      name={p.displayName}
+                      color={color}
+                      active={active}
+                      onClick={() => {
+                        onProjectSelected?.(p.id)
+                        onViewChange?.("tasks")
+                      }}
+                    />
+                  </div>
+                  <button
+                    onClick={() => createWorkspace(p.id)}
+                    className="p-1 rounded hover:bg-[#eeeeee] transition-colors"
+                    style={{ color: "#9b9b9b" }}
+                    title="Add worktree"
+                  >
+                    <Plus className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {p.expanded ? (
+                  <div className="pl-7 space-y-0.5">
+                    {p.worktrees.map((w) => (
+                      <button
+                        key={w.workspaceId}
+                        onClick={async () => {
+                          await openWorkspace(w.workspaceId)
+                          onWorkspaceOpened?.()
+                          onViewChange?.("tasks")
+                        }}
+                        className="w-full flex items-center px-2 py-1.5 rounded text-[12px] hover:bg-[#eeeeee] transition-colors"
+                        style={{ color: "#1b1b1b" }}
+                        title={w.worktreeName}
+                      >
+                        <span className="flex-1 text-left truncate">{w.worktreeName}</span>
+                        <span className="ml-2 text-[11px] truncate" style={{ color: "#9b9b9b" }}>
+                          {w.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+
+          <button
+            onClick={() => void handleAddProject()}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] hover:bg-[#eeeeee] transition-colors"
+            style={{ color: "#1b1b1b" }}
+            title="Add project"
+            data-testid="add-project-button"
+          >
+            <span className="w-4 h-4 flex items-center justify-center" style={{ color: "#6b6b6b" }}>
+              <Plus className="w-4 h-4" />
+            </span>
+            <span className="flex-1 text-left truncate">Add project</span>
+          </button>
         </Section>
       </div>
     </div>

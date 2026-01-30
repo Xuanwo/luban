@@ -108,6 +108,20 @@ fn resolve_codex_root() -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(home).join(".codex"))
 }
 
+fn resolve_luban_root() -> anyhow::Result<PathBuf> {
+    if let Some(root) = std::env::var_os(luban_domain::paths::LUBAN_ROOT_ENV) {
+        let root = root.to_string_lossy();
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("{} is set but empty", luban_domain::paths::LUBAN_ROOT_ENV);
+        }
+        return Ok(PathBuf::from(trimmed));
+    }
+
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    Ok(PathBuf::from(home).join("luban"))
+}
+
 #[derive(Clone)]
 pub(crate) struct AppStateHolder {
     engine: EngineHandle,
@@ -478,25 +492,55 @@ struct AttachmentQuery {
     ext: String,
 }
 
+fn is_safe_file_extension(ext: &str) -> bool {
+    let ext = ext.trim();
+    if ext.is_empty() || ext.len() > 16 {
+        return false;
+    }
+    ext.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn is_safe_attachment_id(id: &str) -> bool {
+    let id = id.trim();
+    if id.is_empty() || id.len() > 128 {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 async fn download_attachment(
     State(state): State<AppStateHolder>,
     Path((workspace_id, attachment_id)): Path<(u64, String)>,
     Query(query): Query<AttachmentQuery>,
 ) -> impl IntoResponse {
+    if !is_safe_file_extension(&query.ext) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid attachment extension",
+        )
+            .into_response();
+    }
+    if !is_safe_attachment_id(&attachment_id) {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid attachment id").into_response();
+    }
+
     let Some((project_slug, workspace_name)) =
         workspace_scope_from_snapshot(&state.engine.app_snapshot().await.ok(), workspace_id)
     else {
         return (axum::http::StatusCode::NOT_FOUND, "workspace not found").into_response();
     };
 
-    let Some(home) = std::env::var_os("HOME") else {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "HOME is not set",
-        )
-            .into_response();
+    let luban_root = match resolve_luban_root() {
+        Ok(root) => root,
+        Err(err) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                err.to_string(),
+            )
+                .into_response();
+        }
     };
-    let luban_root = PathBuf::from(home).join("luban");
     let conversations_root = luban_domain::paths::conversations_root(&luban_root);
     let blob_path = conversations_root
         .join(project_slug)

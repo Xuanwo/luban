@@ -1,6 +1,6 @@
-# UI Testing (Playwright-first)
+# UI Testing (agent-browser)
 
-The web UI is the primary frontend. UI regression testing should be done with Playwright and should
+The web UI is the primary frontend. UI regression testing is done with `agent-browser` and should
 prioritize stability over pixel-perfect diffs.
 
 ## Principles
@@ -12,8 +12,8 @@ prioritize stability over pixel-perfect diffs.
 
 ## Selectors
 
-- Prefer stable `title=` attributes and structural selectors aligned with the UI contracts and
-  documented interaction expectations.
+- Prefer stable `data-testid` attributes, then `title=` attributes and structural selectors aligned
+  with the UI contracts and documented interaction expectations.
 - Avoid selectors derived from transient values (timestamps, random ids, etc.).
 
 ## Recommended checks
@@ -32,26 +32,19 @@ prioritize stability over pixel-perfect diffs.
 
 ## Running locally
 
-Install browsers (once):
-
-`cd web && pnpm exec playwright install`
-
 Run:
 
 - `just test-ui`
 - `just test-ui-headed`
 
-## Isolation and safety
+Prerequisites:
 
-UI tests run against an isolated Luban instance by default:
+- `agent-browser` must be installed and available on `PATH`.
+- `pnpm` must be installed for starting the web dev server.
 
-- A temporary `LUBAN_E2E_ROOT` is created under your OS temp dir.
-- The server binds to a random loopback port (via `LUBAN_E2E_PORT`).
-- `LUBAN_ROOT` is pointed at a directory inside `LUBAN_E2E_ROOT`, so the SQLite DB and on-disk state
-  used by tests never touch your production instance.
+## Isolation and safety (mock mode)
 
-You can override this behavior:
+UI tests run in `web/` mock mode by default:
 
-- `LUBAN_E2E_ROOT=/path/to/dir`: reuse a specific scratch root (will be cleared by global setup).
-- `LUBAN_E2E_PORT=12345`: force a port (must be free).
-- `LUBAN_E2E_REUSE_SERVER=1`: reuse an already running server at the configured port (local-only).
+- Tests start `next dev` with `NEXT_PUBLIC_LUBAN_MODE=mock`, so no Rust server is required.
+- Tests do not touch your real `LUBAN_ROOT` state.
