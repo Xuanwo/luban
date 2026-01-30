@@ -109,9 +109,9 @@
   --terminal-letter-spacing: 0;
   --terminal-use-webgl: 1;
   --terminal-allow-transparency: 0;
-  --terminal-background: var(--card);
-  --terminal-foreground: var(--card-foreground);
-  --terminal-cursor: var(--foreground);
+  --terminal-background: #fcfcfc;
+  --terminal-foreground: var(--linear-text);
+  --terminal-cursor: var(--linear-text);
   --terminal-bright-mix: var(--base00);
 
   --terminal-ansi-black: var(--base06);

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useEffect, useRef } from "react"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
@@ -892,15 +892,10 @@ export function PtyTerminal() {
       data-testid="pty-terminal"
       ref={outerRef}
       tabIndex={0}
-      style={
-        {
-          "--terminal-background": "var(--secondary)",
-          "--terminal-foreground": "var(--foreground)",
-        } as unknown as CSSProperties
-      }
-      className="luban-terminal h-full w-full p-0 font-mono text-xs overflow-hidden bg-background text-foreground focus:outline-none flex"
+      className="luban-terminal h-full w-full p-0 font-mono text-xs overflow-hidden focus:outline-none flex"
+      style={{ backgroundColor: '#fcfcfc' }}
     >
-      <div className="flex-1 min-h-0 min-w-0 overflow-hidden px-3">
+      <div className="flex-1 min-h-0 min-w-0 overflow-hidden px-3 py-2">
         <div ref={containerRef} className="h-full w-full overflow-hidden" />
       </div>
     </div>
