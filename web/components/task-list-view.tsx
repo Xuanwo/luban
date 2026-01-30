@@ -22,7 +22,7 @@ export interface Task {
   workspaceId: number
   title: string
   status: TaskStatus
-  worktree: string
+  workdir: string
   projectName: string
   projectColor: string
   createdAt: string
@@ -68,7 +68,7 @@ function TaskRow({ task, selected, onClick }: TaskRowProps) {
         className="text-[11px] px-1.5 py-0.5 rounded flex-shrink-0"
         style={{ backgroundColor: '#f0f0f0', color: '#6b6b6b' }}
       >
-        {task.worktree}
+        {task.workdir}
       </span>
       <span className="flex-1" />
       {task.createdAt ? (
@@ -136,6 +136,10 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
   const { app } = useLuban()
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
 
+  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
+  const isImplicitProjectRootWorkspace = (projectPath: string, args: { workspaceName: string; worktreePath: string }) =>
+    args.workspaceName === "main" && normalizePathLike(args.worktreePath) === normalizePathLike(projectPath)
+
   const tasks = useMemo(() => {
     if (!app) return [] as Task[]
 
@@ -148,6 +152,9 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
       const projectColor = projectColorClass(p.id)
       for (const w of p.workspaces) {
         if (w.status !== "active") continue
+        if (isImplicitProjectRootWorkspace(p.path, { workspaceName: w.workspace_name, worktreePath: w.worktree_path })) {
+          continue
+        }
         out.push({
           id: String(w.id),
           workspaceId: w.id,
@@ -156,7 +163,7 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
             agentRunStatus: w.agent_run_status,
             hasUnreadCompletion: w.has_unread_completion,
           }),
-          worktree: w.workspace_name,
+          workdir: w.branch_name || w.workspace_name,
           projectName,
           projectColor,
           createdAt: "",

@@ -59,7 +59,7 @@ export function findWorkspaceById(
 ): WorkspaceSnapshot | null {
   if (!app || workspaceId == null) return null
   for (const p of app.projects) {
-    const w = p.workspaces.find((x) => x.id === workspaceId)
+    const w = p.workdirs.find((x) => x.id === workspaceId)
     if (w) return w
   }
   return null
@@ -109,7 +109,7 @@ export function useLubanStore(): LubanStore {
 
   function cacheConversation(snapshot: ConversationSnapshot) {
     const cache = conversationCacheRef.current
-    cache.set(cacheKey(snapshot.workspace_id, snapshot.thread_id), snapshot)
+    cache.set(cacheKey(snapshot.workdir_id, snapshot.task_id), snapshot)
     while (cache.size > conversationCacheMaxEntries) {
       const oldestKey = cache.keys().next().value as string | undefined
       if (!oldestKey) break

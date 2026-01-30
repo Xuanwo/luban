@@ -34,15 +34,15 @@ import { normalizeWorkspaceTabsSnapshot } from "./workspace-tabs"
 export type LubanActions = {
   pickProjectPath: () => Promise<string | null>
   addProject: (path: string) => void
-  addProjectAndOpen: (path: string) => Promise<{ projectId: ProjectId; workspaceId: WorkspaceId }>
+  addProjectAndOpen: (path: string) => Promise<{ projectId: ProjectId; workdirId: WorkspaceId }>
   deleteProject: (projectId: ProjectId) => void
   createWorkspace: (projectId: ProjectId) => void
   ensureMainWorkspace: (projectId: ProjectId) => void
-  openWorkspaceInIde: (workspaceId: WorkspaceId) => void
-  openWorkspaceWith: (workspaceId: WorkspaceId, target: OpenTarget) => void
-  openWorkspacePullRequest: (workspaceId: WorkspaceId) => void
-  openWorkspacePullRequestFailedAction: (workspaceId: WorkspaceId) => void
-  archiveWorkspace: (workspaceId: number) => void
+  openWorkspaceInIde: (workdirId: WorkspaceId) => void
+  openWorkspaceWith: (workdirId: WorkspaceId, target: OpenTarget) => void
+  openWorkspacePullRequest: (workdirId: WorkspaceId) => void
+  openWorkspacePullRequestFailedAction: (workdirId: WorkspaceId) => void
+  archiveWorkspace: (workdirId: number) => void
   toggleProjectExpanded: (projectId: ProjectId) => void
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
@@ -68,7 +68,7 @@ export type LubanActions = {
   writeClaudeConfigFile: (path: string, contents: string) => Promise<void>
 
   previewTask: (input: string) => Promise<TaskDraft>
-  executeTask: (draft: TaskDraft, mode: TaskExecuteMode) => Promise<TaskExecuteResult>
+  executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
   submitFeedback: (args: {
     title: string
     body: string
@@ -95,22 +95,22 @@ export type LubanActions = {
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
   sendAgentMessageTo: (
-    workspaceId: WorkspaceId,
-    threadId: number,
+    workdirId: WorkspaceId,
+    taskId: number,
     text: string,
     attachments?: AttachmentRef[],
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
-  removeQueuedPrompt: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, promptId: number) => void
+  removeQueuedPrompt: (workspaceId: WorkspaceId, taskId: WorkspaceThreadId, promptId: number) => void
   reorderQueuedPrompt: (
     workspaceId: WorkspaceId,
-    threadId: WorkspaceThreadId,
+    taskId: WorkspaceThreadId,
     activeId: number,
     overId: number,
   ) => void
   updateQueuedPrompt: (
     workspaceId: WorkspaceId,
-    threadId: WorkspaceThreadId,
+    taskId: WorkspaceThreadId,
     promptId: number,
     args: { text: string; attachments: AttachmentRef[]; runConfig: AgentRunConfigSnapshot },
   ) => void
@@ -121,19 +121,18 @@ export type LubanActions = {
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
 
-  renameWorkspaceBranch: (workspaceId: WorkspaceId, branchName: string) => void
-  aiRenameWorkspaceBranch: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId) => void
+  renameWorkspaceBranch: (workdirId: WorkspaceId, branchName: string) => void
+  aiRenameWorkspaceBranch: (workdirId: WorkspaceId, taskId: WorkspaceThreadId) => void
 
-  setChatModel: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, modelId: string) => void
-  setThinkingEffort: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, effort: ThinkingEffort) => void
-  setChatRunner: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, runner: AgentRunnerKind) => void
-  setChatAmpMode: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, ampMode: string) => void
+  setChatModel: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, modelId: string) => void
+  setThinkingEffort: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, effort: ThinkingEffort) => void
+  setChatRunner: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, runner: AgentRunnerKind) => void
+  setChatAmpMode: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, ampMode: string) => void
   setAppearanceTheme: (theme: AppearanceTheme) => void
   setAppearanceFonts: (fonts: AppearanceFontsSnapshot) => void
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
   setSidebarProjectOrder: (projectIds: ProjectId[]) => void
-  setSidebarWorktreeOrder: (projectId: ProjectId, workspaceIds: WorkspaceId[]) => void
 }
 
 export type LubanActionsInternal = LubanActions & {
@@ -151,8 +150,8 @@ export function createLubanActions(args: {
     args.sendAction({ type: "add_project", path })
   }
 
-  function addProjectAndOpen(path: string): Promise<{ projectId: ProjectId; workspaceId: WorkspaceId }> {
-    return args.request<{ projectId: ProjectId; workspaceId: WorkspaceId }>({ type: "add_project_and_open", path })
+  function addProjectAndOpen(path: string): Promise<{ projectId: ProjectId; workdirId: WorkspaceId }> {
+    return args.request<{ projectId: ProjectId; workdirId: WorkspaceId }>({ type: "add_project_and_open", path })
   }
 
   function deleteProject(projectId: ProjectId) {
@@ -164,31 +163,31 @@ export function createLubanActions(args: {
   }
 
   function createWorkspace(projectId: ProjectId) {
-    args.sendAction({ type: "create_workspace", project_id: projectId })
+    args.sendAction({ type: "create_workdir", project_id: projectId })
   }
 
   function ensureMainWorkspace(projectId: ProjectId) {
-    args.sendAction({ type: "ensure_main_workspace", project_id: projectId })
+    args.sendAction({ type: "ensure_main_workdir", project_id: projectId })
   }
 
-  function openWorkspaceInIde(workspaceId: WorkspaceId) {
-    args.sendAction({ type: "open_workspace_in_ide", workspace_id: workspaceId })
+  function openWorkspaceInIde(workdirId: WorkspaceId) {
+    args.sendAction({ type: "open_workdir_in_ide", workdir_id: workdirId })
   }
 
-  function openWorkspaceWith(workspaceId: WorkspaceId, target: OpenTarget) {
-    args.sendAction({ type: "open_workspace_with", workspace_id: workspaceId, target })
+  function openWorkspaceWith(workdirId: WorkspaceId, target: OpenTarget) {
+    args.sendAction({ type: "open_workdir_with", workdir_id: workdirId, target })
   }
 
-  function openWorkspacePullRequest(workspaceId: WorkspaceId) {
-    args.sendAction({ type: "open_workspace_pull_request", workspace_id: workspaceId })
+  function openWorkspacePullRequest(workdirId: WorkspaceId) {
+    args.sendAction({ type: "open_workdir_pull_request", workdir_id: workdirId })
   }
 
-  function openWorkspacePullRequestFailedAction(workspaceId: WorkspaceId) {
-    args.sendAction({ type: "open_workspace_pull_request_failed_action", workspace_id: workspaceId })
+  function openWorkspacePullRequestFailedAction(workdirId: WorkspaceId) {
+    args.sendAction({ type: "open_workdir_pull_request_failed_action", workdir_id: workdirId })
   }
 
-  function archiveWorkspace(workspaceId: number) {
-    args.sendAction({ type: "archive_workspace", workspace_id: workspaceId })
+  function archiveWorkspace(workdirId: number) {
+    args.sendAction({ type: "archive_workdir", workdir_id: workdirId })
   }
 
   function toggleProjectExpanded(projectId: ProjectId) {
@@ -353,8 +352,8 @@ export function createLubanActions(args: {
     return args.request<TaskDraft>({ type: "task_preview", input })
   }
 
-  function executeTask(draft: TaskDraft, mode: TaskExecuteMode): Promise<TaskExecuteResult> {
-    return args.request<TaskExecuteResult>({ type: "task_execute", draft, mode })
+  function executeTask(draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId): Promise<TaskExecuteResult> {
+    return args.request<TaskExecuteResult>({ type: "task_execute", draft, mode, workdir_id: workdirId })
   }
 
   function submitFeedback(args2: {
@@ -379,9 +378,9 @@ export function createLubanActions(args: {
     store.setConversation(store.getCachedConversation(workspaceId, threadId))
 
     args.sendAction({
-      type: "activate_workspace_thread",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      type: "activate_task",
+      workdir_id: workspaceId,
+      task_id: threadId,
     })
 
     try {
@@ -397,13 +396,13 @@ export function createLubanActions(args: {
     threadId: number | null
   }> {
     const snap = await fetchThreads(workspaceId)
-    store.cacheThreads(workspaceId, snap.threads)
-    store.setThreads(snap.threads)
-    const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: snap.tabs, threads: snap.threads })
+    store.cacheThreads(workspaceId, snap.tasks)
+    store.setThreads(snap.tasks)
+    const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: snap.tabs, threads: snap.tasks })
     store.cacheWorkspaceTabs(workspaceId, normalizedTabs)
     store.setWorkspaceTabs(normalizedTabs)
 
-    const threadIds = new Set(snap.threads.map((t) => t.thread_id))
+    const threadIds = new Set(snap.tasks.map((t) => t.task_id))
     const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
     const current = store.refs.activeThreadIdRef.current
     const currentIsOpen = current != null && openThreadIds.includes(current)
@@ -411,7 +410,7 @@ export function createLubanActions(args: {
     const initial =
       (currentIsOpen ? current : preferredOpen) ??
       pickThreadId({
-        threads: snap.threads,
+        threads: snap.tasks,
         preferredThreadId: normalizedTabs.active_tab,
       })
 
@@ -471,25 +470,25 @@ export function createLubanActions(args: {
       store.setConversation(null)
     }
 
-    args.sendAction({ type: "open_workspace", workspace_id: workspaceId })
+    args.sendAction({ type: "open_workdir", workdir_id: workspaceId })
 
     try {
       const snap = await fetchThreads(workspaceId)
-      store.cacheThreads(workspaceId, snap.threads)
-      store.setThreads(snap.threads)
-      const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: snap.tabs, threads: snap.threads })
+      store.cacheThreads(workspaceId, snap.tasks)
+      store.setThreads(snap.tasks)
+      const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: snap.tabs, threads: snap.tasks })
       store.cacheWorkspaceTabs(workspaceId, normalizedTabs)
       store.setWorkspaceTabs(normalizedTabs)
 
       const initial = pickThreadId({
-        threads: snap.threads,
+        threads: snap.tasks,
         preferredThreadId: snap.tabs.active_tab,
       })
 
       if (initial == null) {
         const existing = new Set<number>()
         store.markPendingCreateThread({ workspaceId, existingThreadIds: existing })
-        args.sendAction({ type: "create_workspace_thread", workspace_id: workspaceId })
+        args.sendAction({ type: "create_task", workdir_id: workspaceId })
         store.setActiveThreadId(null)
 
         await waitAndActivateNewThread({ workspaceId, existingThreadIds: existing })
@@ -499,9 +498,9 @@ export function createLubanActions(args: {
       store.setActiveThreadId(initial)
       if (initial !== snap.tabs.active_tab) {
         args.sendAction({
-          type: "activate_workspace_thread",
-          workspace_id: workspaceId,
-          thread_id: initial,
+          type: "activate_task",
+          workdir_id: workspaceId,
+          task_id: initial,
         })
       }
       try {
@@ -543,10 +542,10 @@ export function createLubanActions(args: {
     if (wid == null) return
 
     void (async () => {
-      const existingThreadIds = new Set(store.refs.threadsRef.current.map((t) => t.thread_id))
+      const existingThreadIds = new Set(store.refs.threadsRef.current.map((t) => t.task_id))
       store.markPendingCreateThread({ workspaceId: wid, existingThreadIds })
-      args.sendAction({ type: "open_workspace", workspace_id: wid })
-      args.sendAction({ type: "create_workspace_thread", workspace_id: wid })
+      args.sendAction({ type: "open_workdir", workdir_id: wid })
+      args.sendAction({ type: "create_task", workdir_id: wid })
 
       await waitAndActivateNewThread({ workspaceId: wid, existingThreadIds })
     })()
@@ -555,7 +554,7 @@ export function createLubanActions(args: {
   async function closeThreadTab(threadId: number) {
     const wid = store.refs.activeWorkspaceIdRef.current
     if (wid == null) return
-    args.sendAction({ type: "close_workspace_thread_tab", workspace_id: wid, thread_id: threadId })
+    args.sendAction({ type: "close_task_tab", workdir_id: wid, task_id: threadId })
     try {
       await refreshThreads(wid)
     } catch (err) {
@@ -566,7 +565,7 @@ export function createLubanActions(args: {
   async function restoreThreadTab(threadId: number) {
     const wid = store.refs.activeWorkspaceIdRef.current
     if (wid == null) return
-    args.sendAction({ type: "restore_workspace_thread_tab", workspace_id: wid, thread_id: threadId })
+    args.sendAction({ type: "restore_task_tab", workdir_id: wid, task_id: threadId })
     try {
       await refreshThreads(wid)
     } catch (err) {
@@ -590,8 +589,8 @@ export function createLubanActions(args: {
     if (!ids) return
     args.sendAction({
       type: "send_agent_message",
-      workspace_id: ids.workspaceId,
-      thread_id: ids.threadId,
+      workdir_id: ids.workspaceId,
+      task_id: ids.threadId,
       text,
       attachments,
       ...(runConfig?.runner != null ? { runner: runConfig.runner } : {}),
@@ -608,8 +607,8 @@ export function createLubanActions(args: {
     if (!ids) return
     args.sendAction({
       type: "queue_agent_message",
-      workspace_id: ids.workspaceId,
-      thread_id: ids.threadId,
+      workdir_id: ids.workspaceId,
+      task_id: ids.threadId,
       text,
       attachments,
       ...(runConfig?.runner != null ? { runner: runConfig.runner } : {}),
@@ -618,16 +617,16 @@ export function createLubanActions(args: {
   }
 
   function sendAgentMessageTo(
-    workspaceId: WorkspaceId,
-    threadId: number,
+    workdirId: WorkspaceId,
+    taskId: number,
     text: string,
     attachments: AttachmentRef[] = [],
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) {
     args.sendAction({
       type: "send_agent_message",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      workdir_id: workdirId,
+      task_id: taskId,
       text,
       attachments,
       ...(runConfig?.runner != null ? { runner: runConfig.runner } : {}),
@@ -638,10 +637,10 @@ export function createLubanActions(args: {
   function removeQueuedPrompt(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, promptId: number) {
     store.setConversation((prev) => {
       if (!prev) return prev
-      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.workdir_id !== workspaceId || prev.task_id !== threadId) return prev
       return { ...prev, pending_prompts: prev.pending_prompts.filter((p) => p.id !== promptId) }
     })
-    args.sendAction({ type: "remove_queued_prompt", workspace_id: workspaceId, thread_id: threadId, prompt_id: promptId })
+    args.sendAction({ type: "remove_queued_prompt", workdir_id: workspaceId, task_id: threadId, prompt_id: promptId })
   }
 
   function reorderQueuedPrompt(
@@ -652,7 +651,7 @@ export function createLubanActions(args: {
   ) {
     store.setConversation((prev) => {
       if (!prev) return prev
-      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.workdir_id !== workspaceId || prev.task_id !== threadId) return prev
       const from = prev.pending_prompts.findIndex((p) => p.id === activeId)
       const to = prev.pending_prompts.findIndex((p) => p.id === overId)
       if (from < 0 || to < 0 || from === to) return prev
@@ -664,8 +663,8 @@ export function createLubanActions(args: {
     })
     args.sendAction({
       type: "reorder_queued_prompt",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      workdir_id: workspaceId,
+      task_id: threadId,
       active_id: activeId,
       over_id: overId,
     })
@@ -682,7 +681,7 @@ export function createLubanActions(args: {
     const runConfig = args2.runConfig
     store.setConversation((prev) => {
       if (!prev) return prev
-      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.workdir_id !== workspaceId || prev.task_id !== threadId) return prev
       const next = prev.pending_prompts.map((p) =>
         p.id === promptId ? { ...p, text, attachments, run_config: runConfig } : p,
       )
@@ -690,8 +689,8 @@ export function createLubanActions(args: {
     })
     args.sendAction({
       type: "update_queued_prompt",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      workdir_id: workspaceId,
+      task_id: threadId,
       prompt_id: promptId,
       text,
       attachments,
@@ -703,7 +702,7 @@ export function createLubanActions(args: {
   function cancelAgentTurn() {
     const ids = activeWorkspaceThread()
     if (!ids) return
-    args.sendAction({ type: "cancel_agent_turn", workspace_id: ids.workspaceId, thread_id: ids.threadId })
+    args.sendAction({ type: "cancel_agent_turn", workdir_id: ids.workspaceId, task_id: ids.threadId })
   }
 
   function cancelAndSendAgentMessage(
@@ -715,8 +714,8 @@ export function createLubanActions(args: {
     if (!ids) return
     args.sendAction({
       type: "cancel_and_send_agent_message",
-      workspace_id: ids.workspaceId,
-      thread_id: ids.threadId,
+      workdir_id: ids.workspaceId,
+      task_id: ids.threadId,
       text,
       attachments,
       ...(runConfig?.runner != null ? { runner: runConfig.runner } : {}),
@@ -724,19 +723,19 @@ export function createLubanActions(args: {
     })
   }
 
-  function renameWorkspaceBranch(workspaceId: WorkspaceId, branchName: string) {
-    args.sendAction({ type: "workspace_rename_branch", workspace_id: workspaceId, branch_name: branchName })
+  function renameWorkspaceBranch(workdirId: WorkspaceId, branchName: string) {
+    args.sendAction({ type: "workdir_rename_branch", workdir_id: workdirId, branch_name: branchName })
   }
 
-  function aiRenameWorkspaceBranch(workspaceId: WorkspaceId, threadId: WorkspaceThreadId) {
-    args.sendAction({ type: "workspace_ai_rename_branch", workspace_id: workspaceId, thread_id: threadId })
+  function aiRenameWorkspaceBranch(workdirId: WorkspaceId, threadId: WorkspaceThreadId) {
+    args.sendAction({ type: "workdir_ai_rename_branch", workdir_id: workdirId, task_id: threadId })
   }
 
   function setChatModel(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, modelId: string) {
     args.sendAction({
       type: "chat_model_changed",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      workdir_id: workspaceId,
+      task_id: threadId,
       model_id: modelId,
     })
   }
@@ -748,8 +747,8 @@ export function createLubanActions(args: {
   ) {
     args.sendAction({
       type: "thinking_effort_changed",
-      workspace_id: workspaceId,
-      thread_id: threadId,
+      workdir_id: workspaceId,
+      task_id: threadId,
       thinking_effort: effort,
     })
   }
@@ -757,7 +756,7 @@ export function createLubanActions(args: {
   function setChatRunner(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, runner: AgentRunnerKind) {
     store.setConversation((prev) => {
       if (!prev) return prev
-      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.workdir_id !== workspaceId || prev.task_id !== threadId) return prev
       const nextAmpMode =
         runner === "amp" ? (prev.amp_mode ?? store.state.app?.agent.amp_mode ?? null) : null
       return {
@@ -766,7 +765,7 @@ export function createLubanActions(args: {
         amp_mode: nextAmpMode,
       }
     })
-    args.sendAction({ type: "chat_runner_changed", workspace_id: workspaceId, thread_id: threadId, runner })
+    args.sendAction({ type: "chat_runner_changed", workdir_id: workspaceId, task_id: threadId, runner })
   }
 
   function setChatAmpMode(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, ampMode: string) {
@@ -774,11 +773,11 @@ export function createLubanActions(args: {
     if (!trimmed) return
     store.setConversation((prev) => {
       if (!prev) return prev
-      if (prev.workspace_id !== workspaceId || prev.thread_id !== threadId) return prev
+      if (prev.workdir_id !== workspaceId || prev.task_id !== threadId) return prev
       if (prev.agent_runner !== "amp") return prev
       return { ...prev, amp_mode: trimmed }
     })
-    args.sendAction({ type: "chat_amp_mode_changed", workspace_id: workspaceId, thread_id: threadId, amp_mode: trimmed })
+    args.sendAction({ type: "chat_amp_mode_changed", workdir_id: workspaceId, task_id: threadId, amp_mode: trimmed })
   }
 
   function setAppearanceTheme(theme: AppearanceTheme) {
@@ -809,23 +808,6 @@ export function createLubanActions(args: {
       }
     })
     args.sendAction({ type: "sidebar_project_order_changed", project_ids: projectIds })
-  }
-
-  function setSidebarWorktreeOrder(projectId: ProjectId, workspaceIds: WorkspaceId[]) {
-    store.setApp((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        ui: {
-          ...prev.ui,
-          sidebar_worktree_order: {
-            ...(prev.ui.sidebar_worktree_order ?? {}),
-            [projectId]: workspaceIds,
-          },
-        },
-      }
-    })
-    args.sendAction({ type: "sidebar_worktree_order_changed", project_id: projectId, workspace_ids: workspaceIds })
   }
 
   return {
@@ -892,6 +874,5 @@ export function createLubanActions(args: {
     setGlobalZoom,
     setOpenButtonSelection,
     setSidebarProjectOrder,
-    setSidebarWorktreeOrder,
   }
 }

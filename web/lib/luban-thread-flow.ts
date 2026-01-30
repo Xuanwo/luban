@@ -10,7 +10,7 @@ export function pickCreatedThreadId(args: {
   existingThreadIds: Set<number>
 }): number | null {
   const created = args.threads
-    .map((t) => t.thread_id)
+    .map((t) => t.task_id)
     .filter((id) => !args.existingThreadIds.has(id))
     .sort((a, b) => b - a)[0]
 
@@ -20,7 +20,7 @@ export function pickCreatedThreadId(args: {
 export async function waitForNewThread(args: {
   workspaceId: WorkspaceId
   existingThreadIds: Set<number>
-  fetchThreads: (workspaceId: WorkspaceId) => Promise<{ threads: ThreadMeta[]; tabs: WorkspaceTabsSnapshot }>
+  fetchThreads: (workspaceId: WorkspaceId) => Promise<{ tasks: ThreadMeta[]; tabs: WorkspaceTabsSnapshot }>
   timeoutMs?: number
   pollMs?: number
 }): Promise<{ threads: ThreadMeta[]; tabs: WorkspaceTabsSnapshot; createdThreadId: number | null }> {
@@ -32,10 +32,10 @@ export async function waitForNewThread(args: {
     try {
       const snap = await args.fetchThreads(args.workspaceId)
       const createdThreadId = pickCreatedThreadId({
-        threads: snap.threads,
+        threads: snap.tasks,
         existingThreadIds: args.existingThreadIds,
       })
-      return { threads: snap.threads, tabs: snap.tabs, createdThreadId }
+      return { threads: snap.tasks, tabs: snap.tabs, createdThreadId }
     } catch {
       // ignore and retry
     }

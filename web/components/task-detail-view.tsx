@@ -12,20 +12,20 @@ import { projectColorClass } from "@/lib/project-colors"
 interface TaskDetailViewProps {
   taskId?: string
   taskTitle?: string
-  worktree?: string
+  workdir?: string
   projectName?: string
   projectColor?: string
   onBack?: () => void
 }
 
-export function TaskDetailView({ taskId, taskTitle, worktree, projectName, projectColor, onBack }: TaskDetailViewProps) {
+export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projectColor, onBack }: TaskDetailViewProps) {
   const { app, activeWorkspaceId, activeWorkspace, activeThreadId, threads } = useLuban()
   const [rightSidebarWidthPx, setRightSidebarWidthPx] = useState(320)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
 
   const projectInfo = getActiveProjectInfo(app, activeWorkspaceId)
   const resolvedProjectName = projectName ?? projectInfo.name
-  const resolvedWorktree = worktree ?? activeWorkspace?.workspace_name ?? activeWorkspace?.branch_name ?? "main"
+  const resolvedWorkdir = workdir ?? activeWorkspace?.branch_name ?? activeWorkspace?.workspace_name ?? "main"
   const resolvedTitle =
     taskTitle ??
     (activeThreadId != null ? threads.find((t) => t.thread_id === activeThreadId)?.title : null) ??
@@ -79,7 +79,7 @@ export function TaskDetailView({ taskId, taskTitle, worktree, projectName, proje
         {/* Header / Breadcrumb */}
         <TaskHeader
           title={resolvedTitle}
-          worktree={resolvedWorktree}
+          workdir={resolvedWorkdir}
           project={{ name: resolvedProjectName, color: resolvedProjectColor }}
           onProjectClick={onBack}
           showFullActions

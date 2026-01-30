@@ -24,7 +24,7 @@ export interface InboxNotification {
   id: string
   workspaceId: number
   taskTitle: string
-  worktree: string
+  workdir: string
   projectName: string
   projectColor: string
   type: NotificationType
@@ -125,6 +125,10 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
 
+  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
+  const isImplicitProjectRootWorkspace = (projectPath: string, args: { workspaceName: string; worktreePath: string }) =>
+    args.workspaceName === "main" && normalizePathLike(args.worktreePath) === normalizePathLike(projectPath)
+
   const notifications = useMemo(() => {
     if (!app) return [] as InboxNotification[]
 
@@ -137,16 +141,19 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
       for (const w of p.workspaces) {
         if (w.status !== "active") continue
         if (!w.has_unread_completion) continue
+        if (isImplicitProjectRootWorkspace(p.path, { workspaceName: w.workspace_name, worktreePath: w.worktree_path })) {
+          continue
+        }
         const id = `workspace-${w.id}`
         out.push({
           id,
           workspaceId: w.id,
           taskTitle: w.workspace_name || w.branch_name,
-          worktree: w.workspace_name,
+          workdir: w.branch_name || w.workspace_name,
           projectName,
           projectColor,
           type: "completed",
-          description: "Workspace has unread completion",
+          description: "Task has unread completion",
           timestamp: "",
           read: readIds.has(id),
         })
@@ -227,7 +234,7 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
             {/* Preview Header - using shared TaskHeader */}
             <TaskHeader
               title={selectedNotification.taskTitle}
-              worktree={selectedNotification.worktree}
+              workdir={selectedNotification.workdir}
               project={{ name: selectedNotification.projectName, color: selectedNotification.projectColor }}
               showFullActions
             />

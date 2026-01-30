@@ -26,12 +26,12 @@ export function useThreadTabs(args: {
 } {
   const threadsById = useMemo(() => {
     const out = new Map<number, ThreadMeta>()
-    for (const t of args.threads) out.set(t.thread_id, t)
+    for (const t of args.threads) out.set(t.task_id, t)
     return out
   }, [args.threads])
 
   const { openThreadIds, closedThreadIds } = useMemo(() => {
-    const all = args.threads.map((t) => t.thread_id)
+    const all = args.threads.map((t) => t.task_id)
     if (all.length === 0) return { openThreadIds: [] as WorkspaceThreadId[], closedThreadIds: [] as WorkspaceThreadId[] }
 
     const openFromTabs = (args.workspaceTabs?.open_tabs ?? []).filter((id) => threadsById.has(id))
@@ -61,9 +61,9 @@ export function useThreadTabs(args: {
       .map((id) => threadsById.get(id))
       .filter((t): t is ThreadMeta => Boolean(t))
       .map((t) => ({
-        id: String(t.thread_id),
+        id: String(t.task_id),
         title: t.title,
-        isActive: t.thread_id === args.activeThreadId,
+        isActive: t.task_id === args.activeThreadId,
       }))
   }, [args.activeThreadId, openThreadIds, threadsById])
 
@@ -72,7 +72,7 @@ export function useThreadTabs(args: {
     for (const id of [...closedThreadIds].reverse()) {
       const t = threadsById.get(id)
       if (t) out.push({ id: String(id), title: t.title })
-      else out.push({ id: String(id), title: `Thread ${id}` })
+      else out.push({ id: String(id), title: `Task ${id}` })
     }
     return out
   }, [closedThreadIds, threadsById])

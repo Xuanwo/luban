@@ -16,23 +16,23 @@ export function createLubanServerEventHandler(args: {
         args.store.setApp(event.snapshot)
         return
       }
-      case "workspace_threads_changed": {
+      case "workdir_tasks_changed": {
         const wid = args.store.refs.activeWorkspaceIdRef.current
-        if (wid == null || wid !== event.workspace_id) return
+        if (wid == null || wid !== event.workdir_id) return
 
-        args.store.cacheThreads(wid, event.threads)
-        args.store.setThreads(event.threads)
-        const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: event.tabs, threads: event.threads })
+        args.store.cacheThreads(wid, event.tasks)
+        args.store.setThreads(event.tasks)
+        const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: event.tabs, threads: event.tasks })
         args.store.cacheWorkspaceTabs(wid, normalizedTabs)
         args.store.setWorkspaceTabs(normalizedTabs)
         const current = args.store.refs.activeThreadIdRef.current
-        const threadIds = new Set(event.threads.map((t) => t.thread_id))
+        const threadIds = new Set(event.tasks.map((t) => t.task_id))
         const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
 
         const pending = args.store.refs.pendingCreateThreadRef.current
         if (pending && pending.workspaceId === wid) {
           const created = pickCreatedThreadId({
-            threads: event.threads,
+            threads: event.tasks,
             existingThreadIds: pending.existingThreadIds,
           })
           if (created != null) {
@@ -50,11 +50,7 @@ export function createLubanServerEventHandler(args: {
         const currentIsOpen = current != null && openThreadIds.includes(current)
         if (!currentExists || !currentIsOpen) {
           const preferred = normalizedTabs.active_tab
-          const next =
-            (openThreadIds.includes(preferred) && threadIds.has(preferred) ? preferred : null) ??
-            openThreadIds[0] ??
-            event.threads[0]?.thread_id ??
-            null
+          const next = (openThreadIds.includes(preferred) ? preferred : null) ?? openThreadIds[0] ?? event.tasks[0]?.task_id ?? null
           if (next != null) args.onSelectThreadInWorkspace(wid, next)
         }
         return
@@ -64,7 +60,7 @@ export function createLubanServerEventHandler(args: {
         const tid = args.store.refs.activeThreadIdRef.current
         args.store.cacheConversation(event.snapshot)
         if (wid == null || tid == null) return
-        if (event.snapshot.workspace_id === wid && event.snapshot.thread_id === tid) {
+        if (event.snapshot.workdir_id === wid && event.snapshot.task_id === tid) {
           args.store.setConversation(event.snapshot)
         }
         return

@@ -216,7 +216,7 @@ export function useLubanTransport(args: {
               pendingResponsesRef.current.delete(event.request_id)
               if (event.type === "project_path_picked") pending.resolve(event.path)
               if (event.type === "add_project_and_open_ready")
-                pending.resolve({ projectId: event.project_id, workspaceId: event.workspace_id })
+                pending.resolve({ projectId: event.project_id, workdirId: event.workdir_id })
               if (event.type === "task_preview_ready") pending.resolve(event.draft)
               if (event.type === "task_executed") pending.resolve(event.result)
               if (event.type === "feedback_submitted") pending.resolve(event.result)

@@ -44,32 +44,33 @@ pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
     let api_protected = Router::new()
         .route("/app", get(get_app))
         .route("/codex/prompts", get(get_codex_prompts))
-        .route("/workspaces/{workspace_id}/threads", get(get_threads))
+        .route("/tasks", get(get_tasks))
+        .route("/workdirs/{workdir_id}/tasks", get(get_threads))
         .route(
-            "/workspaces/{workspace_id}/conversations/{thread_id}",
+            "/workdirs/{workdir_id}/conversations/{task_id}",
             get(get_conversation),
         )
         .route(
-            "/workspaces/{workspace_id}/attachments",
+            "/workdirs/{workdir_id}/attachments",
             post(upload_attachment),
         )
         .route(
-            "/workspaces/{workspace_id}/attachments/{attachment_id}",
+            "/workdirs/{workdir_id}/attachments/{attachment_id}",
             get(download_attachment),
         )
-        .route("/workspaces/{workspace_id}/changes", get(get_changes))
-        .route("/workspaces/{workspace_id}/diff", get(get_diff))
-        .route("/workspaces/{workspace_id}/context", get(get_context))
+        .route("/workdirs/{workdir_id}/changes", get(get_changes))
+        .route("/workdirs/{workdir_id}/diff", get(get_diff))
+        .route("/workdirs/{workdir_id}/context", get(get_context))
         .route(
-            "/workspaces/{workspace_id}/mentions",
+            "/workdirs/{workdir_id}/mentions",
             get(get_workspace_mentions),
         )
         .route(
-            "/workspaces/{workspace_id}/context/{context_id}",
+            "/workdirs/{workdir_id}/context/{context_id}",
             delete(delete_context_item),
         )
         .route("/events", get(ws_events))
-        .route("/pty/{workspace_id}/{thread_id}", get(ws_pty))
+        .route("/pty/{workdir_id}/{task_id}", get(ws_pty))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
@@ -237,6 +238,77 @@ async fn get_codex_prompts() -> impl IntoResponse {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct TasksQuery {
+    project_id: Option<String>,
+}
+
+async fn get_tasks(
+    State(state): State<AppStateHolder>,
+    Query(query): Query<TasksQuery>,
+) -> impl IntoResponse {
+    let app = match state.engine.app_snapshot().await {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                err.to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    let mut tasks = Vec::<luban_api::TaskSummarySnapshot>::new();
+    let selected_project_id = query.project_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    for p in &app.projects {
+        if let Some(selected) = selected_project_id {
+            if p.id.0 != selected {
+                continue;
+            }
+        }
+
+        for w in &p.workspaces {
+            if w.status != luban_api::WorkspaceStatus::Active {
+                continue;
+            }
+
+            let snap = match state.engine.threads_snapshot(w.id).await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let active_task_id = snap.tabs.active_tab;
+            for t in snap.threads {
+                let agent_run_status = if t.thread_id == active_task_id
+                    && w.agent_run_status == luban_api::OperationStatus::Running
+                {
+                    luban_api::OperationStatus::Running
+                } else {
+                    luban_api::OperationStatus::Idle
+                };
+
+                let has_unread_completion =
+                    t.thread_id == active_task_id && w.has_unread_completion;
+
+                tasks.push(luban_api::TaskSummarySnapshot {
+                    project_id: p.id.clone(),
+                    workspace_id: w.id,
+                    thread_id: t.thread_id,
+                    title: t.title,
+                    updated_at_unix_seconds: t.updated_at_unix_seconds,
+                    branch_name: w.branch_name.clone(),
+                    workspace_name: w.workspace_name.clone(),
+                    agent_run_status,
+                    has_unread_completion,
+                });
+            }
+        }
+    }
+
+    Json(luban_api::TasksSnapshot { rev: app.rev, tasks }).into_response()
+}
+
 async fn get_threads(
     State(state): State<AppStateHolder>,
     Path(workspace_id): Path<u64>,
@@ -268,7 +340,7 @@ async fn get_workspace_mentions(
     {
         Ok(Some(path)) => path,
         Ok(None) => {
-            return (axum::http::StatusCode::NOT_FOUND, "workspace not found").into_response();
+            return (axum::http::StatusCode::NOT_FOUND, "workdir not found").into_response();
         }
         Err(err) => {
             return (axum::http::StatusCode::NOT_FOUND, err.to_string()).into_response();

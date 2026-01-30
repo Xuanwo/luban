@@ -6,6 +6,7 @@ import type {
   ContextSnapshot,
   ConversationSnapshot,
   MentionItemSnapshot,
+  TasksSnapshot,
   ThreadsSnapshot,
   WorkspaceChangesSnapshot,
   WorkspaceDiffSnapshot,
@@ -18,6 +19,7 @@ import {
   mockFetchContext,
   mockFetchConversation,
   mockFetchMentionItems,
+  mockFetchTasks,
   mockFetchThreads,
   mockFetchWorkspaceChanges,
   mockFetchWorkspaceDiff,
@@ -33,8 +35,8 @@ export async function fetchApp(): Promise<AppSnapshot> {
 
 export async function fetchThreads(workspaceId: number): Promise<ThreadsSnapshot> {
   if (isMockMode()) return await mockFetchThreads(workspaceId)
-  const res = await fetch(`/api/workspaces/${workspaceId}/threads`)
-  if (!res.ok) throw new Error(`GET /api/workspaces/${workspaceId}/threads failed: ${res.status}`)
+  const res = await fetch(`/api/workdirs/${workspaceId}/tasks`)
+  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/tasks failed: ${res.status}`)
   return (await res.json()) as ThreadsSnapshot
 }
 
@@ -47,10 +49,10 @@ export async function fetchConversation(
   const limit = args.limit ?? 2000
   const params = new URLSearchParams({ limit: String(limit) })
   if (args.before != null) params.set("before", String(args.before))
-  const res = await fetch(`/api/workspaces/${workspaceId}/conversations/${threadId}?${params.toString()}`)
+  const res = await fetch(`/api/workdirs/${workspaceId}/conversations/${threadId}?${params.toString()}`)
   if (!res.ok)
     throw new Error(
-      `GET /api/workspaces/${workspaceId}/conversations/${threadId} failed: ${res.status}`,
+      `GET /api/workdirs/${workspaceId}/conversations/${threadId} failed: ${res.status}`,
     )
   return (await res.json()) as ConversationSnapshot
 }
@@ -74,14 +76,14 @@ export async function uploadAttachment(args: {
 
   let res: Response
   try {
-    res = await fetch(`/api/workspaces/${args.workspaceId}/attachments`, {
+    res = await fetch(`/api/workdirs/${args.workspaceId}/attachments`, {
       method: "POST",
       headers: { "Idempotency-Key": resolvedKey },
       body: form,
     })
   } catch {
     await new Promise((r) => window.setTimeout(r, 200))
-    res = await fetch(`/api/workspaces/${args.workspaceId}/attachments`, {
+    res = await fetch(`/api/workdirs/${args.workspaceId}/attachments`, {
       method: "POST",
       headers: { "Idempotency-Key": resolvedKey },
       body: form,
@@ -90,7 +92,7 @@ export async function uploadAttachment(args: {
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
-      `POST /api/workspaces/${args.workspaceId}/attachments failed: ${res.status}${text ? `: ${text}` : ""}`,
+      `POST /api/workdirs/${args.workspaceId}/attachments failed: ${res.status}${text ? `: ${text}` : ""}`,
     )
   }
 
@@ -99,34 +101,34 @@ export async function uploadAttachment(args: {
 
 export async function fetchContext(workspaceId: number): Promise<ContextSnapshot> {
   if (isMockMode()) return await mockFetchContext(workspaceId)
-  const res = await fetch(`/api/workspaces/${workspaceId}/context`)
-  if (!res.ok) throw new Error(`GET /api/workspaces/${workspaceId}/context failed: ${res.status}`)
+  const res = await fetch(`/api/workdirs/${workspaceId}/context`)
+  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/context failed: ${res.status}`)
   return (await res.json()) as ContextSnapshot
 }
 
 export async function deleteContextItem(workspaceId: number, contextId: number): Promise<void> {
   if (isMockMode()) return await mockDeleteContextItem(workspaceId, contextId)
-  const res = await fetch(`/api/workspaces/${workspaceId}/context/${contextId}`, { method: "DELETE" })
+  const res = await fetch(`/api/workdirs/${workspaceId}/context/${contextId}`, { method: "DELETE" })
   if (res.status === 204) return
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
-      `DELETE /api/workspaces/${workspaceId}/context/${contextId} failed: ${res.status}${text ? `: ${text}` : ""}`,
+      `DELETE /api/workdirs/${workspaceId}/context/${contextId} failed: ${res.status}${text ? `: ${text}` : ""}`,
     )
   }
 }
 
 export async function fetchWorkspaceChanges(workspaceId: number): Promise<WorkspaceChangesSnapshot> {
   if (isMockMode()) return await mockFetchWorkspaceChanges(workspaceId)
-  const res = await fetch(`/api/workspaces/${workspaceId}/changes`)
-  if (!res.ok) throw new Error(`GET /api/workspaces/${workspaceId}/changes failed: ${res.status}`)
+  const res = await fetch(`/api/workdirs/${workspaceId}/changes`)
+  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/changes failed: ${res.status}`)
   return (await res.json()) as WorkspaceChangesSnapshot
 }
 
 export async function fetchWorkspaceDiff(workspaceId: number): Promise<WorkspaceDiffSnapshot> {
   if (isMockMode()) return await mockFetchWorkspaceDiff(workspaceId)
-  const res = await fetch(`/api/workspaces/${workspaceId}/diff`)
-  if (!res.ok) throw new Error(`GET /api/workspaces/${workspaceId}/diff failed: ${res.status}`)
+  const res = await fetch(`/api/workdirs/${workspaceId}/diff`)
+  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/diff failed: ${res.status}`)
   return (await res.json()) as WorkspaceDiffSnapshot
 }
 
@@ -145,13 +147,23 @@ export async function fetchMentionItems(args: {
   const q = args.query.trim()
   if (!q) return []
   const res = await fetch(
-    `/api/workspaces/${args.workspaceId}/mentions?q=${encodeURIComponent(q)}`,
+    `/api/workdirs/${args.workspaceId}/mentions?q=${encodeURIComponent(q)}`,
   )
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
-      `GET /api/workspaces/${args.workspaceId}/mentions failed: ${res.status}${text ? `: ${text}` : ""}`,
+      `GET /api/workdirs/${args.workspaceId}/mentions failed: ${res.status}${text ? `: ${text}` : ""}`,
     )
   }
   return (await res.json()) as MentionItemSnapshot[]
+}
+
+export async function fetchTasks(args: { projectId?: string } = {}): Promise<TasksSnapshot> {
+  if (isMockMode()) return await mockFetchTasks(args)
+  const params = new URLSearchParams()
+  if (args.projectId) params.set("project_id", args.projectId)
+  const suffix = params.toString() ? `?${params.toString()}` : ""
+  const res = await fetch(`/api/tasks${suffix}`)
+  if (!res.ok) throw new Error(`GET /api/tasks failed: ${res.status}`)
+  return (await res.json()) as TasksSnapshot
 }

@@ -21,18 +21,18 @@ export const kanbanColumns: { id: KanbanColumn; label: string; color: string }[]
   { id: "done", label: "Done", color: "text-status-success" },
 ]
 
-export function agentStatusFromWorkspace(workspace: WorkspaceSnapshot): AgentStatus {
-  if (workspace.agent_run_status === "running") return "running"
-  if (workspace.has_unread_completion) return "pending"
+export function agentStatusFromTask(task: WorkspaceSnapshot): AgentStatus {
+  if (task.agent_run_status === "running") return "running"
+  if (task.has_unread_completion) return "pending"
   return "idle"
 }
 
-export function prStatusFromWorkspace(workspace: WorkspaceSnapshot): {
+export function prStatusFromTask(task: WorkspaceSnapshot): {
   status: PRStatus
   prNumber?: number
   prState?: "open" | "closed" | "merged"
 } {
-  const pr = workspace.pull_request
+  const pr = task.pull_request
   if (!pr) return { status: "none" }
 
   if (pr.state === "merged") {
@@ -51,7 +51,7 @@ export function prStatusFromWorkspace(workspace: WorkspaceSnapshot): {
   return { status: "ci-passed", prNumber: pr.number, prState: pr.state }
 }
 
-export function kanbanColumnForWorktree(args: { agentStatus: AgentStatus; prStatus: PRStatus }): KanbanColumn {
+export function kanbanColumnForTask(args: { agentStatus: AgentStatus; prStatus: PRStatus }): KanbanColumn {
   if (args.agentStatus === "running") return "running"
   if (args.agentStatus === "pending") return "pending"
 

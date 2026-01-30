@@ -4,15 +4,15 @@ import type { AppSnapshot } from "./luban-api"
 import { computeProjectDisplayNames } from "./project-display-names"
 import {
   kanbanColumns,
-  agentStatusFromWorkspace,
-  kanbanColumnForWorktree,
-  prStatusFromWorkspace,
+  agentStatusFromTask,
+  kanbanColumnForTask,
+  prStatusFromTask,
   type KanbanColumn,
   type AgentStatus,
   type PRStatus,
-} from "./worktree-ui"
+} from "./task-ui"
 
-export type KanbanWorktreeVm = {
+export type KanbanTaskVm = {
   id: string
   name: string
   projectName: string
@@ -24,19 +24,19 @@ export type KanbanWorktreeVm = {
 }
 
 export type KanbanBoardVm = {
-  worktrees: KanbanWorktreeVm[]
-  worktreesByColumn: Record<KanbanColumn, KanbanWorktreeVm[]>
+  tasks: KanbanTaskVm[]
+  tasksByColumn: Record<KanbanColumn, KanbanTaskVm[]>
 }
 
-export function buildKanbanWorktrees(app: AppSnapshot | null): KanbanWorktreeVm[] {
+export function buildKanbanTasks(app: AppSnapshot | null): KanbanTaskVm[] {
   if (!app) return []
   const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
-  const out: KanbanWorktreeVm[] = []
+  const out: KanbanTaskVm[] = []
   for (const p of app.projects) {
     for (const w of p.workspaces) {
       if (w.status !== "active") continue
-      const agentStatus = agentStatusFromWorkspace(w)
-      const pr = prStatusFromWorkspace(w)
+      const agentStatus = agentStatusFromTask(w)
+      const pr = prStatusFromTask(w)
       out.push({
         id: w.short_id,
         name: w.branch_name,
@@ -52,21 +52,21 @@ export function buildKanbanWorktrees(app: AppSnapshot | null): KanbanWorktreeVm[
   return out
 }
 
-export function groupKanbanWorktreesByColumn(
-  worktrees: KanbanWorktreeVm[],
-): Record<KanbanColumn, KanbanWorktreeVm[]> {
+export function groupKanbanTasksByColumn(
+  tasks: KanbanTaskVm[],
+): Record<KanbanColumn, KanbanTaskVm[]> {
   return kanbanColumns.reduce(
     (acc, col) => {
-      acc[col.id] = worktrees.filter(
-        (w) => kanbanColumnForWorktree({ agentStatus: w.agentStatus, prStatus: w.prStatus }) === col.id,
+      acc[col.id] = tasks.filter(
+        (w) => kanbanColumnForTask({ agentStatus: w.agentStatus, prStatus: w.prStatus }) === col.id,
       )
       return acc
     },
-    {} as Record<KanbanColumn, KanbanWorktreeVm[]>,
+    {} as Record<KanbanColumn, KanbanTaskVm[]>,
   )
 }
 
 export function buildKanbanBoardVm(app: AppSnapshot | null): KanbanBoardVm {
-  const worktrees = buildKanbanWorktrees(app)
-  return { worktrees, worktreesByColumn: groupKanbanWorktreesByColumn(worktrees) }
+  const tasks = buildKanbanTasks(app)
+  return { tasks, tasksByColumn: groupKanbanTasksByColumn(tasks) }
 }

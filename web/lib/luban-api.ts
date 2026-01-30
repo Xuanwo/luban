@@ -60,11 +60,10 @@ export type AppSnapshot = {
 }
 
 export type UiSnapshot = {
-  active_workspace_id?: WorkspaceId
-  active_thread_id?: WorkspaceThreadId
+  active_workdir_id?: WorkspaceId
+  active_task_id?: WorkspaceThreadId
   open_button_selection?: string
   sidebar_project_order?: ProjectId[]
-  sidebar_worktree_order?: Record<ProjectId, WorkspaceId[]>
 }
 
 export type ProjectSnapshot = {
@@ -74,16 +73,16 @@ export type ProjectSnapshot = {
   path: string
   is_git: boolean
   expanded: boolean
-  create_workspace_status: OperationStatus
-  workspaces: WorkspaceSnapshot[]
+  create_workdir_status: OperationStatus
+  workdirs: WorkspaceSnapshot[]
 }
 
 export type WorkspaceSnapshot = {
   id: WorkspaceId
   short_id: string
-  workspace_name: string
+  workdir_name: string
   branch_name: string
-  worktree_path: string
+  workdir_path: string
   status: WorkspaceStatus
   archive_status: OperationStatus
   branch_rename_status: OperationStatus
@@ -108,7 +107,7 @@ export type ChangedFileSnapshot = {
 }
 
 export type WorkspaceChangesSnapshot = {
-  workspace_id: WorkspaceId
+  workdir_id: WorkspaceId
   files: ChangedFileSnapshot[]
 }
 
@@ -124,7 +123,7 @@ export type WorkspaceDiffFileSnapshot = {
 }
 
 export type WorkspaceDiffSnapshot = {
-  workspace_id: WorkspaceId
+  workdir_id: WorkspaceId
   files: WorkspaceDiffFileSnapshot[]
 }
 
@@ -142,9 +141,26 @@ export type PullRequestSnapshot = {
 
 export type ThreadsSnapshot = {
   rev: number
-  workspace_id: WorkspaceId
+  workdir_id: WorkspaceId
   tabs: WorkspaceTabsSnapshot
-  threads: ThreadMeta[]
+  tasks: ThreadMeta[]
+}
+
+export type TaskSummarySnapshot = {
+  project_id: ProjectId
+  workdir_id: WorkspaceId
+  task_id: WorkspaceThreadId
+  title: string
+  updated_at_unix_seconds: number
+  branch_name: string
+  workdir_name: string
+  agent_run_status: OperationStatus
+  has_unread_completion: boolean
+}
+
+export type TasksSnapshot = {
+  rev: number
+  tasks: TaskSummarySnapshot[]
 }
 
 export type WorkspaceTabsSnapshot = {
@@ -154,7 +170,7 @@ export type WorkspaceTabsSnapshot = {
 }
 
 export type ThreadMeta = {
-  thread_id: WorkspaceThreadId
+  task_id: WorkspaceThreadId
   remote_thread_id: string | null
   title: string
   updated_at_unix_seconds: number
@@ -178,14 +194,14 @@ export type ContextItemSnapshot = {
 }
 
 export type ContextSnapshot = {
-  workspace_id: WorkspaceId
+  workdir_id: WorkspaceId
   items: ContextItemSnapshot[]
 }
 
 export type ConversationSnapshot = {
   rev: number
-  workspace_id: WorkspaceId
-  thread_id: WorkspaceThreadId
+  workdir_id: WorkspaceId
+  task_id: WorkspaceThreadId
   agent_runner: AgentRunnerKind
   agent_model_id: string
   thinking_effort: ThinkingEffort
@@ -281,9 +297,9 @@ export type TaskExecuteMode = "create" | "start"
 
 export type TaskExecuteResult = {
   project_id: ProjectId
-  workspace_id: WorkspaceId
-  thread_id: WorkspaceThreadId
-  worktree_path: string
+  workdir_id: WorkspaceId
+  task_id: WorkspaceThreadId
+  workdir_path: string
   prompt: string
   mode: TaskExecuteMode
 }
@@ -344,7 +360,7 @@ export type ClientAction =
   | { type: "add_project"; path: string }
   | { type: "add_project_and_open"; path: string }
   | { type: "task_preview"; input: string }
-  | { type: "task_execute"; draft: TaskDraft; mode: TaskExecuteMode }
+  | { type: "task_execute"; draft: TaskDraft; mode: TaskExecuteMode; workdir_id: WorkspaceId }
   | {
       type: "feedback_submit"
       title: string
@@ -355,78 +371,77 @@ export type ClientAction =
     }
   | { type: "delete_project"; project_id: ProjectId }
   | { type: "toggle_project_expanded"; project_id: ProjectId }
-  | { type: "create_workspace"; project_id: ProjectId }
-  | { type: "ensure_main_workspace"; project_id: ProjectId }
-  | { type: "open_workspace"; workspace_id: WorkspaceId }
-  | { type: "open_workspace_in_ide"; workspace_id: WorkspaceId }
-  | { type: "open_workspace_with"; workspace_id: WorkspaceId; target: OpenTarget }
-  | { type: "open_workspace_pull_request"; workspace_id: WorkspaceId }
-  | { type: "open_workspace_pull_request_failed_action"; workspace_id: WorkspaceId }
-  | { type: "archive_workspace"; workspace_id: WorkspaceId }
-  | { type: "chat_model_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; model_id: string }
-  | { type: "chat_runner_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; runner: AgentRunnerKind }
-  | { type: "chat_amp_mode_changed"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; amp_mode: string }
+  | { type: "create_workdir"; project_id: ProjectId }
+  | { type: "ensure_main_workdir"; project_id: ProjectId }
+  | { type: "open_workdir"; workdir_id: WorkspaceId }
+  | { type: "open_workdir_in_ide"; workdir_id: WorkspaceId }
+  | { type: "open_workdir_with"; workdir_id: WorkspaceId; target: OpenTarget }
+  | { type: "open_workdir_pull_request"; workdir_id: WorkspaceId }
+  | { type: "open_workdir_pull_request_failed_action"; workdir_id: WorkspaceId }
+  | { type: "archive_workdir"; workdir_id: WorkspaceId }
+  | { type: "chat_model_changed"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; model_id: string }
+  | { type: "chat_runner_changed"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; runner: AgentRunnerKind }
+  | { type: "chat_amp_mode_changed"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; amp_mode: string }
   | {
       type: "thinking_effort_changed"
-      workspace_id: WorkspaceId
-      thread_id: WorkspaceThreadId
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
       thinking_effort: ThinkingEffort
     }
-	  | {
-	      type: "send_agent_message"
-	      workspace_id: WorkspaceId
-	      thread_id: WorkspaceThreadId
-	      text: string
-	      attachments: AttachmentRef[]
-	      runner?: AgentRunnerKind
-	      amp_mode?: string
-	    }
   | {
-      type: "cancel_and_send_agent_message"
-      workspace_id: WorkspaceId
-      thread_id: WorkspaceThreadId
+      type: "send_agent_message"
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
       text: string
       attachments: AttachmentRef[]
       runner?: AgentRunnerKind
       amp_mode?: string
     }
-	  | {
-	      type: "queue_agent_message"
-	      workspace_id: WorkspaceId
-	      thread_id: WorkspaceThreadId
-	      text: string
-	      attachments: AttachmentRef[]
-	      runner?: AgentRunnerKind
-	      amp_mode?: string
-	    }
-  | { type: "remove_queued_prompt"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; prompt_id: number }
-  | { type: "reorder_queued_prompt"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId; active_id: number; over_id: number }
+  | {
+      type: "cancel_and_send_agent_message"
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
+      text: string
+      attachments: AttachmentRef[]
+      runner?: AgentRunnerKind
+      amp_mode?: string
+    }
+  | {
+      type: "queue_agent_message"
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
+      text: string
+      attachments: AttachmentRef[]
+      runner?: AgentRunnerKind
+      amp_mode?: string
+    }
+  | { type: "remove_queued_prompt"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; prompt_id: number }
+  | { type: "reorder_queued_prompt"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; active_id: number; over_id: number }
   | {
       type: "update_queued_prompt"
-      workspace_id: WorkspaceId
-      thread_id: WorkspaceThreadId
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
       prompt_id: number
       text: string
       attachments: AttachmentRef[]
       model_id: string
       thinking_effort: ThinkingEffort
     }
-  | { type: "workspace_rename_branch"; workspace_id: WorkspaceId; branch_name: string }
-  | { type: "workspace_ai_rename_branch"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId }
-  | { type: "cancel_agent_turn"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId }
-  | { type: "create_workspace_thread"; workspace_id: WorkspaceId }
-  | { type: "activate_workspace_thread"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId }
-  | { type: "close_workspace_thread_tab"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId }
-  | { type: "restore_workspace_thread_tab"; workspace_id: WorkspaceId; thread_id: WorkspaceThreadId }
+  | { type: "workdir_rename_branch"; workdir_id: WorkspaceId; branch_name: string }
+  | { type: "workdir_ai_rename_branch"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
+  | { type: "cancel_agent_turn"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
+  | { type: "create_task"; workdir_id: WorkspaceId }
+  | { type: "activate_task"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
+  | { type: "close_task_tab"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
+  | { type: "restore_task_tab"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | {
-      type: "reorder_workspace_thread_tab"
-      workspace_id: WorkspaceId
-      thread_id: WorkspaceThreadId
+      type: "reorder_task_tab"
+      workdir_id: WorkspaceId
+      task_id: WorkspaceThreadId
       to_index: number
     }
   | { type: "open_button_selection_changed"; selection: string }
   | { type: "sidebar_project_order_changed"; project_ids: ProjectId[] }
-  | { type: "sidebar_worktree_order_changed"; project_id: ProjectId; workspace_ids: WorkspaceId[] }
   | { type: "appearance_theme_changed"; theme: AppearanceTheme }
   | { type: "appearance_fonts_changed"; fonts: AppearanceFontsSnapshot }
   | { type: "appearance_global_zoom_changed"; zoom: number }
@@ -455,11 +470,11 @@ export type ClientAction =
 
 export type ServerEvent =
   | { type: "app_changed"; rev: number; snapshot: AppSnapshot }
-  | { type: "workspace_threads_changed"; workspace_id: WorkspaceId; tabs: WorkspaceTabsSnapshot; threads: ThreadMeta[] }
+  | { type: "workdir_tasks_changed"; workdir_id: WorkspaceId; tabs: WorkspaceTabsSnapshot; tasks: ThreadMeta[] }
   | { type: "conversation_changed"; snapshot: ConversationSnapshot }
   | { type: "toast"; message: string }
   | { type: "project_path_picked"; request_id: string; path: string | null }
-  | { type: "add_project_and_open_ready"; request_id: string; project_id: ProjectId; workspace_id: WorkspaceId }
+  | { type: "add_project_and_open_ready"; request_id: string; project_id: ProjectId; workdir_id: WorkspaceId }
   | { type: "task_preview_ready"; request_id: string; draft: TaskDraft }
   | { type: "task_executed"; request_id: string; result: TaskExecuteResult }
   | { type: "feedback_submitted"; request_id: string; result: FeedbackSubmitResult }

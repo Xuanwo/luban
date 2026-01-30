@@ -103,7 +103,7 @@ export function OpenButton() {
     setSelection(fromApp ?? getDefaultSelection())
   }, [app?.ui?.open_button_selection])
 
-  const worktreePath = activeWorkspace?.worktree_path ?? null
+  const workdirPath = activeWorkspace?.worktree_path ?? null
 
   const disabled = activeWorkspaceId == null
 
@@ -113,9 +113,9 @@ export function OpenButton() {
     if (disabled) return
 
     if (item.type === "action" && item.id === "copy-path") {
-      if (!worktreePath) return
+      if (!workdirPath) return
       try {
-        await navigator.clipboard.writeText(worktreePath)
+        await navigator.clipboard.writeText(workdirPath)
         setCopied(true)
         window.setTimeout(() => setCopied(false), 1500)
       } catch {

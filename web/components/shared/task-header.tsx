@@ -13,8 +13,8 @@ export interface ProjectInfo {
 interface TaskHeaderProps {
   /** Task title to display */
   title: string
-  /** Worktree/branch name */
-  worktree?: string
+  /** Workdir/branch label */
+  workdir?: string
   /** Project information (name and color) */
   project?: ProjectInfo
   /** Callback when project breadcrumb is clicked */
@@ -45,7 +45,7 @@ export function ProjectIcon({ name, color }: ProjectInfo) {
  */
 export function TaskHeader({
   title,
-  worktree,
+  workdir,
   project,
   onProjectClick,
   showFullActions = false,
@@ -79,13 +79,13 @@ export function TaskHeader({
           {title || "Untitled Task"}
         </span>
 
-        {/* Worktree badge */}
-        {worktree && (
+        {/* Workdir badge */}
+        {workdir && (
           <span
             className="text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 ml-1"
             style={{ backgroundColor: '#f0f0f0', color: '#6b6b6b' }}
           >
-            {worktree}
+            {workdir}
           </span>
         )}
       </div>

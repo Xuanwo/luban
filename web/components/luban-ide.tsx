@@ -44,21 +44,21 @@ export function LubanIDE() {
   const handleOpenFullViewFromInbox = (notification: InboxNotification) => {
     void (async () => {
       await openWorkspace(notification.workspaceId)
-      setSelectedTask({
-        id: notification.id,
-        workspaceId: notification.workspaceId,
-        title: notification.taskTitle,
-        status:
-          notification.type === "completed"
-            ? "done"
-            : notification.type === "failed"
-              ? "cancelled"
-              : "in-progress",
-        worktree: notification.worktree,
-        projectName: notification.projectName,
-        projectColor: notification.projectColor,
-        createdAt: notification.timestamp,
-      })
+        setSelectedTask({
+          id: notification.id,
+          workspaceId: notification.workspaceId,
+          title: notification.taskTitle,
+          status:
+            notification.type === "completed"
+              ? "done"
+              : notification.type === "failed"
+                ? "cancelled"
+                : "in-progress",
+          workdir: notification.workdir,
+          projectName: notification.projectName,
+          projectColor: notification.projectColor,
+          createdAt: notification.timestamp,
+        })
       setActiveView("tasks")
       setShowDetail(true)
     })()
@@ -74,7 +74,7 @@ export function LubanIDE() {
         <TaskDetailView
           taskId={selectedTask?.id}
           taskTitle={selectedTask?.title}
-          worktree={selectedTask?.worktree}
+          workdir={selectedTask?.workdir}
           projectName={selectedTask?.projectName}
           projectColor={selectedTask?.projectColor}
           onBack={() => {
@@ -108,10 +108,6 @@ export function LubanIDE() {
             onViewChange={handleViewChange}
             activeProjectId={activeProjectId}
             onProjectSelected={(projectId) => setActiveProjectId(projectId)}
-            onWorkspaceOpened={() => {
-              setSelectedTask(null)
-              setShowDetail(true)
-            }}
             onNewTask={() => setNewTaskOpen(true)}
           />
         }

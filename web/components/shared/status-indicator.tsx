@@ -5,7 +5,7 @@ import type React from "react"
 import { CheckCircle2, Circle, Clock, GitMerge, Loader2, MessageCircle, XCircle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import type { AgentStatus, PRStatus } from "@/lib/worktree-ui"
+import type { AgentStatus, PRStatus } from "@/lib/task-ui"
 
 export type { AgentStatus, PRStatus }
 

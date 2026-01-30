@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   GitPullRequest,
@@ -45,7 +45,7 @@ function intentLabel(kind: TaskIntentKind): string {
 }
 
 export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
-  const { previewTask, executeTask, openWorkspace } = useLuban()
+  const { app, previewTask, executeTask, openWorkspace } = useLuban()
 
   const [input, setInput] = useState("")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -53,9 +53,30 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [executingMode, setExecutingMode] = useState<TaskExecuteMode | null>(null)
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string>("")
   const seqRef = useRef(0)
 
-  const canExecute = draft != null && draft.project.type !== "unspecified"
+  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
+
+  const projectOptions = useMemo(() => {
+    return (app?.projects ?? []).map((p) => ({ id: p.id, name: p.name, path: p.path, slug: p.slug }))
+  }, [app])
+
+  useEffect(() => {
+    if (!open) return
+    if (selectedProjectPath) return
+    if (projectOptions.length === 1) {
+      setSelectedProjectPath(projectOptions[0].path)
+      return
+    }
+    if (draft?.project.type === "local_path") {
+      const inferred = normalizePathLike(draft.project.path)
+      const match = projectOptions.find((p) => normalizePathLike(p.path) === inferred)
+      if (match) setSelectedProjectPath(match.path)
+    }
+  }, [draft?.project, open, projectOptions, selectedProjectPath])
+
+  const canExecute = draft != null && selectedProjectPath.trim().length > 0
 
   useEffect(() => {
     if (!open) return
@@ -98,7 +119,11 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     if (!draft) return
     setExecutingMode(mode)
     try {
-      const result = await executeTask(draft, mode)
+      const toExecute: TaskDraft = {
+        ...draft,
+        project: { type: "local_path", path: selectedProjectPath },
+      }
+      const result = await executeTask(toExecute, mode)
       if (mode === "create") {
         localStorage.setItem(
           draftKey(result.workspace_id, result.thread_id),
@@ -129,6 +154,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setDraft(null)
     setPromptExpanded(false)
     setAnalysisError(null)
+    setSelectedProjectPath("")
     onOpenChange(false)
   }
 
@@ -162,16 +188,15 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     }
   }
 
-  const projectLabel = (d: TaskDraft): string => {
-    if (d.repo?.full_name) return d.repo.full_name
-    if (d.project.type === "git_hub_repo") return d.project.full_name
-    if (d.project.type === "local_path") {
-      const trimmed = d.project.path.replace(/\/$/, "")
-      const parts = trimmed.split("/")
-      return parts[parts.length - 1] || trimmed
-    }
-    return "Unspecified"
-  }
+  const selectedProjectLabel = useMemo(() => {
+    if (!selectedProjectPath) return "Select a project..."
+    const normalized = normalizePathLike(selectedProjectPath)
+    const match = projectOptions.find((p) => normalizePathLike(p.path) === normalized)
+    if (match?.name) return match.name
+    if (match?.slug) return match.slug
+    const parts = normalized.split("/")
+    return parts[parts.length - 1] || normalized
+  }, [projectOptions, selectedProjectPath])
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -244,7 +269,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                       {draft.issue ? <span className="font-medium">#{draft.issue.number}</span> : null}
                       {draft.pull_request ? <span className="font-medium">#{draft.pull_request.number}</span> : null}
                       <span className="text-muted-foreground">in</span>
-                      <span className="font-medium">{projectLabel(draft)}</span>
+                      <span className="font-medium">{selectedProjectLabel}</span>
                     </div>
                     {draft.issue?.title || draft.pull_request?.title ? (
                       <p className="text-sm text-muted-foreground line-clamp-2">
@@ -253,9 +278,28 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                     ) : null}
                     {!canExecute ? (
                       <p className="text-xs text-muted-foreground pt-1">
-                        Select a local path or a GitHub repo to create a workspace.
+                        Add a project first, then pick a project to create a task.
                       </p>
                     ) : null}
+                  </div>
+
+                  <div className="px-4 pb-4">
+                    <label className="block text-xs text-muted-foreground mb-1">Project</label>
+                    <select
+                      value={selectedProjectPath}
+                      onChange={(e) => setSelectedProjectPath(e.target.value)}
+                      className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                      disabled={executingMode != null}
+                    >
+                      <option value="" disabled>
+                        Select a project...
+                      </option>
+                      {projectOptions.map((p) => (
+                        <option key={p.id} value={p.path}>
+                          {p.name || p.slug || p.path}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="border-t border-border">

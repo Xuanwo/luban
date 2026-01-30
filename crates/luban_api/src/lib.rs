@@ -30,14 +30,16 @@ pub struct AppSnapshot {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UiSnapshot {
     #[serde(default)]
+    #[serde(rename = "active_workdir_id", alias = "active_workspace_id")]
     pub active_workspace_id: Option<WorkspaceId>,
     #[serde(default)]
+    #[serde(rename = "active_task_id", alias = "active_thread_id")]
     pub active_thread_id: Option<WorkspaceThreadId>,
     #[serde(default)]
     pub open_button_selection: Option<String>,
     #[serde(default)]
     pub sidebar_project_order: Vec<ProjectId>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub sidebar_worktree_order: std::collections::HashMap<ProjectId, Vec<WorkspaceId>>,
 }
 
@@ -195,7 +197,9 @@ pub struct ProjectSnapshot {
     #[serde(default)]
     pub is_git: bool,
     pub expanded: bool,
+    #[serde(rename = "create_workdir_status", alias = "create_workspace_status")]
     pub create_workspace_status: OperationStatus,
+    #[serde(rename = "workdirs", alias = "workspaces")]
     pub workspaces: Vec<WorkspaceSnapshot>,
 }
 
@@ -203,8 +207,10 @@ pub struct ProjectSnapshot {
 pub struct WorkspaceSnapshot {
     pub id: WorkspaceId,
     pub short_id: String,
+    #[serde(rename = "workdir_name", alias = "workspace_name")]
     pub workspace_name: String,
     pub branch_name: String,
+    #[serde(rename = "workdir_path", alias = "worktree_path")]
     pub worktree_path: String,
     pub status: WorkspaceStatus,
     pub archive_status: OperationStatus,
@@ -245,6 +251,7 @@ pub struct ChangedFileSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceChangesSnapshot {
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
     pub files: Vec<ChangedFileSnapshot>,
 }
@@ -264,6 +271,7 @@ pub struct WorkspaceDiffFileSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceDiffSnapshot {
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
     pub files: Vec<WorkspaceDiffFileSnapshot>,
 }
@@ -303,7 +311,9 @@ pub enum WorkspaceStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationSnapshot {
     pub rev: u64,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
+    #[serde(rename = "task_id", alias = "thread_id")]
     pub thread_id: WorkspaceThreadId,
     pub agent_runner: AgentRunnerKind,
     pub agent_model_id: String,
@@ -462,8 +472,11 @@ pub enum TaskExecuteMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskExecuteResult {
     pub project_id: ProjectId,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
+    #[serde(rename = "task_id", alias = "thread_id")]
     pub thread_id: WorkspaceThreadId,
+    #[serde(rename = "workdir_path", alias = "worktree_path")]
     pub worktree_path: String,
     pub prompt: String,
     pub mode: TaskExecuteMode,
@@ -472,10 +485,35 @@ pub struct TaskExecuteResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThreadsSnapshot {
     pub rev: u64,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
     #[serde(default)]
     pub tabs: WorkspaceTabsSnapshot,
+    #[serde(rename = "tasks", alias = "threads")]
     pub threads: Vec<ThreadMeta>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskSummarySnapshot {
+    pub project_id: ProjectId,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
+    pub workspace_id: WorkspaceId,
+    #[serde(rename = "task_id", alias = "thread_id")]
+    pub thread_id: WorkspaceThreadId,
+    pub title: String,
+    pub updated_at_unix_seconds: u64,
+    pub branch_name: String,
+    #[serde(rename = "workdir_name", alias = "workspace_name")]
+    pub workspace_name: String,
+    pub agent_run_status: OperationStatus,
+    pub has_unread_completion: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TasksSnapshot {
+    pub rev: u64,
+    #[serde(default)]
+    pub tasks: Vec<TaskSummarySnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -545,6 +583,7 @@ pub struct ContextItemSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ContextSnapshot {
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
     pub workspace_id: WorkspaceId,
     pub items: Vec<ContextItemSnapshot>,
 }
@@ -644,6 +683,8 @@ pub enum ClientAction {
     TaskExecute {
         draft: Box<TaskDraft>,
         mode: TaskExecuteMode,
+        #[serde(default, rename = "workdir_id", alias = "workspace_id")]
+        workdir_id: Option<WorkspaceId>,
     },
     FeedbackSubmit {
         title: String,
@@ -659,53 +700,80 @@ pub enum ClientAction {
     ToggleProjectExpanded {
         project_id: ProjectId,
     },
+    #[serde(rename = "create_workdir", alias = "create_workspace")]
     CreateWorkspace {
         project_id: ProjectId,
     },
+    #[serde(rename = "open_workdir", alias = "open_workspace")]
     OpenWorkspace {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "open_workdir_in_ide", alias = "open_workspace_in_ide")]
     OpenWorkspaceInIde {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "open_workdir_with", alias = "open_workspace_with")]
     OpenWorkspaceWith {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
         target: OpenTarget,
     },
+    #[serde(rename = "open_workdir_pull_request", alias = "open_workspace_pull_request")]
     OpenWorkspacePullRequest {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(
+        rename = "open_workdir_pull_request_failed_action",
+        alias = "open_workspace_pull_request_failed_action"
+    )]
     OpenWorkspacePullRequestFailedAction {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "archive_workdir", alias = "archive_workspace")]
     ArchiveWorkspace {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "ensure_main_workdir", alias = "ensure_main_workspace")]
     EnsureMainWorkspace {
         project_id: ProjectId,
     },
     ChatModelChanged {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         model_id: String,
     },
     ChatRunnerChanged {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         runner: AgentRunnerKind,
     },
     ChatAmpModeChanged {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         amp_mode: String,
     },
     ThinkingEffortChanged {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         thinking_effort: ThinkingEffort,
     },
     SendAgentMessage {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         text: String,
         attachments: Vec<AttachmentRef>,
@@ -715,7 +783,9 @@ pub enum ClientAction {
         amp_mode: Option<String>,
     },
     CancelAndSendAgentMessage {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         text: String,
         attachments: Vec<AttachmentRef>,
@@ -725,7 +795,9 @@ pub enum ClientAction {
         amp_mode: Option<String>,
     },
     QueueAgentMessage {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         text: String,
         attachments: Vec<AttachmentRef>,
@@ -735,18 +807,24 @@ pub enum ClientAction {
         amp_mode: Option<String>,
     },
     RemoveQueuedPrompt {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         prompt_id: u64,
     },
     ReorderQueuedPrompt {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         active_id: u64,
         over_id: u64,
     },
     UpdateQueuedPrompt {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         prompt_id: u64,
         text: String,
@@ -754,35 +832,56 @@ pub enum ClientAction {
         model_id: String,
         thinking_effort: ThinkingEffort,
     },
+    #[serde(rename = "workdir_rename_branch", alias = "workspace_rename_branch")]
     WorkspaceRenameBranch {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
         branch_name: String,
     },
+    #[serde(rename = "workdir_ai_rename_branch", alias = "workspace_ai_rename_branch")]
     WorkspaceAiRenameBranch {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
     CancelAgentTurn {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
+    #[serde(rename = "create_task", alias = "create_workspace_thread")]
     CreateWorkspaceThread {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "activate_task", alias = "activate_workspace_thread")]
     ActivateWorkspaceThread {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
+    #[serde(rename = "close_task_tab", alias = "close_workspace_thread_tab")]
     CloseWorkspaceThreadTab {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
+    #[serde(rename = "restore_task_tab", alias = "restore_workspace_thread_tab")]
     RestoreWorkspaceThreadTab {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
+    #[serde(rename = "reorder_task_tab", alias = "reorder_workspace_thread_tab")]
     ReorderWorkspaceThreadTab {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         to_index: usize,
     },
@@ -875,10 +974,13 @@ pub enum ServerEvent {
         rev: u64,
         snapshot: Box<AppSnapshot>,
     },
+    #[serde(rename = "workdir_tasks_changed", alias = "workspace_threads_changed")]
     WorkspaceThreadsChanged {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
         #[serde(default)]
         tabs: WorkspaceTabsSnapshot,
+        #[serde(rename = "tasks", alias = "threads")]
         threads: Vec<ThreadMeta>,
     },
     ConversationChanged {
@@ -894,6 +996,7 @@ pub enum ServerEvent {
     AddProjectAndOpenReady {
         request_id: String,
         project_id: ProjectId,
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
     },
     TaskPreviewReady {
@@ -981,6 +1084,7 @@ pub enum ServerEvent {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThreadMeta {
+    #[serde(rename = "task_id", alias = "thread_id")]
     pub thread_id: WorkspaceThreadId,
     pub remote_thread_id: Option<String>,
     pub title: String,

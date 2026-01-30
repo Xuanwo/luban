@@ -30,7 +30,6 @@ interface LubanSidebarProps {
   onViewChange?: (view: NavView) => void
   activeProjectId?: string | null
   onProjectSelected?: (projectId: string | null) => void
-  onWorkspaceOpened?: () => void
   onNewTask?: () => void
 }
 
@@ -131,19 +130,18 @@ export function LubanSidebar({
   onViewChange,
   activeProjectId,
   onProjectSelected,
-  onWorkspaceOpened,
   onNewTask,
 }: LubanSidebarProps) {
   const {
     app,
     pickProjectPath,
-    addProjectAndOpen,
-    createWorkspace,
-    toggleProjectExpanded,
-    openWorkspace,
+    addProject,
   } = useLuban()
 
-  const projects = useMemo(() => buildSidebarProjects(app), [app])
+  const projects = useMemo(
+    () => buildSidebarProjects(app, { projectOrder: app?.ui.sidebar_project_order ?? [] }),
+    [app],
+  )
   const inboxUnread = useMemo(() => {
     if (!app) return 0
     let count = 0
@@ -159,11 +157,14 @@ export function LubanSidebar({
     onViewChange?.(view)
   }
 
+  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
+
   const handleAddProject = async () => {
     const path = await pickProjectPath()
     if (!path) return
-    const { workspaceId } = await addProjectAndOpen(path)
-    await openWorkspace(workspaceId)
+    addProject(path)
+    onProjectSelected?.(normalizePathLike(path))
+    onViewChange?.("tasks")
   }
 
   return (
@@ -253,62 +254,15 @@ export function LubanSidebar({
             const color = projectColorClass(p.id)
             return (
               <div key={p.id} className="space-y-0.5">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => toggleProjectExpanded(p.id)}
-                    className="p-1 rounded hover:bg-[#eeeeee] transition-colors"
-                    style={{ color: "#9b9b9b" }}
-                    title={p.expanded ? "Collapse project" : "Expand project"}
-                  >
-                    {p.expanded ? (
-                      <ChevronDown className="w-3 h-3" />
-                    ) : (
-                      <ChevronRight className="w-3 h-3" />
-                    )}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <ProjectItem
-                      name={p.displayName}
-                      color={color}
-                      active={active}
-                      onClick={() => {
-                        onProjectSelected?.(p.id)
-                        onViewChange?.("tasks")
-                      }}
-                    />
-                  </div>
-                  <button
-                    onClick={() => createWorkspace(p.id)}
-                    className="p-1 rounded hover:bg-[#eeeeee] transition-colors"
-                    style={{ color: "#9b9b9b" }}
-                    title="Add worktree"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {p.expanded ? (
-                  <div className="pl-7 space-y-0.5">
-                    {p.worktrees.map((w) => (
-                      <button
-                        key={w.workspaceId}
-                        onClick={async () => {
-                          await openWorkspace(w.workspaceId)
-                          onWorkspaceOpened?.()
-                          onViewChange?.("tasks")
-                        }}
-                        className="w-full flex items-center px-2 py-1.5 rounded text-[12px] hover:bg-[#eeeeee] transition-colors"
-                        style={{ color: "#1b1b1b" }}
-                        title={w.worktreeName}
-                      >
-                        <span className="flex-1 text-left truncate">{w.worktreeName}</span>
-                        <span className="ml-2 text-[11px] truncate" style={{ color: "#9b9b9b" }}>
-                          {w.name}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+                <ProjectItem
+                  name={p.displayName}
+                  color={color}
+                  active={active}
+                  onClick={() => {
+                    onProjectSelected?.(p.id)
+                    onViewChange?.("tasks")
+                  }}
+                />
               </div>
             )
           })}
