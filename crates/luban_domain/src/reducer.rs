@@ -69,7 +69,6 @@ impl AppState {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             last_error: None,
             workspace_chat_scroll_y10: HashMap::new(),
             workspace_chat_scroll_anchor: HashMap::new(),
@@ -1827,56 +1826,6 @@ impl AppState {
                 self.sidebar_project_order = next;
                 vec![Effect::SaveAppState]
             }
-            Action::SidebarWorktreeOrderChanged {
-                project_id,
-                workspace_ids,
-            } => {
-                let project_id = project_id.trim();
-                if project_id.is_empty() || project_id.len() > 4096 {
-                    return Vec::new();
-                }
-
-                let Some(project) = self
-                    .projects
-                    .iter()
-                    .find(|p| p.path.to_string_lossy().as_ref() == project_id)
-                else {
-                    return Vec::new();
-                };
-
-                let valid: HashSet<u64> = project.workspaces.iter().map(|w| w.id.0).collect();
-                let mut seen = HashSet::<u64>::new();
-                let mut next = Vec::with_capacity(workspace_ids.len().min(4096));
-                for id in workspace_ids {
-                    if next.len() >= 4096 {
-                        break;
-                    }
-                    let raw = id.0;
-                    if !valid.contains(&raw) {
-                        continue;
-                    }
-                    if !seen.insert(raw) {
-                        continue;
-                    }
-                    next.push(WorkspaceId(raw));
-                }
-
-                let existing = self.sidebar_worktree_order.get(project_id);
-                if next.is_empty() {
-                    if existing.is_none() {
-                        return Vec::new();
-                    }
-                    self.sidebar_worktree_order.remove(project_id);
-                    return vec![Effect::SaveAppState];
-                }
-
-                if existing.is_some_and(|v| v == &next) {
-                    return Vec::new();
-                }
-                self.sidebar_worktree_order
-                    .insert(project_id.to_owned(), next);
-                vec![Effect::SaveAppState]
-            }
             Action::OpenButtonSelectionChanged { selection } => {
                 let trimmed = selection.trim();
                 if trimmed.len() > 1024 {
@@ -3062,7 +3011,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -3110,7 +3058,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -3158,7 +3105,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -3174,7 +3120,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_order_is_persisted() {
+    fn sidebar_project_order_is_persisted() {
         let mut state = AppState::new();
         state.apply(Action::AddProject {
             path: PathBuf::from("/tmp/sidebar-order-a"),
@@ -3198,41 +3144,10 @@ mod tests {
             vec![project_b.clone(), project_a.clone()]
         );
 
-        let project_id = state.projects[0].id;
-        state.apply(Action::WorkspaceCreated {
-            project_id,
-            workspace_name: "alpha".to_owned(),
-            branch_name: "alpha".to_owned(),
-            worktree_path: PathBuf::from("/tmp/sidebar-order-a/worktrees/alpha"),
-        });
-        state.apply(Action::WorkspaceCreated {
-            project_id,
-            workspace_name: "beta".to_owned(),
-            branch_name: "beta".to_owned(),
-            worktree_path: PathBuf::from("/tmp/sidebar-order-a/worktrees/beta"),
-        });
-
-        let worktree_a = state.projects[0].workspaces[0].id;
-        let worktree_b = state.projects[0].workspaces[1].id;
-        let effects = state.apply(Action::SidebarWorktreeOrderChanged {
-            project_id: project_a.clone(),
-            workspace_ids: vec![worktree_b, worktree_a],
-        });
-        assert_eq!(effects.len(), 1);
-        assert!(matches!(effects[0], Effect::SaveAppState));
-        assert_eq!(
-            state.sidebar_worktree_order.get(&project_a).cloned(),
-            Some(vec![worktree_b, worktree_a])
-        );
-
         let persisted = state.to_persisted();
         assert_eq!(
             persisted.sidebar_project_order,
             vec![project_b.clone(), project_a.clone()]
-        );
-        assert_eq!(
-            persisted.sidebar_worktree_order.get(&project_a).cloned(),
-            Some(vec![worktree_b.as_u64(), worktree_a.as_u64()])
         );
 
         let mut restored = AppState::new();
@@ -3242,10 +3157,6 @@ mod tests {
         assert_eq!(
             restored.sidebar_project_order,
             vec![project_b.clone(), project_a.clone()]
-        );
-        assert_eq!(
-            restored.sidebar_worktree_order.get(&project_a).cloned(),
-            Some(vec![worktree_b, worktree_a])
         );
     }
 
@@ -3284,7 +3195,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),

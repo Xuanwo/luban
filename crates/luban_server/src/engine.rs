@@ -3485,7 +3485,6 @@ impl Engine {
                         .cloned()
                         .map(luban_api::ProjectId)
                         .collect(),
-                    sidebar_worktree_order: std::collections::HashMap::new(),
                 }
             },
         }
@@ -4412,16 +4411,6 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
                 project_ids: project_ids.into_iter().map(|id| id.0).collect(),
             })
         }
-        luban_api::ClientAction::SidebarWorktreeOrderChanged {
-            project_id,
-            workspace_ids,
-        } => Some(Action::SidebarWorktreeOrderChanged {
-            project_id: project_id.0,
-            workspace_ids: workspace_ids
-                .into_iter()
-                .map(|id| WorkspaceId::from_u64(id.0))
-                .collect(),
-        }),
         luban_api::ClientAction::AppearanceThemeChanged { theme } => {
             Some(Action::AppearanceThemeChanged {
                 theme: match theme {
@@ -4768,7 +4757,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -5307,7 +5295,6 @@ mod tests {
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::from([(10, 2)]),
             workspace_open_tabs: HashMap::from([(10, vec![1, 2])]),
             workspace_archived_tabs: HashMap::new(),
@@ -5478,7 +5465,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -5847,7 +5833,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -6175,7 +6160,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -6390,7 +6374,6 @@ mod tests {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),

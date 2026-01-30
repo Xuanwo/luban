@@ -39,8 +39,6 @@ pub struct UiSnapshot {
     pub open_button_selection: Option<String>,
     #[serde(default)]
     pub sidebar_project_order: Vec<ProjectId>,
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub sidebar_worktree_order: std::collections::HashMap<ProjectId, Vec<WorkspaceId>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -897,11 +895,6 @@ pub enum ClientAction {
     SidebarProjectOrderChanged {
         #[serde(default)]
         project_ids: Vec<ProjectId>,
-    },
-    SidebarWorktreeOrderChanged {
-        project_id: ProjectId,
-        #[serde(default)]
-        workspace_ids: Vec<WorkspaceId>,
     },
     AppearanceThemeChanged {
         theme: AppearanceTheme,

@@ -21,7 +21,6 @@ const WORKSPACE_THREAD_RUN_CONFIG_PREFIX: &str = "workspace_thread_run_config_";
 const LAST_OPEN_WORKSPACE_ID_KEY: &str = "last_open_workspace_id";
 const OPEN_BUTTON_SELECTION_KEY: &str = "open_button_selection";
 const SIDEBAR_PROJECT_ORDER_KEY: &str = "sidebar_project_order";
-const SIDEBAR_WORKTREE_ORDER_KEY: &str = "sidebar_worktree_order";
 const GLOBAL_ZOOM_PERCENT_KEY: &str = "global_zoom_percent";
 const AGENT_DEFAULT_MODEL_ID_KEY: &str = "agent_default_model_id";
 const AGENT_DEFAULT_THINKING_EFFORT_KEY: &str = "agent_default_thinking_effort";
@@ -1179,7 +1178,6 @@ impl SqliteDatabase {
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
-                sidebar_worktree_order: HashMap::new(),
                 workspace_active_thread_id: HashMap::new(),
                 workspace_open_tabs: HashMap::new(),
                 workspace_archived_tabs: HashMap::new(),
@@ -1306,18 +1304,6 @@ impl SqliteDatabase {
             .optional()
             .context("failed to load sidebar project order")?
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-            .unwrap_or_default();
-
-        let sidebar_worktree_order = self
-            .conn
-            .query_row(
-                "SELECT value FROM app_settings_text WHERE key = ?1",
-                params![SIDEBAR_WORKTREE_ORDER_KEY],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .context("failed to load sidebar worktree order")?
-            .and_then(|raw| serde_json::from_str::<HashMap<String, Vec<u64>>>(&raw).ok())
             .unwrap_or_default();
 
         let mut workspace_active_thread_id = HashMap::new();
@@ -1563,7 +1549,6 @@ impl SqliteDatabase {
             last_open_workspace_id,
             open_button_selection,
             sidebar_project_order,
-            sidebar_worktree_order,
             workspace_active_thread_id,
             workspace_open_tabs,
             workspace_archived_tabs,
@@ -1839,15 +1824,6 @@ impl SqliteDatabase {
                 &tx,
                 SIDEBAR_PROJECT_ORDER_KEY,
                 sidebar_project_order.as_deref(),
-            )?;
-
-            let sidebar_worktree_order = (!snapshot.sidebar_worktree_order.is_empty())
-                .then(|| serde_json::to_string(&snapshot.sidebar_worktree_order).ok())
-                .flatten();
-            upsert_text(
-                &tx,
-                SIDEBAR_WORKTREE_ORDER_KEY,
-                sidebar_worktree_order.as_deref(),
             )?;
 
             if let Some(value) = snapshot.global_zoom_percent {
@@ -3231,7 +3207,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3288,7 +3263,6 @@ mod tests {
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             sidebar_project_order: vec!["/tmp/my-project".to_owned()],
-            sidebar_worktree_order: HashMap::from([("/tmp/my-project".to_owned(), vec![10])]),
             workspace_active_thread_id: HashMap::from([(10, 1)]),
             workspace_open_tabs: HashMap::from([(10, vec![1, 2, 3])]),
             workspace_archived_tabs: HashMap::from([(10, vec![9, 8])]),
@@ -3363,7 +3337,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3591,7 +3564,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3702,7 +3674,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3769,7 +3740,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3835,7 +3805,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),
@@ -3886,7 +3855,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::new(),
             workspace_open_tabs: HashMap::new(),
             workspace_archived_tabs: HashMap::new(),

@@ -146,48 +146,6 @@ pub(crate) fn apply_persisted_app_state(
         }
         out
     };
-    state.sidebar_worktree_order = {
-        let mut out = HashMap::new();
-        for (project_id, workspace_ids) in persisted.sidebar_worktree_order {
-            if out.len() >= 1024 {
-                break;
-            }
-            let project_id = project_id.trim();
-            if project_id.is_empty() || project_id.len() > 4096 {
-                continue;
-            }
-            if !valid_project_ids.contains(project_id) {
-                continue;
-            }
-            let Some(project) = state
-                .projects
-                .iter()
-                .find(|p| p.path.to_string_lossy().as_ref() == project_id)
-            else {
-                continue;
-            };
-            let valid: HashSet<u64> = project.workspaces.iter().map(|w| w.id.0).collect();
-            let mut seen = HashSet::<u64>::new();
-            let mut ids = Vec::with_capacity(workspace_ids.len().min(4096));
-            for raw in workspace_ids {
-                if ids.len() >= 4096 {
-                    break;
-                }
-                if !valid.contains(&raw) {
-                    continue;
-                }
-                if !seen.insert(raw) {
-                    continue;
-                }
-                ids.push(WorkspaceId(raw));
-            }
-            if ids.is_empty() {
-                continue;
-            }
-            out.insert(project_id.to_owned(), ids);
-        }
-        out
-    };
     state.workspace_tabs = HashMap::new();
     state.conversations = HashMap::new();
     state.workspace_unread_completions = persisted
@@ -729,7 +687,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: HashMap::new(),
             workspace_active_thread_id: HashMap::from([(workspace_id, 2)]),
             workspace_open_tabs: HashMap::from([(workspace_id, vec![1, 2])]),
             workspace_archived_tabs: HashMap::new(),

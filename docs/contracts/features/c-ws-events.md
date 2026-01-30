@@ -122,7 +122,6 @@ update this section.
 - `ReorderTaskTab`
 - `OpenButtonSelectionChanged`
 - `SidebarProjectOrderChanged`
-- `SidebarWorktreeOrderChanged` (deprecated; ignored by the UI)
 - `AppearanceThemeChanged`
 - `AppearanceFontsChanged`
 - `AppearanceGlobalZoomChanged`

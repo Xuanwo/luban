@@ -3398,7 +3398,6 @@ mod tests {
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
-            sidebar_worktree_order: std::collections::HashMap::new(),
             workspace_active_thread_id: std::collections::HashMap::new(),
             workspace_open_tabs: std::collections::HashMap::new(),
             workspace_archived_tabs: std::collections::HashMap::new(),
