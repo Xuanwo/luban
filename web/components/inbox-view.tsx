@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   CheckCircle2,
   AlertCircle,
@@ -17,12 +17,15 @@ import type { ChangedFile } from "./right-sidebar"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
+import { fetchTasks } from "@/lib/luban-http"
+import type { TasksSnapshot, TaskSummarySnapshot } from "@/lib/luban-api"
 
 type NotificationType = "completed" | "failed" | "needs-review"
 
 export interface InboxNotification {
   id: string
-  workspaceId: number
+  workdirId: number
+  taskId: number
   taskTitle: string
   workdir: string
   projectName: string
@@ -50,14 +53,17 @@ const NotificationIcon = ({ type }: { type: NotificationType }) => {
 
 interface NotificationRowProps {
   notification: InboxNotification
+  testId?: string
   selected?: boolean
   onClick?: () => void
   onDoubleClick?: () => void
 }
 
-function NotificationRow({ notification, selected, onClick, onDoubleClick }: NotificationRowProps) {
+function NotificationRow({ notification, testId, selected, onClick, onDoubleClick }: NotificationRowProps) {
   return (
     <div
+      data-testid={testId}
+      data-read={notification.read ? "true" : "false"}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       className={cn(
@@ -120,52 +126,117 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
 }
 
 export function InboxView({ onOpenFullView }: InboxViewProps) {
-  const { app, openWorkdir } = useLuban()
-  const [selectedNotification, setSelectedNotification] = useState<InboxNotification | null>(null)
+  const { app, openWorkdir, activateTask } = useLuban()
+  const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
+  const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
-  const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
   const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
     args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
 
+  useEffect(() => {
+    if (!app) {
+      setTasksSnapshot(null)
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const snap = await fetchTasks()
+        if (cancelled) return
+        setTasksSnapshot(snap)
+      } catch (err) {
+        console.warn("fetchTasks failed", err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [app?.rev])
+
+  const formatTimestamp = (updatedAtUnixSeconds: number): string => {
+    const date = new Date(updatedAtUnixSeconds * 1000)
+    const now = Date.now()
+    const diffMs = Math.max(0, now - date.getTime())
+    const diffMinutes = Math.floor(diffMs / 60_000)
+    if (diffMinutes < 60) return `${diffMinutes}m`
+    const diffHours = Math.floor(diffMinutes / 60)
+    if (diffHours < 24) return `${diffHours}h`
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
+  }
+
   const notifications = useMemo(() => {
-    if (!app) return [] as InboxNotification[]
+    if (!app || !tasksSnapshot) return [] as InboxNotification[]
 
     const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
-
-    const out: InboxNotification[] = []
+    const workdirById = new Map<number, { projectPath: string; workdirName: string; workdirPath: string; status: string }>()
     for (const p of app.projects) {
-      const projectName = displayNames.get(p.path) ?? p.slug
-      const projectColor = projectColorClass(p.id)
       for (const w of p.workdirs) {
-        if (w.status !== "active") continue
-        if (!w.has_unread_completion) continue
-        if (isImplicitProjectRootWorkdir(p.path, { workdirName: w.workdir_name, workdirPath: w.workdir_path })) {
-          continue
-        }
-        const id = `workspace-${w.id}`
-        out.push({
-          id,
-          workspaceId: w.id,
-          taskTitle: w.workdir_name || w.branch_name,
-          workdir: w.branch_name || w.workdir_name,
-          projectName,
-          projectColor,
-          type: "completed",
-          description: "Task has unread completion",
-          timestamp: "",
-          read: readIds.has(id),
+        workdirById.set(w.id, {
+          projectPath: p.path,
+          workdirName: w.workdir_name,
+          workdirPath: w.workdir_path,
+          status: w.status,
         })
       }
     }
+
+    const projectNameById = new Map<string, { name: string; color: string }>()
+    for (const p of app.projects) {
+      projectNameById.set(p.path, {
+        name: displayNames.get(p.path) ?? p.slug,
+        color: projectColorClass(p.id),
+      })
+    }
+
+    const out: InboxNotification[] = []
+    const filtered = tasksSnapshot.tasks.filter((t) => {
+      const workdir = workdirById.get(t.workdir_id) ?? null
+      if (!workdir) return false
+      if (workdir.status !== "active") return false
+      if (isImplicitProjectRootWorkdir(workdir.projectPath, { workdirName: workdir.workdirName, workdirPath: workdir.workdirPath })) {
+        return false
+      }
+      return true
+    })
+
+    filtered.sort((a, b) => b.updated_at_unix_seconds - a.updated_at_unix_seconds)
+
+    for (const t of filtered) {
+      const projectInfo = projectNameById.get(t.project_id) ?? { name: t.project_id, color: "bg-[#5e6ad2]" }
+      const id = `task-${t.workdir_id}-${t.task_id}`
+      out.push({
+        id,
+        workdirId: t.workdir_id,
+        taskId: t.task_id,
+        taskTitle: t.title,
+        workdir: t.workdir_name || t.branch_name,
+        projectName: projectInfo.name,
+        projectColor: projectInfo.color,
+        type: "completed",
+        description: t.has_unread_completion ? "Unread completion" : "Read completion",
+        timestamp: formatTimestamp(t.updated_at_unix_seconds),
+        read: !t.has_unread_completion,
+      })
+    }
     return out
-  }, [app, readIds])
+  }, [app, tasksSnapshot])
+
+  const selectedNotification = useMemo(() => {
+    if (!selectedNotificationId) return null
+    return notifications.find((n) => n.id === selectedNotificationId) ?? null
+  }, [notifications, selectedNotificationId])
 
   const unreadCount = notifications.filter((n) => !n.read).length
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex" data-testid="inbox-view">
       {/* Left: Notification List */}
       <div
         className="flex flex-col border-r"
@@ -207,19 +278,18 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
 
         {/* Notification List */}
         <div className="flex-1 overflow-y-auto">
-          {notifications.map((notification) => (
+          {notifications.map((notification, idx) => (
             <NotificationRow
               key={notification.id}
               notification={notification}
+              testId={`inbox-notification-row-${idx}`}
               selected={selectedNotification?.id === notification.id}
               onClick={() => {
-                setSelectedNotification(notification)
-                setReadIds((prev) => {
-                  const next = new Set(prev)
-                  next.add(notification.id)
-                  return next
-                })
-                void openWorkdir(notification.workspaceId)
+                setSelectedNotificationId(notification.id)
+                void (async () => {
+                  await openWorkdir(notification.workdirId)
+                  await activateTask(notification.taskId)
+                })()
               }}
               onDoubleClick={() => onOpenFullView?.(notification)}
             />

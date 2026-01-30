@@ -438,6 +438,10 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     if (active != null && threads?.tasks.some((t) => t.task_id === active)) {
       setActiveWorkdirTask(state, { workdirId: a.workdir_id, taskId: active })
     }
+    const workdir = findWorkdir(state.app, a.workdir_id)?.workdir ?? null
+    if (workdir) {
+      workdir.has_unread_completion = false
+    }
     emitAppChanged({ state, onEvent: args.onEvent })
     return
   }

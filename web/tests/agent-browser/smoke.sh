@@ -78,6 +78,14 @@ wait_for_js "document.querySelectorAll('[data-testid=\"new-task-modal\"] select'
 
 agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" press Escape
 
+agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find testid "nav-inbox-button" click
+wait_for_js "document.querySelector('[data-testid=\"inbox-view\"]') != null"
+wait_for_js "document.querySelector('[data-testid=\"inbox-notification-row-0\"]') != null"
+wait_for_js "document.querySelector('[data-testid=\"inbox-notification-row-0\"]').dataset.read === 'false'"
+agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" eval "document.querySelector('[data-testid=\"inbox-notification-row-0\"]').click(); true"
+wait_for_js "document.querySelector('[data-testid=\"inbox-notification-row-0\"]') != null"
+wait_for_js "document.querySelector('[data-testid=\"inbox-notification-row-0\"]').dataset.read === 'true'"
+
 agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find testid "workspace-switcher-button" click
 agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find testid "open-settings-button" click
 wait_for_js "document.querySelector('[data-testid=\"settings-panel\"]') != null"

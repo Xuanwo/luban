@@ -21,7 +21,7 @@ import { useLuban } from "@/lib/luban-context"
  *   - Task detail view (when a task is selected)
  */
 export function LubanIDE() {
-  const { openWorkdir: openWorkspace } = useLuban()
+  const { openWorkdir: openWorkspace, activateTask } = useLuban()
 
   const [activeView, setActiveView] = useState<NavView>("tasks")
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
@@ -43,10 +43,11 @@ export function LubanIDE() {
   // Handle opening full view from inbox notification
   const handleOpenFullViewFromInbox = (notification: InboxNotification) => {
     void (async () => {
-      await openWorkspace(notification.workspaceId)
+      await openWorkspace(notification.workdirId)
+      await activateTask(notification.taskId)
         setSelectedTask({
           id: notification.id,
-          workspaceId: notification.workspaceId,
+          workspaceId: notification.workdirId,
           title: notification.taskTitle,
           status:
             notification.type === "completed"

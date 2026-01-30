@@ -36,14 +36,16 @@ interface LubanSidebarProps {
 interface NavItemProps {
   icon: React.ReactNode
   label: string
+  testId?: string
   badge?: number
   active?: boolean
   onClick?: () => void
 }
 
-function NavItem({ icon, label, badge, active, onClick }: NavItemProps) {
+function NavItem({ icon, label, testId, badge, active, onClick }: NavItemProps) {
   return (
     <button
+      data-testid={testId}
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] transition-colors",
@@ -232,6 +234,7 @@ export function LubanSidebar({
             icon={<Inbox className="w-4 h-4" />}
             label="Inbox"
             badge={inboxUnread}
+            testId="nav-inbox-button"
             active={activeView === "inbox"}
             onClick={() => handleNavClick("inbox")}
           />
