@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test:ui": "bash tests/agent-browser/smoke.sh",
+    "test:ui": "node tests/agent-browser/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -81,6 +81,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
+    "agent-browser": "^0.8.5",
     "eslint": "^9.39.2",
     "eslint-config-next": "16.1.4",
     "pngjs": "^7.0.0",

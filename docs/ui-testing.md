@@ -39,8 +39,9 @@ Run:
 
 Prerequisites:
 
-- `agent-browser` must be installed and available on `PATH`.
 - `pnpm` must be installed for starting the web dev server.
+- A Chromium-compatible browser must be available for Playwright to launch (see `AGENT_BROWSER_EXECUTABLE_PATH` in
+  the upstream agent-browser docs if you need to point to a custom executable).
 
 ## Isolation and safety (mock mode)
 
@@ -48,3 +49,13 @@ UI tests run in `web/` mock mode by default:
 
 - Tests start `next dev` with `NEXT_PUBLIC_LUBAN_MODE=mock`, so no Rust server is required.
 - Tests do not touch your real `LUBAN_ROOT` state.
+
+## Session / profile isolation
+
+The smoke test uses a random `luban-<hex>` session id and an isolated persistent profile directory by default.
+
+Useful overrides:
+
+- `LUBAN_AGENT_BROWSER_SESSION`: set the session id
+- `LUBAN_AGENT_BROWSER_PROFILE_DIR`: set the persistent profile directory
+- `LUBAN_AGENT_BROWSER_BASE_URL`: reuse an existing dev server instead of starting one
