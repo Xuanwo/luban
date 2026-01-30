@@ -14,7 +14,22 @@ fi
 PORT="${LUBAN_AGENT_BROWSER_PORT:-3000}"
 HOST="127.0.0.1"
 BASE_URL="http://${HOST}:${PORT}/"
-SESSION="luban-ui-smoke-$$"
+rand_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 8
+    return 0
+  fi
+
+  if [ -r /dev/urandom ]; then
+    od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+    return 0
+  fi
+
+  echo "${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
+}
+
+SESSION="${LUBAN_AGENT_BROWSER_SESSION:-luban-$(rand_hex)}"
+echo "agent-browser session: ${SESSION}" >&2
 AGENT_BROWSER_HEADED_FLAG=""
 if [ "${LUBAN_AGENT_BROWSER_HEADED:-0}" = "1" ]; then
   AGENT_BROWSER_HEADED_FLAG="--headed"
