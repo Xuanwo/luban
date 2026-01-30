@@ -217,7 +217,7 @@ export function LubanSidebar({
           </button>
           <button
             onClick={() => onNewTask?.()}
-            className="p-1.5 rounded-md transition-colors hover:bg-[#e8e8e8]"
+            className="p-1.5 rounded-lg transition-colors hover:bg-[#e8e8e8]"
             style={{ backgroundColor: '#ffffff', color: '#1b1b1b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
             title="New task"
             data-testid="new-task-button"
