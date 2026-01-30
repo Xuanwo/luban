@@ -137,8 +137,8 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
-  const isImplicitProjectRootWorkspace = (projectPath: string, args: { workspaceName: string; worktreePath: string }) =>
-    args.workspaceName === "main" && normalizePathLike(args.worktreePath) === normalizePathLike(projectPath)
+  const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
+    args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
 
   const tasks = useMemo(() => {
     if (!app) return [] as Task[]
@@ -150,20 +150,20 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
       if (activeProjectId && p.id !== activeProjectId) continue
       const projectName = displayNames.get(p.path) ?? p.slug
       const projectColor = projectColorClass(p.id)
-      for (const w of p.workspaces) {
+      for (const w of p.workdirs) {
         if (w.status !== "active") continue
-        if (isImplicitProjectRootWorkspace(p.path, { workspaceName: w.workspace_name, worktreePath: w.worktree_path })) {
+        if (isImplicitProjectRootWorkdir(p.path, { workdirName: w.workdir_name, workdirPath: w.workdir_path })) {
           continue
         }
         out.push({
           id: String(w.id),
           workspaceId: w.id,
-          title: w.workspace_name || w.branch_name,
+          title: w.workdir_name || w.branch_name,
           status: taskStatusFromWorkspace({
             agentRunStatus: w.agent_run_status,
             hasUnreadCompletion: w.has_unread_completion,
           }),
-          workdir: w.branch_name || w.workspace_name,
+          workdir: w.branch_name || w.workdir_name,
           projectName,
           projectColor,
           createdAt: "",

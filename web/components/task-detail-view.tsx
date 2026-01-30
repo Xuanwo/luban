@@ -19,24 +19,30 @@ interface TaskDetailViewProps {
 }
 
 export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projectColor, onBack }: TaskDetailViewProps) {
-  const { app, activeWorkspaceId, activeWorkspace, activeThreadId, threads } = useLuban()
+  const {
+    app,
+    activeWorkdirId: activeWorkspaceId,
+    activeWorkdir: activeWorkspace,
+    activeTaskId: activeThreadId,
+    tasks: threads,
+  } = useLuban()
   const [rightSidebarWidthPx, setRightSidebarWidthPx] = useState(320)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
 
   const projectInfo = getActiveProjectInfo(app, activeWorkspaceId)
   const resolvedProjectName = projectName ?? projectInfo.name
-  const resolvedWorkdir = workdir ?? activeWorkspace?.branch_name ?? activeWorkspace?.workspace_name ?? "main"
+  const resolvedWorkdir = workdir ?? activeWorkspace?.branch_name ?? activeWorkspace?.workdir_name ?? "main"
   const resolvedTitle =
     taskTitle ??
-    (activeThreadId != null ? threads.find((t) => t.thread_id === activeThreadId)?.title : null) ??
-    activeWorkspace?.workspace_name ??
+    (activeThreadId != null ? threads.find((t) => t.task_id === activeThreadId)?.title : null) ??
+    activeWorkspace?.workdir_name ??
     "Task"
 
   const resolvedProjectColor = (() => {
     if (projectColor) return projectColor
     if (!app || activeWorkspaceId == null) return "bg-violet-500"
     for (const p of app.projects) {
-      if (p.workspaces.some((w) => w.id === activeWorkspaceId)) {
+      if (p.workdirs.some((w) => w.id === activeWorkspaceId)) {
         return projectColorClass(p.id)
       }
     }

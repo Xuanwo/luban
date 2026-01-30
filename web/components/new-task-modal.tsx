@@ -45,7 +45,7 @@ function intentLabel(kind: TaskIntentKind): string {
 }
 
 export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
-  const { app, previewTask, executeTask, openWorkspace } = useLuban()
+  const { app, previewTask, executeTask, openWorkdir, activateTask, activeWorkdirId } = useLuban()
 
   const [input, setInput] = useState("")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -53,30 +53,60 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [executingMode, setExecutingMode] = useState<TaskExecuteMode | null>(null)
-  const [selectedProjectPath, setSelectedProjectPath] = useState<string>("")
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("")
+  const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
   const seqRef = useRef(0)
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
 
   const projectOptions = useMemo(() => {
-    return (app?.projects ?? []).map((p) => ({ id: p.id, name: p.name, path: p.path, slug: p.slug }))
+    return (app?.projects ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      path: p.path,
+      slug: p.slug,
+      workdirs: p.workdirs.filter((w) => w.status === "active"),
+    }))
   }, [app])
 
   useEffect(() => {
     if (!open) return
-    if (selectedProjectPath) return
+    if (selectedProjectId) return
     if (projectOptions.length === 1) {
-      setSelectedProjectPath(projectOptions[0].path)
+      setSelectedProjectId(projectOptions[0].id)
       return
     }
     if (draft?.project.type === "local_path") {
       const inferred = normalizePathLike(draft.project.path)
       const match = projectOptions.find((p) => normalizePathLike(p.path) === inferred)
-      if (match) setSelectedProjectPath(match.path)
+      if (match) setSelectedProjectId(match.id)
     }
-  }, [draft?.project, open, projectOptions, selectedProjectPath])
+  }, [draft?.project, open, projectOptions, selectedProjectId])
 
-  const canExecute = draft != null && selectedProjectPath.trim().length > 0
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId) return null
+    return projectOptions.find((p) => p.id === selectedProjectId) ?? null
+  }, [projectOptions, selectedProjectId])
+
+  const workdirOptions = useMemo(() => selectedProject?.workdirs ?? [], [selectedProject?.workdirs])
+
+  useEffect(() => {
+    if (!open) return
+    if (!selectedProjectId) {
+      setSelectedWorkdirId(null)
+      return
+    }
+
+    if (selectedWorkdirId != null && workdirOptions.some((w) => w.id === selectedWorkdirId)) return
+
+    const fromActive =
+      activeWorkdirId != null && workdirOptions.some((w) => w.id === activeWorkdirId) ? activeWorkdirId : null
+    const main = workdirOptions.find((w) => w.workdir_name === "main")?.id ?? null
+    const fallback = workdirOptions[0]?.id ?? null
+    setSelectedWorkdirId(fromActive ?? main ?? fallback)
+  }, [activeWorkdirId, open, selectedProjectId, selectedWorkdirId, workdirOptions])
+
+  const canExecute = draft != null && selectedProject != null && selectedWorkdirId != null
 
   useEffect(() => {
     if (!open) return
@@ -117,23 +147,23 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
 
   const handleSubmit = async (mode: TaskExecuteMode) => {
     if (!draft) return
+    if (!selectedProject) return
+    if (selectedWorkdirId == null) return
     setExecutingMode(mode)
     try {
       const toExecute: TaskDraft = {
         ...draft,
-        project: { type: "local_path", path: selectedProjectPath },
+        project: { type: "local_path", path: selectedProject.path },
       }
-      const result = await executeTask(toExecute, mode)
+      const result = await executeTask(toExecute, mode, selectedWorkdirId)
       if (mode === "create") {
-        localStorage.setItem(
-          draftKey(result.workspace_id, result.thread_id),
-          JSON.stringify({ text: result.prompt }),
-        )
+        localStorage.setItem(draftKey(result.workdir_id, result.task_id), JSON.stringify({ text: result.prompt }))
       } else {
         // No-op
       }
 
-      await openWorkspace(result.workspace_id)
+      await openWorkdir(result.workdir_id)
+      await activateTask(result.task_id)
       focusChatInput()
 
       toast(mode === "create" ? "Draft created" : "Task started")
@@ -154,7 +184,8 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setDraft(null)
     setPromptExpanded(false)
     setAnalysisError(null)
-    setSelectedProjectPath("")
+    setSelectedProjectId("")
+    setSelectedWorkdirId(null)
     onOpenChange(false)
   }
 
@@ -189,14 +220,13 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   }
 
   const selectedProjectLabel = useMemo(() => {
-    if (!selectedProjectPath) return "Select a project..."
-    const normalized = normalizePathLike(selectedProjectPath)
-    const match = projectOptions.find((p) => normalizePathLike(p.path) === normalized)
-    if (match?.name) return match.name
-    if (match?.slug) return match.slug
+    if (!selectedProject) return "Select a project..."
+    if (selectedProject.name) return selectedProject.name
+    if (selectedProject.slug) return selectedProject.slug
+    const normalized = normalizePathLike(selectedProject.path)
     const parts = normalized.split("/")
     return parts[parts.length - 1] || normalized
-  }, [projectOptions, selectedProjectPath])
+  }, [selectedProject])
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -286,8 +316,8 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                   <div className="px-4 pb-4">
                     <label className="block text-xs text-muted-foreground mb-1">Project</label>
                     <select
-                      value={selectedProjectPath}
-                      onChange={(e) => setSelectedProjectPath(e.target.value)}
+                      value={selectedProjectId}
+                      onChange={(e) => setSelectedProjectId(e.target.value)}
                       className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
                       disabled={executingMode != null}
                     >
@@ -295,8 +325,27 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                         Select a project...
                       </option>
                       {projectOptions.map((p) => (
-                        <option key={p.id} value={p.path}>
+                        <option key={p.id} value={p.id}>
                           {p.name || p.slug || p.path}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="px-4 pb-4 pt-0">
+                    <label className="block text-xs text-muted-foreground mb-1">Workdir</label>
+                    <select
+                      value={selectedWorkdirId ?? ""}
+                      onChange={(e) => setSelectedWorkdirId(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                      disabled={executingMode != null || selectedProject == null || workdirOptions.length === 0}
+                    >
+                      <option value="" disabled>
+                        {selectedProject == null ? "Select a project first..." : workdirOptions.length === 0 ? "No active workdirs" : "Select a workdir..."}
+                      </option>
+                      {workdirOptions.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.workdir_name || w.branch_name || w.workdir_path}
                         </option>
                       ))}
                     </select>

@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/diff`
+- Path: `/api/workdirs/{workdir_id}/diff`
 
 ## Purpose
 
@@ -19,4 +19,4 @@ Return a structured diff for the workspace.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchWorkspaceDiff(workspaceId)`
+- `web/lib/luban-http.ts` `fetchWorkspaceDiff(workdirId)`

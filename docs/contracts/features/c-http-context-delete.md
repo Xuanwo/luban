@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `DELETE`
-- Path: `/api/workspaces/{workspace_id}/context/{context_id}`
+- Path: `/api/workdirs/{workdir_id}/context/{context_id}`
 
 ## Purpose
 
@@ -18,4 +18,4 @@ Remove a context item from a workspace.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `deleteContextItem(workspaceId, contextId)`
+- `web/lib/luban-http.ts` `deleteContextItem(workdirId, contextId)`

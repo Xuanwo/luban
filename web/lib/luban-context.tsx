@@ -50,29 +50,29 @@ function normalizePathLike(raw: string): string {
 
 type LubanContextValue = {
   app: AppSnapshot | null
-  activeWorkspaceId: WorkspaceId | null
-  activeWorkspace: WorkspaceSnapshot | null
-  activeThreadId: number | null
-  threads: ThreadMeta[]
-  workspaceTabs: WorkspaceTabsSnapshot | null
+  activeWorkdirId: WorkspaceId | null
+  activeWorkdir: WorkspaceSnapshot | null
+  activeTaskId: number | null
+  tasks: ThreadMeta[]
+  taskTabs: WorkspaceTabsSnapshot | null
   conversation: ConversationSnapshot | null
   wsConnected: boolean
 
   pickProjectPath: () => Promise<string | null>
   addProject: (path: string) => void
-  addProjectAndOpen: (path: string) => Promise<{ projectId: ProjectId; workspaceId: WorkspaceId }>
+  addProjectAndOpen: (path: string) => Promise<{ projectId: ProjectId; workdirId: WorkspaceId }>
   deleteProject: (projectId: ProjectId) => void
-  createWorkspace: (projectId: ProjectId) => void
-  ensureMainWorkspace: (projectId: ProjectId) => void
-  openWorkspaceInIde: (workspaceId: WorkspaceId) => void
-  openWorkspaceWith: (workspaceId: WorkspaceId, target: OpenTarget) => void
-  openWorkspacePullRequest: (workspaceId: WorkspaceId) => void
-  openWorkspacePullRequestFailedAction: (workspaceId: WorkspaceId) => void
-  archiveWorkspace: (workspaceId: number) => void
+  createWorkdir: (projectId: ProjectId) => void
+  ensureMainWorkdir: (projectId: ProjectId) => void
+  openWorkdirInIde: (workdirId: WorkspaceId) => void
+  openWorkdirWith: (workdirId: WorkspaceId, target: OpenTarget) => void
+  openWorkdirPullRequest: (workdirId: WorkspaceId) => void
+  openWorkdirPullRequestFailedAction: (workdirId: WorkspaceId) => void
+  archiveWorkdir: (workdirId: number) => void
   toggleProjectExpanded: (projectId: ProjectId) => void
 
   previewTask: (input: string) => Promise<TaskDraft>
-  executeTask: (draft: TaskDraft, mode: TaskExecuteMode) => Promise<TaskExecuteResult>
+  executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
   submitFeedback: (args: {
     title: string
     body: string
@@ -81,12 +81,12 @@ type LubanContextValue = {
     action: FeedbackSubmitAction
   }) => Promise<FeedbackSubmitResult>
 
-  openWorkspace: (workspaceId: WorkspaceId) => Promise<void>
-  selectThread: (threadId: number) => Promise<void>
-  loadConversationBefore: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, before: number) => Promise<void>
-  createThread: () => void
-  closeThreadTab: (threadId: number) => Promise<void>
-  restoreThreadTab: (threadId: number) => Promise<void>
+  openWorkdir: (workdirId: WorkspaceId) => Promise<void>
+  activateTask: (taskId: number) => Promise<void>
+  loadConversationBefore: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, before: number) => Promise<void>
+  createTask: () => void
+  closeTaskTab: (taskId: number) => Promise<void>
+  restoreTaskTab: (taskId: number) => Promise<void>
 
   sendAgentMessage: (
     text: string,
@@ -125,8 +125,8 @@ type LubanContextValue = {
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
 
-  renameWorkspaceBranch: (workspaceId: WorkspaceId, branchName: string) => void
-  aiRenameWorkspaceBranch: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId) => void
+  renameWorkdirBranch: (workdirId: WorkspaceId, branchName: string) => void
+  aiRenameWorkdirBranch: (workdirId: WorkspaceId, taskId: WorkspaceThreadId) => void
 
   setChatModel: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, modelId: string) => void
   setThinkingEffort: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, effort: ThinkingEffort) => void
@@ -137,7 +137,6 @@ type LubanContextValue = {
   setGlobalZoom: (zoom: number) => void
   setOpenButtonSelection: (selection: string) => void
   setSidebarProjectOrder: (projectIds: ProjectId[]) => void
-  setSidebarWorktreeOrder: (projectId: ProjectId, workspaceIds: WorkspaceId[]) => void
 
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
@@ -167,7 +166,15 @@ const LubanContext = createContext<LubanContextValue | null>(null)
 
 export function LubanProvider({ children }: { children: React.ReactNode }) {
   const store = useLubanStore()
-  const { app, activeWorkspaceId, activeThreadId, threads, workspaceTabs, conversation, activeWorkspace } = store.state
+  const {
+    app,
+    activeWorkspaceId: activeWorkdirId,
+    activeThreadId: activeTaskId,
+    threads: tasks,
+    workspaceTabs: taskTabs,
+    conversation,
+    activeWorkspace: activeWorkdir,
+  } = store.state
   const eventHandlerRef = useRef<(event: ServerEvent) => void>(() => {})
   const pendingAutoOpenWorkspaceIdRef = useRef<WorkspaceId | null>(null)
   const lastActiveProjectIdxRef = useRef<number | null>(null)
@@ -209,24 +216,25 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      if (threadsSnap == null) return
+	      if (threadsSnap == null) return
 
-      store.cacheThreads(wid, threadsSnap.threads)
-      store.setThreads(threadsSnap.threads)
-      const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: threadsSnap.tabs, threads: threadsSnap.threads })
-      store.cacheWorkspaceTabs(wid, normalizedTabs)
-      store.setWorkspaceTabs(normalizedTabs)
+	      store.cacheThreads(wid, threadsSnap.tasks)
+	      store.setThreads(threadsSnap.tasks)
+	      const normalizedTabs = normalizeWorkspaceTabsSnapshot({ tabs: threadsSnap.tabs, threads: threadsSnap.tasks })
+	      store.cacheWorkspaceTabs(wid, normalizedTabs)
+	      store.setWorkspaceTabs(normalizedTabs)
 
-      const threadIds = new Set(threadsSnap.threads.map((t) => t.thread_id))
-      const openThreadIds = (normalizedTabs.open_tabs ?? []).filter((id) => threadIds.has(id))
-      const currentTid = store.refs.activeThreadIdRef.current
-      const currentIsOpen = currentTid != null && openThreadIds.includes(currentTid)
-      const preferredOpen = (openThreadIds.includes(normalizedTabs.active_tab) ? normalizedTabs.active_tab : null) ?? openThreadIds[0] ?? null
-      const resolvedTid = (currentIsOpen ? currentTid : preferredOpen) ?? threadsSnap.threads[0]?.thread_id ?? null
-      store.setActiveThreadId(resolvedTid)
+	      const taskIds = new Set(threadsSnap.tasks.map((t) => t.task_id))
+	      const openTaskIds = (normalizedTabs.open_tabs ?? []).filter((id) => taskIds.has(id))
+	      const currentTid = store.refs.activeThreadIdRef.current
+	      const currentIsOpen = currentTid != null && openTaskIds.includes(currentTid)
+	      const preferredOpen =
+	        (openTaskIds.includes(normalizedTabs.active_tab) ? normalizedTabs.active_tab : null) ?? openTaskIds[0] ?? null
+	      const resolvedTid = (currentIsOpen ? currentTid : preferredOpen) ?? threadsSnap.tasks[0]?.task_id ?? null
+	      store.setActiveThreadId(resolvedTid)
 
-      if (resolvedTid == null) {
-        store.setConversation(null)
+	      if (resolvedTid == null) {
+	        store.setConversation(null)
         return
       }
 
@@ -269,32 +277,32 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (app == null) return
-    if (activeWorkspaceId != null) return
-    const fromApp = app.ui.active_workspace_id ?? null
+    if (activeWorkdirId != null) return
+    const fromApp = app.ui.active_workdir_id ?? null
     const stored = fromApp
     if (!stored || !Number.isFinite(stored)) return
     const existsAndActive = app.projects.some((p) =>
-      p.workspaces.some((w) => w.id === stored && w.status === "active"),
+      p.workdirs.some((w) => w.id === stored && w.status === "active"),
     )
     if (!existsAndActive) return
-    void actions.openWorkspace(stored)
-  }, [actions, activeWorkspaceId, app])
+    void actions.openWorkdir(stored)
+  }, [actions, activeWorkdirId, app])
 
   useEffect(() => {
     if (app == null) return
-    if (activeWorkspaceId == null) return
+    if (activeWorkdirId == null) return
 
-    const locateActiveWorkspace = (): { projectIdx: number; workspaceId: WorkspaceId } | null => {
+    const locateActiveWorkdir = (): { projectIdx: number; workdirId: WorkspaceId } | null => {
       for (let i = 0; i < app.projects.length; i++) {
         const project = app.projects[i]!
-        const workspace = project.workspaces.find((w) => w.id === activeWorkspaceId) ?? null
-        if (workspace) return { projectIdx: i, workspaceId: activeWorkspaceId }
+        const workdir = project.workdirs.find((w) => w.id === activeWorkdirId) ?? null
+        if (workdir) return { projectIdx: i, workdirId: activeWorkdirId }
       }
       return null
     }
 
-    const located = locateActiveWorkspace()
-    if (activeWorkspace?.status === "active" && located) {
+    const located = locateActiveWorkdir()
+    if (activeWorkdir?.status === "active" && located) {
       lastActiveProjectIdxRef.current = located.projectIdx
       return
     }
@@ -302,16 +310,16 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     const pickMainOrFirstActive = (projectIdx: number): WorkspaceId | null => {
       const project = app.projects[projectIdx] ?? null
       if (!project) return null
-      const activeWorkspaces = project.workspaces.filter((w) => w.status === "active")
-      if (activeWorkspaces.length === 0) return null
+      const activeWorkdirs = project.workdirs.filter((w) => w.status === "active")
+      if (activeWorkdirs.length === 0) return null
       const main =
-        activeWorkspaces.find(
+        activeWorkdirs.find(
           (w) =>
-            w.workspace_name === "main" &&
-            normalizePathLike(w.worktree_path) === normalizePathLike(project.path),
+            w.workdir_name === "main" &&
+            normalizePathLike(w.workdir_path) === normalizePathLike(project.path),
         ) ??
-        activeWorkspaces.find((w) => w.workspace_name === "main") ??
-        activeWorkspaces[0] ??
+        activeWorkdirs.find((w) => w.workdir_name === "main") ??
+        activeWorkdirs[0] ??
         null
       return (main?.id as WorkspaceId | undefined) ?? null
     }
@@ -334,47 +342,47 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    if (fallback == null || fallback === activeWorkspaceId || pendingAutoOpenWorkspaceIdRef.current === fallback) {
+    if (fallback == null || fallback === activeWorkdirId || pendingAutoOpenWorkspaceIdRef.current === fallback) {
       return
     }
 
     pendingAutoOpenWorkspaceIdRef.current = fallback
-    void actions.openWorkspace(fallback).finally(() => {
+    void actions.openWorkdir(fallback).finally(() => {
       pendingAutoOpenWorkspaceIdRef.current = null
       focusChatInput()
     })
-  }, [actions, activeWorkspace?.status, activeWorkspaceId, app])
+  }, [actions, activeWorkdir?.status, activeWorkdirId, app])
 
   const value: LubanContextValue = {
     app,
-    activeWorkspaceId,
-    activeWorkspace,
-    activeThreadId,
-    threads,
-    workspaceTabs,
+    activeWorkdirId,
+    activeWorkdir,
+    activeTaskId,
+    tasks,
+    taskTabs,
     conversation,
     wsConnected,
     pickProjectPath: actions.pickProjectPath,
     addProject: actions.addProject,
     addProjectAndOpen: actions.addProjectAndOpen,
     deleteProject: actions.deleteProject,
-    createWorkspace: actions.createWorkspace,
-    ensureMainWorkspace: actions.ensureMainWorkspace,
-    openWorkspaceInIde: actions.openWorkspaceInIde,
-    openWorkspaceWith: actions.openWorkspaceWith,
-    openWorkspacePullRequest: actions.openWorkspacePullRequest,
-    openWorkspacePullRequestFailedAction: actions.openWorkspacePullRequestFailedAction,
-    archiveWorkspace: actions.archiveWorkspace,
+    createWorkdir: actions.createWorkdir,
+    ensureMainWorkdir: actions.ensureMainWorkdir,
+    openWorkdirInIde: actions.openWorkdirInIde,
+    openWorkdirWith: actions.openWorkdirWith,
+    openWorkdirPullRequest: actions.openWorkdirPullRequest,
+    openWorkdirPullRequestFailedAction: actions.openWorkdirPullRequestFailedAction,
+    archiveWorkdir: actions.archiveWorkdir,
     toggleProjectExpanded: actions.toggleProjectExpanded,
     previewTask: actions.previewTask,
     executeTask: actions.executeTask,
     submitFeedback: actions.submitFeedback,
-    openWorkspace: actions.openWorkspace,
-    selectThread: actions.selectThread,
+    openWorkdir: actions.openWorkdir,
+    activateTask: actions.activateTask,
     loadConversationBefore: actions.loadConversationBefore,
-    createThread: actions.createThread,
-    closeThreadTab: actions.closeThreadTab,
-    restoreThreadTab: actions.restoreThreadTab,
+    createTask: actions.createTask,
+    closeTaskTab: actions.closeTaskTab,
+    restoreTaskTab: actions.restoreTaskTab,
     sendAgentMessage: actions.sendAgentMessage,
     queueAgentMessage: actions.queueAgentMessage,
     sendAgentMessageTo: actions.sendAgentMessageTo,
@@ -383,8 +391,8 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     updateQueuedPrompt: actions.updateQueuedPrompt,
     cancelAgentTurn: actions.cancelAgentTurn,
     cancelAndSendAgentMessage: actions.cancelAndSendAgentMessage,
-    renameWorkspaceBranch: actions.renameWorkspaceBranch,
-    aiRenameWorkspaceBranch: actions.aiRenameWorkspaceBranch,
+    renameWorkdirBranch: actions.renameWorkdirBranch,
+    aiRenameWorkdirBranch: actions.aiRenameWorkdirBranch,
     setChatModel: actions.setChatModel,
     setThinkingEffort: actions.setThinkingEffort,
     setChatRunner: actions.setChatRunner,
@@ -394,7 +402,6 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setGlobalZoom: actions.setGlobalZoom,
     setOpenButtonSelection: actions.setOpenButtonSelection,
     setSidebarProjectOrder: actions.setSidebarProjectOrder,
-    setSidebarWorktreeOrder: actions.setSidebarWorktreeOrder,
     setCodexEnabled: actions.setCodexEnabled,
     setAmpEnabled: actions.setAmpEnabled,
     setClaudeEnabled: actions.setClaudeEnabled,

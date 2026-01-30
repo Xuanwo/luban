@@ -8,7 +8,7 @@ export type SidebarProjectVm = {
   displayName: string
   path: string
   isGit: boolean
-  createWorkspaceStatus: OperationStatus
+  createWorkdirStatus: OperationStatus
 }
 
 export function buildSidebarProjects(
@@ -28,7 +28,7 @@ export function buildSidebarProjects(
       displayName: displayNames.get(p.path) ?? p.slug,
       path: p.path,
       isGit: p.is_git,
-      createWorkspaceStatus: p.create_workspace_status,
+      createWorkdirStatus: p.create_workdir_status,
     }
     return vm
   })

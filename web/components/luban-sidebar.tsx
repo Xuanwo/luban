@@ -146,7 +146,7 @@ export function LubanSidebar({
     if (!app) return 0
     let count = 0
     for (const p of app.projects) {
-      for (const w of p.workspaces) {
+      for (const w of p.workdirs) {
         if (w.status === "active" && w.has_unread_completion) count += 1
       }
     }

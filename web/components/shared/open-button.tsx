@@ -93,7 +93,13 @@ function selectionToTarget(selection: SelectedItem): OpenTarget | null {
 }
 
 export function OpenButton() {
-  const { app, activeWorkspaceId, activeWorkspace, openWorkspaceWith, setOpenButtonSelection } = useLuban()
+  const {
+    app,
+    activeWorkdirId: activeWorkspaceId,
+    activeWorkdir: activeWorkspace,
+    openWorkdirWith: openWorkspaceWith,
+    setOpenButtonSelection,
+  } = useLuban()
   const [selection, setSelection] = useState<SelectedItem>(getDefaultSelection)
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -103,7 +109,7 @@ export function OpenButton() {
     setSelection(fromApp ?? getDefaultSelection())
   }, [app?.ui?.open_button_selection])
 
-  const workdirPath = activeWorkspace?.worktree_path ?? null
+  const workdirPath = activeWorkspace?.workdir_path ?? null
 
   const disabled = activeWorkspaceId == null
 

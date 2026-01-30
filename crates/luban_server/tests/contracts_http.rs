@@ -93,7 +93,7 @@ fn create_git_project() -> PathBuf {
     dir
 }
 
-async fn create_workspace_via_ws(server_addr: SocketAddr, project_path: &str) -> (u64, String) {
+async fn create_workdir_via_ws(server_addr: SocketAddr, project_path: &str) -> (u64, String) {
     let url = format!("ws://{}/api/events", server_addr);
     let (mut socket, _) = tokio_tungstenite::connect_async(url)
         .await
@@ -178,10 +178,81 @@ async fn create_workspace_via_ws(server_addr: SocketAddr, project_path: &str) ->
     out.expect("expected AddProjectAndOpenReady")
 }
 
+async fn ensure_task_via_ws(server_addr: SocketAddr, workdir_id: u64) {
+    let url = format!("ws://{}/api/events", server_addr);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("connect websocket");
+
+    let first = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+    assert!(matches!(first, luban_api::WsServerMessage::Hello { .. }));
+
+    let hello = luban_api::WsClientMessage::Hello {
+        protocol_version: luban_api::PROTOCOL_VERSION,
+        last_seen_rev: None,
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&hello)
+                .expect("serialize hello")
+                .into(),
+        ))
+        .await
+        .expect("send hello");
+
+    let mut saw_resync = false;
+    for _ in 0..20 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        if let luban_api::WsServerMessage::Event { event, .. } = msg
+            && matches!(*event, luban_api::ServerEvent::AppChanged { .. })
+        {
+            saw_resync = true;
+            break;
+        }
+    }
+    assert!(
+        saw_resync,
+        "expected an AppChanged resync event after hello"
+    );
+
+    let action = luban_api::WsClientMessage::Action {
+        request_id: "req-create-task".to_owned(),
+        action: Box::new(luban_api::ClientAction::CreateWorkspaceThread {
+            workspace_id: luban_api::WorkspaceId(workdir_id),
+        }),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&action)
+                .expect("serialize create_task action")
+                .into(),
+        ))
+        .await
+        .expect("send create_task action");
+
+    let mut saw_ack = false;
+    for _ in 0..60 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        match msg {
+            luban_api::WsServerMessage::Ack { request_id, .. } => {
+                if request_id == "req-create-task" {
+                    saw_ack = true;
+                    break;
+                }
+            }
+            luban_api::WsServerMessage::Error { message, .. } => {
+                panic!("create_task error: {message}");
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_ack, "expected ack for create_task");
+}
+
 async fn upload_text_attachment(
     client: &reqwest::Client,
     base: &str,
-    workspace_id: u64,
+    workdir_id: u64,
     idempotency_key: &str,
     bytes: Vec<u8>,
 ) -> luban_api::AttachmentRef {
@@ -194,7 +265,7 @@ async fn upload_text_attachment(
     );
 
     client
-        .post(format!("{base}/api/workspaces/{workspace_id}/attachments"))
+        .post(format!("{base}/api/workdirs/{workdir_id}/attachments"))
         .header("Idempotency-Key", idempotency_key)
         .multipart(form)
         .send()
@@ -281,11 +352,11 @@ async fn http_contracts_smoke() {
 
     let project_dir = create_git_project();
     let project_path = project_dir.to_string_lossy().to_string();
-    let (workspace_id, _project_id) = create_workspace_via_ws(server.addr, &project_path).await;
+    let (workdir_id, _project_id) = create_workdir_via_ws(server.addr, &project_path).await;
 
-    // C-HTTP-THREADS
-    let threads: luban_api::ThreadsSnapshot = client
-        .get(format!("{base}/api/workspaces/{workspace_id}/threads"))
+    // C-HTTP-WORKDIR-TASKS
+    let mut threads: luban_api::ThreadsSnapshot = client
+        .get(format!("{base}/api/workdirs/{workdir_id}/tasks"))
         .send()
         .await
         .expect("GET /threads")
@@ -295,13 +366,45 @@ async fn http_contracts_smoke() {
         .await
         .expect("threads json");
 
-    let thread_id = threads.tabs.active_tab.0;
+    if threads.threads.is_empty() {
+        ensure_task_via_ws(server.addr, workdir_id).await;
+        threads = client
+            .get(format!("{base}/api/workdirs/{workdir_id}/tasks"))
+            .send()
+            .await
+            .expect("GET /tasks")
+            .error_for_status()
+            .expect("tasks status")
+            .json()
+            .await
+            .expect("tasks json");
+    }
+
+    let task_id = threads.tabs.active_tab.0;
+
+    // C-HTTP-TASKS
+    {
+        let snap: luban_api::TasksSnapshot = client
+            .get(format!("{base}/api/tasks"))
+            .send()
+            .await
+            .expect("GET /api/tasks")
+            .error_for_status()
+            .expect("tasks status")
+            .json()
+            .await
+            .expect("tasks json");
+        assert!(
+            snap.tasks.iter().any(|t| t.workspace_id.0 == workdir_id),
+            "expected tasks to include the active workdir"
+        );
+    }
 
     // C-HTTP-CONVERSATION (pagination)
     {
         let convo: luban_api::ConversationSnapshot = client
             .get(format!(
-                "{base}/api/workspaces/{workspace_id}/conversations/{thread_id}?limit=1"
+                "{base}/api/workdirs/{workdir_id}/conversations/{task_id}?limit=1"
             ))
             .send()
             .await
@@ -312,8 +415,8 @@ async fn http_contracts_smoke() {
             .await
             .expect("conversation json");
 
-        assert_eq!(convo.workspace_id.0, workspace_id);
-        assert_eq!(convo.thread_id.0, thread_id);
+        assert_eq!(convo.workspace_id.0, workdir_id);
+        assert_eq!(convo.thread_id.0, task_id);
         assert!(
             convo.entries.len() <= 1,
             "expected limit=1 to clamp entries"
@@ -328,7 +431,7 @@ async fn http_contracts_smoke() {
     // C-HTTP-CHANGES / C-HTTP-DIFF
     {
         let _changes: luban_api::WorkspaceChangesSnapshot = client
-            .get(format!("{base}/api/workspaces/{workspace_id}/changes"))
+            .get(format!("{base}/api/workdirs/{workdir_id}/changes"))
             .send()
             .await
             .expect("GET /changes")
@@ -339,7 +442,7 @@ async fn http_contracts_smoke() {
             .expect("changes json");
 
         let _diff: luban_api::WorkspaceDiffSnapshot = client
-            .get(format!("{base}/api/workspaces/{workspace_id}/diff"))
+            .get(format!("{base}/api/workdirs/{workdir_id}/diff"))
             .send()
             .await
             .expect("GET /diff")
@@ -353,9 +456,7 @@ async fn http_contracts_smoke() {
     // C-HTTP-MENTIONS
     {
         let res = client
-            .get(format!(
-                "{base}/api/workspaces/{workspace_id}/mentions?q=read"
-            ))
+            .get(format!("{base}/api/workdirs/{workdir_id}/mentions?q=read"))
             .send()
             .await
             .expect("GET /mentions")
@@ -375,22 +476,12 @@ async fn http_contracts_smoke() {
                 .as_nanos()
         );
 
-        let att1 = upload_text_attachment(
-            &client,
-            &base,
-            workspace_id,
-            &idempotency_key,
-            bytes.clone(),
-        )
-        .await;
-        let att2 = upload_text_attachment(
-            &client,
-            &base,
-            workspace_id,
-            &idempotency_key,
-            bytes.clone(),
-        )
-        .await;
+        let att1 =
+            upload_text_attachment(&client, &base, workdir_id, &idempotency_key, bytes.clone())
+                .await;
+        let att2 =
+            upload_text_attachment(&client, &base, workdir_id, &idempotency_key, bytes.clone())
+                .await;
         assert_eq!(
             att1.id, att2.id,
             "expected Idempotency-Key to dedupe attachment upload"
@@ -398,7 +489,7 @@ async fn http_contracts_smoke() {
 
         let res = client
             .get(format!(
-                "{base}/api/workspaces/{workspace_id}/attachments/{}?ext={}",
+                "{base}/api/workdirs/{workdir_id}/attachments/{}?ext={}",
                 att1.id, att1.extension
             ))
             .send()
@@ -410,7 +501,7 @@ async fn http_contracts_smoke() {
         assert_eq!(downloaded, bytes);
 
         let ctx: luban_api::ContextSnapshot = client
-            .get(format!("{base}/api/workspaces/{workspace_id}/context"))
+            .get(format!("{base}/api/workdirs/{workdir_id}/context"))
             .send()
             .await
             .expect("GET /context")
@@ -427,7 +518,7 @@ async fn http_contracts_smoke() {
 
         let del = client
             .delete(format!(
-                "{base}/api/workspaces/{workspace_id}/context/{}",
+                "{base}/api/workdirs/{workdir_id}/context/{}",
                 item.context_id
             ))
             .send()
@@ -436,7 +527,7 @@ async fn http_contracts_smoke() {
         assert_eq!(del.status(), reqwest::StatusCode::NO_CONTENT);
 
         let ctx2: luban_api::ContextSnapshot = client
-            .get(format!("{base}/api/workspaces/{workspace_id}/context"))
+            .get(format!("{base}/api/workdirs/{workdir_id}/context"))
             .send()
             .await
             .expect("GET /context")

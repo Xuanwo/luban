@@ -5,7 +5,7 @@ Verification: Mock=yes, Provider=yes, CI=yes
 
 ## Surface
 
-- WebSocket path: `/api/pty/{workspace_id}/{thread_id}`
+- WebSocket path: `/api/pty/{workdir_id}/{task_id}`
 - Query parameters:
   - `reconnect` (string, optional): client-generated token that keys the PTY session.
 

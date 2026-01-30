@@ -120,14 +120,14 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
 }
 
 export function InboxView({ onOpenFullView }: InboxViewProps) {
-  const { app, openWorkspace } = useLuban()
+  const { app, openWorkdir } = useLuban()
   const [selectedNotification, setSelectedNotification] = useState<InboxNotification | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
-  const isImplicitProjectRootWorkspace = (projectPath: string, args: { workspaceName: string; worktreePath: string }) =>
-    args.workspaceName === "main" && normalizePathLike(args.worktreePath) === normalizePathLike(projectPath)
+  const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
+    args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
 
   const notifications = useMemo(() => {
     if (!app) return [] as InboxNotification[]
@@ -138,18 +138,18 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
     for (const p of app.projects) {
       const projectName = displayNames.get(p.path) ?? p.slug
       const projectColor = projectColorClass(p.id)
-      for (const w of p.workspaces) {
+      for (const w of p.workdirs) {
         if (w.status !== "active") continue
         if (!w.has_unread_completion) continue
-        if (isImplicitProjectRootWorkspace(p.path, { workspaceName: w.workspace_name, worktreePath: w.worktree_path })) {
+        if (isImplicitProjectRootWorkdir(p.path, { workdirName: w.workdir_name, workdirPath: w.workdir_path })) {
           continue
         }
         const id = `workspace-${w.id}`
         out.push({
           id,
           workspaceId: w.id,
-          taskTitle: w.workspace_name || w.branch_name,
-          workdir: w.branch_name || w.workspace_name,
+          taskTitle: w.workdir_name || w.branch_name,
+          workdir: w.branch_name || w.workdir_name,
           projectName,
           projectColor,
           type: "completed",
@@ -219,7 +219,7 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
                   next.add(notification.id)
                   return next
                 })
-                void openWorkspace(notification.workspaceId)
+                void openWorkdir(notification.workspaceId)
               }}
               onDoubleClick={() => onOpenFullView?.(notification)}
             />

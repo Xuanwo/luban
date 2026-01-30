@@ -16,34 +16,28 @@ fn slice_between<'a>(haystack: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn mock_task_preview_selects_a_default_project() {
+fn mock_task_preview_uses_local_path_project_spec() {
     let content = read_repo_file("web/lib/mock/mock-runtime.ts");
-    let block = slice_between(&content, "if (action.type === \"task_preview\") {", "if (action.type === \"task_execute\") {");
     assert!(
-        block.contains("project: { type: \"local_path\""),
-        "task_preview should pick a default local_path project in mock mode"
+        content.contains("project: { type: \"local_path\""),
+        "task_preview should produce a local_path project spec in mock mode"
     );
 }
 
 #[test]
-fn mock_task_execute_create_mutates_state_with_new_workspace() {
+fn mock_task_execute_requires_workdir_id_and_creates_task() {
     let content = read_repo_file("web/lib/mock/mock-runtime.ts");
-    let block = slice_between(&content, "if (action.type === \"task_execute\") {", "if (action.type === \"feedback_submit\") {");
-    assert!(
-        block.contains("if (action.mode === \"create\")"),
-        "task_execute should handle create mode in mock mode"
+    let block = slice_between(
+        &content,
+        "if (action.type === \"task_execute\") {",
+        "if (action.type === \"feedback_submit\") {",
     );
     assert!(
-        block.contains("project.workspaces.push"),
-        "task_execute(create) should add a workspace to the selected project"
+        block.contains("task_execute requires workdir_id"),
+        "task_execute should require workdir_id in mock mode"
     );
     assert!(
-        block.contains("state.threadsByWorkspace.set"),
-        "task_execute(create) should initialize threadsByWorkspace for the new workspace"
-    );
-    assert!(
-        block.contains("state.conversationsByWorkspaceThread.set"),
-        "task_execute(create) should initialize a conversation for the created thread"
+        block.contains("createTaskInWorkdir"),
+        "task_execute should create a task in the selected workdir in mock mode"
     );
 }
-

@@ -20,7 +20,7 @@ export type KanbanTaskVm = {
   prStatus: PRStatus
   prNumber?: number
   prTitle?: string
-  workspaceId: number
+  workdirId: number
 }
 
 export type KanbanBoardVm = {
@@ -33,7 +33,7 @@ export function buildKanbanTasks(app: AppSnapshot | null): KanbanTaskVm[] {
   const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
   const out: KanbanTaskVm[] = []
   for (const p of app.projects) {
-    for (const w of p.workspaces) {
+    for (const w of p.workdirs) {
       if (w.status !== "active") continue
       const agentStatus = agentStatusFromTask(w)
       const pr = prStatusFromTask(w)
@@ -45,7 +45,7 @@ export function buildKanbanTasks(app: AppSnapshot | null): KanbanTaskVm[] {
         prStatus: pr.status,
         prNumber: pr.prNumber,
         prTitle: pr.prState === "merged" ? "Merged" : undefined,
-        workspaceId: w.id,
+        workdirId: w.id,
       })
     }
   }

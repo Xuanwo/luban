@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/attachments/{attachment_id}`
+- Path: `/api/workdirs/{workdir_id}/attachments/{attachment_id}`
 
 ## Purpose
 

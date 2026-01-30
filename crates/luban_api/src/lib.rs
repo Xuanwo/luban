@@ -720,7 +720,10 @@ pub enum ClientAction {
         workspace_id: WorkspaceId,
         target: OpenTarget,
     },
-    #[serde(rename = "open_workdir_pull_request", alias = "open_workspace_pull_request")]
+    #[serde(
+        rename = "open_workdir_pull_request",
+        alias = "open_workspace_pull_request"
+    )]
     OpenWorkspacePullRequest {
         #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
@@ -838,7 +841,10 @@ pub enum ClientAction {
         workspace_id: WorkspaceId,
         branch_name: String,
     },
-    #[serde(rename = "workdir_ai_rename_branch", alias = "workspace_ai_rename_branch")]
+    #[serde(
+        rename = "workdir_ai_rename_branch",
+        alias = "workspace_ai_rename_branch"
+    )]
     WorkspaceAiRenameBranch {
         #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,

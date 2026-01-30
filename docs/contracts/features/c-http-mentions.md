@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/mentions`
+- Path: `/api/workdirs/{workdir_id}/mentions`
 
 ## Purpose
 
@@ -23,4 +23,4 @@ Search mention candidates (files/folders) for the chat composer.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchMentionItems({ workspaceId, query })`
+- `web/lib/luban-http.ts` `fetchMentionItems({ workspaceId: workdirId, query })`

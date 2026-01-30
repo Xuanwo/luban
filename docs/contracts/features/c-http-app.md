@@ -23,7 +23,11 @@ This includes Task settings:
 This includes persisted UI preferences for the sidebar:
 
 - `ui.sidebar_project_order`: stable ordering for the project list.
-- `ui.sidebar_worktree_order`: stable ordering for worktrees per project.
+
+This includes current UI selection:
+
+- `ui.active_workdir_id`: the currently selected workdir id (optional).
+- `ui.active_task_id`: the currently selected task id within the active workdir (optional).
 
 This includes Agent settings:
 

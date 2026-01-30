@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `POST`
-- Path: `/api/workspaces/{workspace_id}/attachments`
+- Path: `/api/workdirs/{workdir_id}/attachments`
 
 ## Purpose
 
@@ -32,4 +32,4 @@ Optional headers:
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `uploadAttachment({ workspaceId, file, kind })`
+- `web/lib/luban-http.ts` `uploadAttachment({ workspaceId: workdirId, file, kind })`

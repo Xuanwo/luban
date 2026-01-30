@@ -23,7 +23,7 @@ function sliceFromSnapshot(snapshot: ConversationSnapshot): Slice {
 }
 
 function isSameThread(a: ConversationSnapshot, b: ConversationSnapshot): boolean {
-  return a.workspace_id === b.workspace_id && a.thread_id === b.thread_id
+  return a.workdir_id === b.workdir_id && a.task_id === b.task_id
 }
 
 function computeTruncation(start: number, entries: ConversationEntry[], total: number): boolean {

@@ -94,14 +94,14 @@ update this section.
 - `FeedbackSubmit`
 - `DeleteProject`
 - `ToggleProjectExpanded`
-- `CreateWorkspace`
-- `OpenWorkspace`
-- `OpenWorkspaceInIde`
-- `OpenWorkspaceWith`
-- `OpenWorkspacePullRequest`
-- `OpenWorkspacePullRequestFailedAction`
-- `ArchiveWorkspace`
-- `EnsureMainWorkspace`
+- `CreateWorkdir`
+- `EnsureMainWorkdir`
+- `OpenWorkdir`
+- `OpenWorkdirInIde`
+- `OpenWorkdirWith`
+- `OpenWorkdirPullRequest`
+- `OpenWorkdirPullRequestFailedAction`
+- `ArchiveWorkdir`
 - `ChatModelChanged`
 - `ChatRunnerChanged`
 - `ChatAmpModeChanged`
@@ -112,17 +112,17 @@ update this section.
 - `RemoveQueuedPrompt`
 - `ReorderQueuedPrompt`
 - `UpdateQueuedPrompt`
-- `WorkspaceRenameBranch`
-- `WorkspaceAiRenameBranch`
+- `WorkdirRenameBranch`
+- `WorkdirAiRenameBranch`
 - `CancelAgentTurn`
-- `CreateWorkspaceThread`
-- `ActivateWorkspaceThread`
-- `CloseWorkspaceThreadTab`
-- `RestoreWorkspaceThreadTab`
-- `ReorderWorkspaceThreadTab`
+- `CreateTask`
+- `ActivateTask`
+- `CloseTaskTab`
+- `RestoreTaskTab`
+- `ReorderTaskTab`
 - `OpenButtonSelectionChanged`
 - `SidebarProjectOrderChanged`
-- `SidebarWorktreeOrderChanged`
+- `SidebarWorktreeOrderChanged` (deprecated; ignored by the UI)
 - `AppearanceThemeChanged`
 - `AppearanceFontsChanged`
 - `AppearanceGlobalZoomChanged`
@@ -154,7 +154,7 @@ update this section.
 All `ServerEvent` variants are part of this contract surface:
 
 - `AppChanged`
-- `WorkspaceThreadsChanged`
+- `WorkdirTasksChanged`
 - `ConversationChanged`
 - `Toast`
 - `ProjectPathPicked`

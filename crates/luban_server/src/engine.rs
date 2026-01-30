@@ -318,6 +318,7 @@ impl Engine {
         let Some(workspace) = self.state.workspace(workspace_id) else {
             return Err("workdir not found".to_owned());
         };
+        let worktree_path = workspace.worktree_path.to_string_lossy().to_string();
 
         let Some(project_path) = self
             .state
@@ -365,8 +366,6 @@ impl Engine {
             })
             .await;
         }
-
-        let worktree_path = workspace.worktree_path.to_string_lossy().to_string();
 
         Ok(luban_api::TaskExecuteResult {
             project_id: luban_api::ProjectId(project_path),
@@ -686,7 +685,7 @@ impl Engine {
                 {
                     let draft = draft.as_ref().clone();
                     let mode = *mode;
-                    let workdir_id = workdir_id.clone();
+                    let workdir_id = *workdir_id;
 
                     match self.execute_task_draft(draft, mode, workdir_id).await {
                         Ok(result) => {
@@ -775,8 +774,24 @@ impl Engine {
                             };
 
                             let api_draft = map_task_draft(&draft);
+                            let workdir_id = self
+                                .state
+                                .last_open_workspace_id
+                                .or_else(|| {
+                                    self.state
+                                        .projects
+                                        .iter()
+                                        .flat_map(|p| p.workspaces.iter())
+                                        .find(|w| w.status == luban_domain::WorkspaceStatus::Active)
+                                        .map(|w| w.id)
+                                })
+                                .map(|id| luban_api::WorkspaceId(id.as_u64()));
                             let result = match self
-                                .execute_task_draft(api_draft, luban_api::TaskExecuteMode::Create)
+                                .execute_task_draft(
+                                    api_draft,
+                                    luban_api::TaskExecuteMode::Create,
+                                    workdir_id,
+                                )
                                 .await
                             {
                                 Ok(result) => result,
@@ -3691,63 +3706,6 @@ fn map_task_draft(draft: &luban_domain::TaskDraft) -> luban_api::TaskDraft {
             .pull_request
             .as_ref()
             .map(|pr| luban_api::TaskPullRequestInfo {
-                number: pr.number,
-                title: pr.title.clone(),
-                url: pr.url.clone(),
-                head_ref: pr.head_ref.clone(),
-                base_ref: pr.base_ref.clone(),
-                mergeable: pr.mergeable.clone(),
-            }),
-    }
-}
-
-fn unmap_task_intent_kind(kind: luban_api::TaskIntentKind) -> luban_domain::TaskIntentKind {
-    match kind {
-        luban_api::TaskIntentKind::Fix => luban_domain::TaskIntentKind::Fix,
-        luban_api::TaskIntentKind::Implement => luban_domain::TaskIntentKind::Implement,
-        luban_api::TaskIntentKind::Review => luban_domain::TaskIntentKind::Review,
-        luban_api::TaskIntentKind::Discuss => luban_domain::TaskIntentKind::Discuss,
-        luban_api::TaskIntentKind::Other => luban_domain::TaskIntentKind::Other,
-    }
-}
-
-fn unmap_task_project_spec(spec: &luban_api::TaskProjectSpec) -> luban_domain::TaskProjectSpec {
-    match spec {
-        luban_api::TaskProjectSpec::Unspecified => luban_domain::TaskProjectSpec::Unspecified,
-        luban_api::TaskProjectSpec::LocalPath { path } => {
-            luban_domain::TaskProjectSpec::LocalPath {
-                path: expand_user_path(path),
-            }
-        }
-        luban_api::TaskProjectSpec::GitHubRepo { full_name } => {
-            luban_domain::TaskProjectSpec::GitHubRepo {
-                full_name: full_name.clone(),
-            }
-        }
-    }
-}
-
-fn unmap_task_draft(draft: &luban_api::TaskDraft) -> luban_domain::TaskDraft {
-    luban_domain::TaskDraft {
-        input: draft.input.clone(),
-        project: unmap_task_project_spec(&draft.project),
-        intent_kind: unmap_task_intent_kind(draft.intent_kind),
-        summary: draft.summary.clone(),
-        prompt: draft.prompt.clone(),
-        repo: draft.repo.as_ref().map(|r| luban_domain::TaskRepoInfo {
-            full_name: r.full_name.clone(),
-            url: r.url.clone(),
-            default_branch: r.default_branch.clone(),
-        }),
-        issue: draft.issue.as_ref().map(|i| luban_domain::TaskIssueInfo {
-            number: i.number,
-            title: i.title.clone(),
-            url: i.url.clone(),
-        }),
-        pull_request: draft
-            .pull_request
-            .as_ref()
-            .map(|pr| luban_domain::TaskPullRequestInfo {
                 number: pr.number,
                 title: pr.title.clone(),
                 url: pr.url.clone(),

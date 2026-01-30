@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/context`
+- Path: `/api/workdirs/{workdir_id}/context`
 
 ## Purpose
 
@@ -19,4 +19,4 @@ Return the current workspace context attachments used by the chat composer.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchContext(workspaceId)`
+- `web/lib/luban-http.ts` `fetchContext(workdirId)`

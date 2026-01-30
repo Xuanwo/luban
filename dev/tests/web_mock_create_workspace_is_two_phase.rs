@@ -16,25 +16,24 @@ fn slice_between<'a>(haystack: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn mock_create_workspace_sets_running_then_idles() {
+fn mock_create_workdir_sets_running_then_idles() {
     let content = read_repo_file("web/lib/mock/mock-runtime.ts");
     let block = slice_between(
         &content,
-        "if (a.type === \"create_workspace\") {",
-        "if (a.type === \"archive_workspace\") {",
+        "if (a.type === \"create_workdir\") {",
+        "if (a.type === \"ensure_main_workdir\") {",
     );
 
     assert!(
-        block.contains("create_workspace_status = \"running\""),
-        "create_workspace should set create_workspace_status to running"
+        block.contains("create_workdir_status = \"running\""),
+        "create_workdir should set create_workdir_status to running"
     );
     assert!(
-        block.contains("create_workspace_status = \"idle\""),
-        "create_workspace should eventually set create_workspace_status to idle"
+        block.contains("create_workdir_status = \"idle\""),
+        "create_workdir should eventually set create_workdir_status to idle"
     );
     assert!(
         block.contains("window.setTimeout"),
-        "create_workspace should be async (two-phase) in mock runtime"
+        "create_workdir should be async (two-phase) in mock runtime"
     );
 }
-

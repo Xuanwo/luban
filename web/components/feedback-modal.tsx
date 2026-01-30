@@ -239,7 +239,7 @@ interface FeedbackModalProps {
 }
 
 export function FeedbackModal({ open, onOpenChange }: FeedbackModalProps) {
-  const { openWorkspace, sendAgentMessageTo, submitFeedback } = useLuban()
+  const { openWorkdir, sendAgentMessageTo, submitFeedback } = useLuban()
   const [stage, setStage] = useState<Stage>("input")
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -339,11 +339,11 @@ export function FeedbackModal({ open, onOpenChange }: FeedbackModalProps) {
         const task = result.task
         if (!task) throw new Error("server returned no task result")
 
-        await openWorkspace(task.workspace_id)
+        await openWorkdir(task.workdir_id)
 
         const settled = await Promise.allSettled(
           attachments.map((att) =>
-            uploadAttachment({ workspaceId: task.workspace_id, file: att.file, kind: "image" }),
+            uploadAttachment({ workspaceId: task.workdir_id, file: att.file, kind: "image" }),
           ),
         )
 
@@ -352,7 +352,7 @@ export function FeedbackModal({ open, onOpenChange }: FeedbackModalProps) {
           if (entry.status === "fulfilled") uploaded.push(entry.value)
         }
 
-        sendAgentMessageTo(task.workspace_id, task.thread_id, task.prompt, uploaded)
+        sendAgentMessageTo(task.workdir_id, task.task_id, task.prompt, uploaded)
         focusChatInput()
         toast("Task started")
       } else {

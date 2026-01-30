@@ -57,7 +57,7 @@ interface RightSidebarProps {
 export type ChangedFile = ChangedFileSnapshot
 
 export function RightSidebar({ widthPx, onOpenDiffTab }: RightSidebarProps) {
-  const { activeWorkspaceId } = useLuban()
+  const { activeWorkdirId: activeWorkspaceId } = useLuban()
   const [activeTab, setActiveTab] = useState<RightPanelTab>("terminal")
   const [isDragOver, setIsDragOver] = useState(false)
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null)

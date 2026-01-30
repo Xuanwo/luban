@@ -345,7 +345,7 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
 }
 
 export function PtyTerminal() {
-  const { activeWorkspaceId, activeWorkspace } = useLuban()
+  const { activeWorkdirId: activeWorkspaceId, activeWorkdir: activeWorkspace } = useLuban()
   const { fonts } = useAppearance()
   const fontsRef = useRef(fonts)
   const { resolvedTheme } = useTheme()
@@ -425,8 +425,8 @@ export function PtyTerminal() {
     container.innerHTML = ""
 
     const ptyThreadId = 1
-    const mockWorkspaceLabel = activeWorkspace?.workspace_name ?? `workspace-${activeWorkspaceId}`
-    const mockCwd = activeWorkspace?.worktree_path ?? `/mock/workspaces/${activeWorkspaceId}`
+    const mockWorkspaceLabel = activeWorkspace?.workdir_name ?? `workdir-${activeWorkspaceId}`
+    const mockCwd = activeWorkspace?.workdir_path ?? `/mock/workdirs/${activeWorkspaceId}`
 
     let disposed = false
     const fitAddon = new FitAddon()
@@ -885,7 +885,7 @@ export function PtyTerminal() {
       webglAddon?.dispose()
       term.dispose()
     }
-  }, [activeWorkspaceId, activeWorkspace?.workspace_name, activeWorkspace?.worktree_path])
+  }, [activeWorkspaceId, activeWorkspace?.workdir_name, activeWorkspace?.workdir_path])
 
   return (
     <div

@@ -21,7 +21,7 @@ import { useLuban } from "@/lib/luban-context"
  *   - Task detail view (when a task is selected)
  */
 export function LubanIDE() {
-  const { openWorkspace } = useLuban()
+  const { openWorkdir: openWorkspace } = useLuban()
 
   const [activeView, setActiveView] = useState<NavView>("tasks")
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)

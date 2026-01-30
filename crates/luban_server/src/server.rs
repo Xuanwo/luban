@@ -259,13 +259,17 @@ async fn get_tasks(
     };
 
     let mut tasks = Vec::<luban_api::TaskSummarySnapshot>::new();
-    let selected_project_id = query.project_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let selected_project_id = query
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
     for p in &app.projects {
-        if let Some(selected) = selected_project_id {
-            if p.id.0 != selected {
-                continue;
-            }
+        if let Some(selected) = selected_project_id
+            && p.id.0 != selected
+        {
+            continue;
         }
 
         for w in &p.workspaces {
@@ -306,7 +310,11 @@ async fn get_tasks(
         }
     }
 
-    Json(luban_api::TasksSnapshot { rev: app.rev, tasks }).into_response()
+    Json(luban_api::TasksSnapshot {
+        rev: app.rev,
+        tasks,
+    })
+    .into_response()
 }
 
 async fn get_threads(

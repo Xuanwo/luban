@@ -72,22 +72,22 @@ export function ChatPanel({
 
   const {
     app,
-    activeWorkspaceId,
-    activeWorkspace,
-    activeThreadId,
-    threads,
-    workspaceTabs,
+    activeWorkdirId: activeWorkspaceId,
+    activeWorkdir: activeWorkspace,
+    activeTaskId: activeThreadId,
+    tasks: threads,
+    taskTabs: workspaceTabs,
     conversation,
-    selectThread,
-    createThread,
-    closeThreadTab,
-    restoreThreadTab,
+    activateTask: selectThread,
+    createTask: createThread,
+    closeTaskTab: closeThreadTab,
+    restoreTaskTab: restoreThreadTab,
     sendAgentMessage,
     queueAgentMessage,
     cancelAgentTurn,
     cancelAndSendAgentMessage,
-    renameWorkspaceBranch,
-    aiRenameWorkspaceBranch,
+    renameWorkdirBranch: renameWorkspaceBranch,
+    aiRenameWorkdirBranch: aiRenameWorkspaceBranch,
     removeQueuedPrompt,
     reorderQueuedPrompt,
     updateQueuedPrompt,
@@ -293,15 +293,15 @@ export function ChatPanel({
   }, [conversation?.entries])
 
   const chatEmptyStateText = useMemo(() => {
-    if (activeWorkspaceId == null) return "Select a workspace to start."
+    if (activeWorkspaceId == null) return "Select a workdir to start."
     if (activeThreadId == null) {
       if (threads.length === 0) return "Loading…"
-      return "Select a thread to load conversation."
+      return "Select a task to load conversation."
     }
     if (
       conversation == null ||
-      conversation.workspace_id !== activeWorkspaceId ||
-      conversation.thread_id !== activeThreadId
+      conversation.workdir_id !== activeWorkspaceId ||
+      conversation.task_id !== activeThreadId
     ) {
       return "Loading conversation…"
     }

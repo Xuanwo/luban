@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/changes`
+- Path: `/api/workdirs/{workdir_id}/changes`
 
 ## Purpose
 
@@ -19,4 +19,4 @@ Return workspace VCS summary (status/changed files) for UI panels.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchWorkspaceChanges(workspaceId)`
+- `web/lib/luban-http.ts` `fetchWorkspaceChanges(workdirId)`

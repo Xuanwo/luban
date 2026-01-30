@@ -6,7 +6,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 ## Surface
 
 - Method: `GET`
-- Path: `/api/workspaces/{workspace_id}/conversations/{thread_id}`
+- Path: `/api/workdirs/{workdir_id}/conversations/{task_id}`
 
 ## Purpose
 
@@ -14,8 +14,8 @@ Paginated read for a single conversation thread.
 
 ## Parameters
 
-- `workspace_id`: integer path parameter
-- `thread_id`: integer path parameter
+- `workdir_id`: integer path parameter
+- `task_id`: integer path parameter
 
 ## Query
 
@@ -43,4 +43,4 @@ The response includes the effective per-thread run configuration used by the nex
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchConversation(workspaceId, threadId, { before?, limit? })`
+- `web/lib/luban-http.ts` `fetchConversation(workdirId, taskId, { before?, limit? })`
