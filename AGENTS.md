@@ -111,7 +111,7 @@ Luban ships prompt templates as a user-facing feature for tasks across *any* rep
 - `crates/luban_domain/`: pure state + reducers (`AppState`, `Action`, `Effect`), deterministic logic, most regressions should be captured here.
 - `crates/luban_server/`: local server, WebSocket event stream, PTY endpoint, static file serving for `web/`.
 - `crates/luban_tauri/`: desktop wrapper for the web UI.
-- `web/`: browser UI (and Playwright E2E tests).
+- `web/`: browser UI (and agent-browser UI smoke tests under `web/tests/ui`).
 - `tools/`: helper tooling.
 - `docs/`: design notes and decisions. Add/update docs for non-trivial UX or architecture changes.
 - `.context/` (gitignored): local scratchpad for collaboration between agents.
@@ -147,11 +147,12 @@ Requirements:
 - Unit tests (required): cover domain rules, parsing, state transitions, sorting/filtering, and error branches
 - Property tests (recommended): use proptest/quickcheck for key invariants
 - Integration tests (as needed): validate adapters with real dependencies (controlled by features/env vars)
-- UI/E2E (small amount): cover key user paths with Playwright (`just test-ui`)
+- UI smoke (required for user-visible changes): cover key user paths with agent-browser (`just test-ui`)
 
 ### 5.2 Hard requirements for agents
 - Every functional change must add or update at least one test (unless it is pure refactoring; refactors still must not reduce coverage)
 - For regression bugs: add a failing test case first, then fix (tests-first for bugfix)
+- Any new or changed user-visible feature must add or update at least one UI test under `web/tests/ui` and keep `just test-ui` green
 
 ### 5.3 Suggested just recipes (if the repo does not provide them, you may add them)
 When writing or using commands, choose by intent (names may differ; follow the repo):
@@ -164,7 +165,7 @@ When writing or using commands, choose by intent (names may differ; follow the r
 
 > If a `justfile` already provides similar commands with different names, do not force new naming. Align this document to the existing naming instead.
 
-## 5.4 Playwright tips (for stable tests)
+## 5.4 agent-browser tips (for stable tests)
 - Prefer stable `data-testid` selectors and avoid text-based selectors for dynamic content.
 - Keep tests focused on smoke coverage for core user flows to reduce flakiness.
 

@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test:ui": "node tests/agent-browser/smoke.mjs",
+    "test:ui": "node tests/ui/run.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
