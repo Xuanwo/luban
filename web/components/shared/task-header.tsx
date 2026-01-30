@@ -56,7 +56,7 @@ export function TaskHeader({
       className="flex items-center justify-between h-[39px] flex-shrink-0"
       style={{ padding: '0 20px', borderBottom: '1px solid #ebebeb' }}
     >
-      {/* Left: Breadcrumb + Title + Badge */}
+      {/* Left: Breadcrumb + Title + Badge + Star + Settings */}
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         {/* Project breadcrumb (optional) */}
         {project && (
@@ -88,28 +88,30 @@ export function TaskHeader({
             {workdir}
           </span>
         )}
-      </div>
 
-      {/* Right: Actions */}
-      <div className="flex items-center gap-0.5 flex-shrink-0">
-        {customActions}
+        {/* Star and Settings buttons - next to title */}
         {showFullActions && (
-          <>
-            <OpenButton />
+          <div className="flex items-center gap-0.5 ml-1 flex-shrink-0">
             <button
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
               style={{ color: '#9b9b9b' }}
             >
               <Star className="w-4 h-4" />
             </button>
-          </>
+            <button
+              className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
+              style={{ color: '#6b6b6b' }}
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+          </div>
         )}
-        <button
-          className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-          style={{ color: '#6b6b6b' }}
-        >
-          <MoreHorizontal className="w-4 h-4" />
-        </button>
+      </div>
+
+      {/* Right: Open button */}
+      <div className="flex items-center gap-0.5 flex-shrink-0">
+        {customActions}
+        {showFullActions && <OpenButton />}
       </div>
     </div>
   )
