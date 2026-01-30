@@ -4,89 +4,105 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Updated to dark theme with cyan/teal accent for IDE aesthetic */
+/* Linear-style theme - precise color matching */
 :root {
-  /* Base16 palette (canonical theme input). */
-  --base00: #ffffff;
-  --base01: #f3f4f6;
-  --base02: #e5e7eb;
-  --base03: #6b7280;
-  --base04: #4b5563;
-  --base05: #333333;
-  --base06: #111827;
-  --base07: #000000;
-  --base08: #ef4444;
-  --base09: #f59e0b;
-  --base0a: #fbbf24;
-  --base0b: #22c55e;
-  --base0c: #06b6d4;
-  --base0d: #3b82f6;
-  --base0e: #8b5cf6;
-  --base0f: #1e3a8a;
+  /* Linear color palette */
+  --linear-bg: #f5f5f5;
+  --linear-surface: #fcfcfc;
+  --linear-text: #1b1b1b;
+  --linear-text-secondary: #6b6b6b;
+  --linear-text-tertiary: #9b9b9b;
+  --linear-border: #e5e5e5;
+  --linear-border-light: #ebebeb;
+  --linear-hover: #eeeeee;
+  --linear-active: #e8e8e8;
+  --linear-primary: #5e6ad2;
 
-  /* Semantic tokens (derived from base16 + a few project-specific extensions). */
-  --background: var(--base00);
-  --foreground: var(--base05);
-  --card: var(--base00);
-  --card-foreground: var(--base05);
-  --popover: var(--base00);
-  --popover-foreground: var(--base05);
-  --primary: var(--base0d);
-  --primary-foreground: var(--base00);
-  --secondary: var(--base00);
-  --secondary-foreground: var(--base04);
-  --floating-card-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.12);
-  --muted: color-mix(in srgb, var(--base01) 25%, var(--base00));
-  --muted-foreground: var(--base03);
-  --accent: color-mix(in srgb, var(--base0c) 12%, var(--base00));
-  --accent-foreground: var(--base0f);
-  --destructive: var(--base08);
-  --destructive-foreground: var(--base00);
-  --warning: var(--base09);
-  --border: var(--base02);
-  --border-subtle: color-mix(in srgb, var(--base02) 35%, var(--base00));
-  --input: var(--base02);
-  --ring: var(--base0d);
-  --chart-1: var(--base0d);
-  --chart-2: var(--base0c);
-  --chart-3: var(--base0b);
-  --chart-4: var(--base09);
-  --chart-5: var(--base0e);
-  --radius: 0.375rem;
-  --sidebar: color-mix(in srgb, var(--base01) 25%, var(--base00));
-  --sidebar-foreground: var(--base05);
-  --sidebar-primary: var(--base0d);
-  --sidebar-primary-foreground: var(--base00);
-  --sidebar-accent: color-mix(in srgb, var(--base0c) 12%, var(--sidebar));
-  --sidebar-accent-foreground: var(--base0f);
-  --sidebar-border: var(--base02);
-  --sidebar-ring: var(--base0d);
+  /* Base palette mapped to Linear */
+  --base00: var(--linear-surface);
+  --base01: var(--linear-bg);
+  --base02: var(--linear-border);
+  --base03: var(--linear-text-tertiary);
+  --base04: var(--linear-text-secondary);
+  --base05: var(--linear-text);
+  --base06: #0f0f0f;
+  --base07: #000000;
+  --base08: #eb5757;
+  --base09: #f2994a;
+  --base0a: #f2c94c;
+  --base0b: #27ae60;
+  --base0c: #2d9cdb;
+  --base0d: var(--linear-primary);
+  --base0e: #9b51e0;
+  --base0f: #4338ca;
+
+  /* Semantic tokens */
+  --background: var(--linear-surface);
+  --foreground: var(--linear-text);
+  --card: var(--linear-surface);
+  --card-foreground: var(--linear-text);
+  --popover: var(--linear-surface);
+  --popover-foreground: var(--linear-text);
+  --primary: var(--linear-primary);
+  --primary-foreground: #ffffff;
+  --secondary: var(--linear-bg);
+  --secondary-foreground: var(--linear-text-secondary);
+  --floating-card-shadow: rgba(0, 0, 0, 0.022) 0px 3px 6px -2px, rgba(0, 0, 0, 0.044) 0px 1px 1px 0px;
+  --muted: var(--linear-bg);
+  --muted-foreground: var(--linear-text-secondary);
+  --accent: var(--linear-hover);
+  --accent-foreground: var(--linear-text);
+  --destructive: #eb5757;
+  --destructive-foreground: #ffffff;
+  --warning: #f2994a;
+  --border: var(--linear-border);
+  --border-subtle: var(--linear-border-light);
+  --input: var(--linear-border);
+  --ring: var(--linear-primary);
+  --chart-1: var(--linear-primary);
+  --chart-2: #2d9cdb;
+  --chart-3: #27ae60;
+  --chart-4: #f2994a;
+  --chart-5: #9b51e0;
+  --radius: 4px;
+
+  /* Sidebar - Linear uses same light theme */
+  --sidebar: var(--linear-bg);
+  --sidebar-foreground: var(--linear-text);
+  --sidebar-primary: var(--linear-primary);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--linear-hover);
+  --sidebar-accent-foreground: var(--linear-text);
+  --sidebar-border: var(--linear-border);
+  --sidebar-ring: var(--linear-primary);
+  --sidebar-muted: var(--linear-text-tertiary);
+
   --shadow-x: 0px;
   --shadow-y: 1px;
   --shadow-blur: 2px;
   --shadow-spread: 0px;
   --shadow-opacity: 0.05;
-  --shadow-color: var(--base07);
+  --shadow-color: #000000;
 
-  /* Add semantic status colors */
-  --status-idle: var(--base03);
-  --status-running: var(--base0d);
-  --status-success: var(--base0b);
-  --status-warning: var(--base09);
-  --status-error: var(--base08);
-  --status-info: var(--base0e);
+  /* Semantic status colors */
+  --status-idle: var(--linear-text-tertiary);
+  --status-running: var(--linear-primary);
+  --status-success: #27ae60;
+  --status-warning: #f2994a;
+  --status-error: #eb5757;
+  --status-info: #9b51e0;
 
   /* Floating Glass selection tokens */
-  --glass-surface: var(--base00);
-  --glass-surface-muted: var(--base01);
-  --glass-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.1);
-  --nav-float-ring: 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
-  --nav-float-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --glass-surface: var(--linear-surface);
+  --glass-surface-muted: var(--linear-bg);
+  --glass-shadow: rgba(0, 0, 0, 0.022) 0px 3px 6px -2px, rgba(0, 0, 0, 0.044) 0px 1px 1px 0px;
+  --nav-float-ring: none;
+  --nav-float-shadow: rgba(0, 0, 0, 0.022) 0px 3px 6px -2px, rgba(0, 0, 0, 0.044) 0px 1px 1px 0px;
 
-  --luban-font-ui: "Inter";
-  --luban-font-chat: "Inter";
-  --luban-font-code: "Geist Mono";
-  --luban-font-terminal: "Geist Mono";
+  --luban-font-ui: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --luban-font-chat: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --luban-font-code: "Geist Mono", ui-monospace, monospace;
+  --luban-font-terminal: "Geist Mono", ui-monospace, monospace;
 
   --terminal-font-size: 12;
   --terminal-line-height: 1.25;
@@ -104,16 +120,16 @@
   --terminal-ansi-yellow: var(--status-warning);
   --terminal-ansi-blue: var(--primary);
   --terminal-ansi-magenta: var(--status-info);
-  --terminal-ansi-cyan: var(--base0c);
+  --terminal-ansi-cyan: #2d9cdb;
   --terminal-ansi-white: var(--base02);
 
   --terminal-ansi-bright-black: var(--base03);
-  --terminal-ansi-bright-red: color-mix(in srgb, var(--base08) 60%, var(--terminal-bright-mix));
-  --terminal-ansi-bright-green: color-mix(in srgb, var(--base0b) 60%, var(--terminal-bright-mix));
-  --terminal-ansi-bright-yellow: color-mix(in srgb, var(--base0a) 60%, var(--terminal-bright-mix));
-  --terminal-ansi-bright-blue: color-mix(in srgb, var(--base0d) 60%, var(--terminal-bright-mix));
-  --terminal-ansi-bright-magenta: color-mix(in srgb, var(--base0e) 60%, var(--terminal-bright-mix));
-  --terminal-ansi-bright-cyan: color-mix(in srgb, var(--base0c) 60%, var(--terminal-bright-mix));
+  --terminal-ansi-bright-red: #ff6b6b;
+  --terminal-ansi-bright-green: #51cf66;
+  --terminal-ansi-bright-yellow: #ffd43b;
+  --terminal-ansi-bright-blue: #748ffc;
+  --terminal-ansi-bright-magenta: #da77f2;
+  --terminal-ansi-bright-cyan: #66d9e8;
   --terminal-ansi-bright-white: var(--base00);
 }
 

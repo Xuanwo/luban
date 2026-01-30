@@ -36,12 +36,10 @@ import { openSettingsPanel } from "@/lib/open-settings"
 import { focusChatInput } from "@/lib/focus-chat-input"
 import { useAgentCancelHotkey } from "@/lib/use-agent-cancel-hotkey"
 import { useThreadTabs, type ArchivedTab } from "@/lib/use-thread-tabs"
-import { ThreadTabsBar } from "@/components/thread-tabs-bar"
 import { DiffTabPanel, type DiffFileData, type DiffStyle } from "@/components/diff-tab-panel"
 import { QueuedPromptRow } from "@/components/queued-prompts"
 import { EscCancelHint } from "@/components/esc-cancel-hint"
 import { ChatComposer } from "@/components/chat-composer"
-import { WorkspaceChatHeader } from "@/components/workspace-chat-header"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
 
 type ComposerAttachment = EditorComposerAttachment
@@ -1122,31 +1120,6 @@ export function ChatPanel({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col min-w-0 bg-background">
-      <WorkspaceChatHeader
-        projectName={projectInfo.name}
-        branchName={projectInfo.branch}
-        isGit={projectInfo.isGit}
-        isMainBranch={projectInfo.isMainBranch}
-        isBranchRenaming={isBranchRenaming}
-        onRenameBranch={handleRenameBranch}
-        onAiRenameBranch={handleAiRenameBranch}
-        onEditingBranchChange={setIsEditingBranchName}
-      />
-
-      <ThreadTabsBar
-        tabs={tabs}
-        archivedTabs={archivedTabs}
-        activeTabId={activeTabId}
-        activePanel={activePanel}
-        isDiffTabOpen={isDiffTabOpen}
-        onTabClick={handleTabClick}
-        onCloseTab={handleCloseTab}
-        onAddTab={handleAddTab}
-        onDiffTabClick={handleDiffTabClick}
-        onCloseDiffTab={handleCloseDiffTab}
-        onRestoreTab={handleRestoreTab}
-      />
-
       {activePanel === "diff" ? (
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           <DiffTabPanel
