@@ -10,6 +10,7 @@ import {
   Layers,
   Star,
   Settings,
+  SquarePen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
@@ -206,7 +207,7 @@ export function LubanSidebar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1.5">
           <button
             className="p-1.5 rounded hover:bg-[#eeeeee] transition-colors"
             style={{ color: '#6b6b6b' }}
@@ -216,12 +217,12 @@ export function LubanSidebar({
           </button>
           <button
             onClick={() => onNewTask?.()}
-            className="p-1.5 rounded hover:bg-[#eeeeee] transition-colors"
-            style={{ color: '#6b6b6b' }}
+            className="p-1.5 rounded-md transition-colors hover:bg-[#e8e8e8]"
+            style={{ backgroundColor: '#ffffff', color: '#1b1b1b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
             title="New task"
             data-testid="new-task-button"
           >
-            <Plus className="w-4 h-4" />
+            <SquarePen className="w-4 h-4" />
           </button>
         </div>
       </div>
