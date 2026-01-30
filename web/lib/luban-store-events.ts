@@ -70,7 +70,6 @@ export function createLubanServerEventHandler(args: {
         return
       }
       case "project_path_picked":
-      case "task_preview_ready":
       case "task_executed":
         return
     }

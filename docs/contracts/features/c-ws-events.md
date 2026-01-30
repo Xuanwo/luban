@@ -89,7 +89,6 @@ update this section.
 - `PickProjectPath`
 - `AddProject`
 - `AddProjectAndOpen`
-- `TaskPreview`
 - `TaskExecute`
 - `TaskStarSet`
 - `FeedbackSubmit`
@@ -159,7 +158,6 @@ All `ServerEvent` variants are part of this contract surface:
 - `Toast`
 - `ProjectPathPicked`
 - `AddProjectAndOpenReady`
-- `TaskPreviewReady`
 - `TaskExecuted`
 - `FeedbackSubmitted`
 - `CodexCheckReady`
@@ -185,7 +183,6 @@ The web UI treats some `ServerEvent` variants as request/response completions ke
 
 - `ProjectPathPicked`
 - `AddProjectAndOpenReady`
-- `TaskPreviewReady`
 - `TaskExecuted`
 - `FeedbackSubmitted`
 - `CodexCheckReady`

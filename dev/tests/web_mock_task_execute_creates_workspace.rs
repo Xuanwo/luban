@@ -16,15 +16,6 @@ fn slice_between<'a>(haystack: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn mock_task_preview_uses_local_path_project_spec() {
-    let content = read_repo_file("web/lib/mock/mock-runtime.ts");
-    assert!(
-        content.contains("project: { type: \"local_path\""),
-        "task_preview should produce a local_path project spec in mock mode"
-    );
-}
-
-#[test]
 fn mock_task_execute_requires_workdir_id_and_creates_task() {
     let content = read_repo_file("web/lib/mock/mock-runtime.ts");
     let block = slice_between(

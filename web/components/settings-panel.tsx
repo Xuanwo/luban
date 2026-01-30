@@ -140,8 +140,8 @@ const templateVariables: TemplateVariable[] = [
   { id: "pr", label: "pr", description: "Pull request details (title/diff/comments)" },
   { id: "task_input", label: "task_input", description: "Raw task input from the user" },
   { id: "intent_label", label: "intent_label", description: "Intent label derived from task analysis" },
-  { id: "known_context", label: "known_context", description: "Known context retrieved during task preview" },
-  { id: "context_json", label: "context_json", description: "Structured JSON context from task preview" },
+  { id: "known_context", label: "known_context", description: "Known context collected for the task" },
+  { id: "context_json", label: "context_json", description: "Structured JSON context collected for the task" },
 ]
 
 const variablesByTaskType: Record<string, string[]> = {

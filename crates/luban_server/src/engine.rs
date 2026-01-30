@@ -318,9 +318,9 @@ impl Engine {
         self.process_action_queue(Action::AppStarted).await;
     }
 
-    async fn execute_task_draft(
+    async fn execute_task_prompt(
         &mut self,
-        draft: luban_api::TaskDraft,
+        prompt: String,
         mode: luban_api::TaskExecuteMode,
         workdir_id: Option<luban_api::WorkspaceId>,
     ) -> Result<luban_api::TaskExecuteResult, String> {
@@ -373,7 +373,7 @@ impl Engine {
             self.process_action_queue(Action::SendAgentMessage {
                 workspace_id,
                 thread_id,
-                text: draft.prompt.clone(),
+                text: prompt.clone(),
                 attachments: Vec::new(),
                 runner: None,
                 amp_mode: None,
@@ -386,7 +386,7 @@ impl Engine {
             workspace_id: luban_api::WorkspaceId(workspace_id.as_u64()),
             thread_id: luban_api::WorkspaceThreadId(thread_id.as_u64()),
             worktree_path,
-            prompt: draft.prompt,
+            prompt,
             mode,
         })
     }
@@ -662,55 +662,17 @@ impl Engine {
                     return;
                 }
 
-                if let luban_api::ClientAction::TaskPreview { input } = &action {
-                    let services = self.services.clone();
-                    let events = self.events.clone();
-                    let request_id = request_id.clone();
-                    let rev = self.rev;
-                    let input = input.clone();
-                    tokio::spawn(async move {
-                        let result =
-                            tokio::task::spawn_blocking(move || services.task_preview(input))
-                                .await
-                                .ok()
-                                .unwrap_or_else(|| {
-                                    Err("failed to join task preview task".to_owned())
-                                });
-
-                        match result {
-                            Ok(draft) => {
-                                let _ = events.send(WsServerMessage::Event {
-                                    rev,
-                                    event: Box::new(luban_api::ServerEvent::TaskPreviewReady {
-                                        request_id,
-                                        draft: Box::new(map_task_draft(&draft)),
-                                    }),
-                                });
-                            }
-                            Err(message) => {
-                                let _ = events.send(WsServerMessage::Error {
-                                    request_id: Some(request_id),
-                                    message,
-                                });
-                            }
-                        }
-                    });
-
-                    let _ = reply.send(Ok(self.rev));
-                    return;
-                }
-
                 if let luban_api::ClientAction::TaskExecute {
-                    draft,
+                    prompt,
                     mode,
                     workdir_id,
                 } = &action
                 {
-                    let draft = draft.as_ref().clone();
+                    let prompt = prompt.clone();
                     let mode = *mode;
                     let workdir_id = *workdir_id;
 
-                    match self.execute_task_draft(draft, mode, workdir_id).await {
+                    match self.execute_task_prompt(prompt, mode, workdir_id).await {
                         Ok(result) => {
                             let _ = self.events.send(WsServerMessage::Event {
                                 rev: self.rev,
@@ -777,12 +739,12 @@ impl Engine {
                             };
                             let services = self.services.clone();
                             let issue = issue.clone();
-                            let draft = match tokio::task::spawn_blocking(move || {
-                                services.feedback_task_draft(issue, intent_kind)
+                            let prompt = match tokio::task::spawn_blocking(move || {
+                                services.feedback_task_prompt(issue, intent_kind)
                             })
                             .await
                             {
-                                Ok(Ok(draft)) => draft,
+                                Ok(Ok(prompt)) => prompt,
                                 Ok(Err(message)) => {
                                     let _ = reply.send(Err(message));
                                     return;
@@ -790,13 +752,12 @@ impl Engine {
                                 Err(_) => {
                                     let _ =
                                         reply
-                                            .send(Err("failed to join feedback task draft task"
+                                            .send(Err("failed to join feedback task prompt task"
                                                 .to_owned()));
                                     return;
                                 }
                             };
 
-                            let api_draft = map_task_draft(&draft);
                             let workdir_id = self
                                 .state
                                 .last_open_workspace_id
@@ -810,8 +771,8 @@ impl Engine {
                                 })
                                 .map(|id| luban_api::WorkspaceId(id.as_u64()));
                             let result = match self
-                                .execute_task_draft(
-                                    api_draft,
+                                .execute_task_prompt(
+                                    prompt,
                                     luban_api::TaskExecuteMode::Create,
                                     workdir_id,
                                 )
@@ -2272,17 +2233,7 @@ impl Engine {
                 let tx = self.tx.clone();
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        let draft = luban_domain::TaskDraft {
-                            input,
-                            project: luban_domain::TaskProjectSpec::Unspecified,
-                            intent_kind: luban_domain::TaskIntentKind::Other,
-                            summary: String::new(),
-                            prompt: String::new(),
-                            repo: None,
-                            issue: None,
-                            pull_request: None,
-                        };
-                        let suggested = services.task_suggest_branch_name(draft)?;
+                        let suggested = services.task_suggest_branch_name(input)?;
                         services.rename_workspace_branch(worktree_path, suggested)
                     })
                     .await
@@ -3691,53 +3642,6 @@ fn map_system_task_kind(kind: luban_domain::SystemTaskKind) -> luban_api::System
     }
 }
 
-fn map_task_project_spec(spec: &luban_domain::TaskProjectSpec) -> luban_api::TaskProjectSpec {
-    match spec {
-        luban_domain::TaskProjectSpec::Unspecified => luban_api::TaskProjectSpec::Unspecified,
-        luban_domain::TaskProjectSpec::LocalPath { path } => {
-            luban_api::TaskProjectSpec::LocalPath {
-                path: path.to_string_lossy().to_string(),
-            }
-        }
-        luban_domain::TaskProjectSpec::GitHubRepo { full_name } => {
-            luban_api::TaskProjectSpec::GitHubRepo {
-                full_name: full_name.clone(),
-            }
-        }
-    }
-}
-
-fn map_task_draft(draft: &luban_domain::TaskDraft) -> luban_api::TaskDraft {
-    luban_api::TaskDraft {
-        input: draft.input.clone(),
-        project: map_task_project_spec(&draft.project),
-        intent_kind: map_task_intent_kind(draft.intent_kind),
-        summary: draft.summary.clone(),
-        prompt: draft.prompt.clone(),
-        repo: draft.repo.as_ref().map(|r| luban_api::TaskRepoInfo {
-            full_name: r.full_name.clone(),
-            url: r.url.clone(),
-            default_branch: r.default_branch.clone(),
-        }),
-        issue: draft.issue.as_ref().map(|i| luban_api::TaskIssueInfo {
-            number: i.number,
-            title: i.title.clone(),
-            url: i.url.clone(),
-        }),
-        pull_request: draft
-            .pull_request
-            .as_ref()
-            .map(|pr| luban_api::TaskPullRequestInfo {
-                number: pr.number,
-                title: pr.title.clone(),
-                url: pr.url.clone(),
-                head_ref: pr.head_ref.clone(),
-                base_ref: pr.base_ref.clone(),
-                mergeable: pr.mergeable.clone(),
-            }),
-    }
-}
-
 fn pick_project_folder() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
@@ -4211,7 +4115,6 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
             is_git: true,
         }),
         luban_api::ClientAction::AddProjectAndOpen { .. } => None,
-        luban_api::ClientAction::TaskPreview { .. } => None,
         luban_api::ClientAction::TaskExecute { .. } => None,
         luban_api::ClientAction::TaskStarSet {
             workspace_id,
@@ -4752,17 +4655,6 @@ mod tests {
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
-
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
-            Err("unimplemented".to_owned())
-        }
     }
 
     struct IdentityServices;
@@ -4955,17 +4847,6 @@ mod tests {
             &self,
             _worktree_path: PathBuf,
         ) -> Result<(), String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
             Err("unimplemented".to_owned())
         }
 
@@ -5677,17 +5558,6 @@ mod tests {
             Err("unimplemented".to_owned())
         }
 
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
-            Err("unimplemented".to_owned())
-        }
-
         fn project_identity(
             &self,
             _path: PathBuf,
@@ -6053,17 +5923,6 @@ mod tests {
             Err("unimplemented".to_owned())
         }
 
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
-            Err("unimplemented".to_owned())
-        }
-
         fn project_identity(
             &self,
             _path: PathBuf,
@@ -6366,17 +6225,6 @@ mod tests {
             Err("unimplemented".to_owned())
         }
 
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
-            Err("unimplemented".to_owned())
-        }
-
         fn project_identity(
             &self,
             _path: PathBuf,
@@ -6556,17 +6404,6 @@ mod tests {
             _cancel: Arc<AtomicBool>,
             _on_event: Arc<dyn Fn(luban_domain::AgentThreadEvent) + Send + Sync>,
         ) -> Result<(), String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_preview(&self, _input: String) -> Result<luban_domain::TaskDraft, String> {
-            Err("unimplemented".to_owned())
-        }
-
-        fn task_prepare_project(
-            &self,
-            _spec: luban_domain::TaskProjectSpec,
-        ) -> Result<PathBuf, String> {
             Err("unimplemented".to_owned())
         }
 

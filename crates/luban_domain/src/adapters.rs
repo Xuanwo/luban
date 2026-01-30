@@ -157,46 +157,10 @@ mod tests {
 }
 
 #[derive(Clone, Debug)]
-pub struct TaskRepoInfo {
-    pub full_name: String,
-    pub url: String,
-    pub default_branch: Option<String>,
-}
-
-#[derive(Clone, Debug)]
 pub struct TaskIssueInfo {
     pub number: u64,
     pub title: String,
     pub url: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct TaskPullRequestInfo {
-    pub number: u64,
-    pub title: String,
-    pub url: String,
-    pub head_ref: Option<String>,
-    pub base_ref: Option<String>,
-    pub mergeable: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub enum TaskProjectSpec {
-    Unspecified,
-    LocalPath { path: PathBuf },
-    GitHubRepo { full_name: String },
-}
-
-#[derive(Clone, Debug)]
-pub struct TaskDraft {
-    pub input: String,
-    pub project: TaskProjectSpec,
-    pub intent_kind: TaskIntentKind,
-    pub summary: String,
-    pub prompt: String,
-    pub repo: Option<TaskRepoInfo>,
-    pub issue: Option<TaskIssueInfo>,
-    pub pull_request: Option<TaskPullRequestInfo>,
 }
 
 #[derive(Clone, Debug)]
@@ -423,10 +387,6 @@ pub trait ProjectWorkspaceService: Send + Sync {
 
     fn gh_open_pull_request_failed_action(&self, worktree_path: PathBuf) -> Result<(), String>;
 
-    fn task_preview(&self, input: String) -> Result<TaskDraft, String>;
-
-    fn task_prepare_project(&self, spec: TaskProjectSpec) -> Result<PathBuf, String>;
-
     fn feedback_create_issue(
         &self,
         _title: String,
@@ -436,11 +396,11 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Err("unimplemented".to_owned())
     }
 
-    fn feedback_task_draft(
+    fn feedback_task_prompt(
         &self,
         _issue: TaskIssueInfo,
         _intent_kind: TaskIntentKind,
-    ) -> Result<TaskDraft, String> {
+    ) -> Result<String, String> {
         Err("unimplemented".to_owned())
     }
 
@@ -476,7 +436,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
-    fn task_suggest_branch_name(&self, _draft: TaskDraft) -> Result<String, String> {
+    fn task_suggest_branch_name(&self, _input: String) -> Result<String, String> {
         Err("unimplemented".to_owned())
     }
 

@@ -17,7 +17,6 @@ import type {
   MentionItemSnapshot,
   ProjectId,
   ServerEvent,
-  TaskDraft,
   TaskExecuteMode,
   TaskExecuteResult,
   TasksSnapshot,
@@ -554,22 +553,6 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
   args.onEvent({ type: "toast", message: `Mock: action not implemented: ${a.type}` })
 }
 
-function inferDraft(input: string): TaskDraft {
-  const trimmed = input.trim()
-  const kind: TaskDraft["intent_kind"] =
-    trimmed.toLowerCase().includes("fix") ? "fix" : trimmed.toLowerCase().includes("review") ? "review" : "other"
-  return {
-    input,
-    intent_kind: kind,
-    summary: inferTitleFromPrompt(trimmed),
-    prompt: trimmed,
-    repo: null,
-    issue: null,
-    pull_request: null,
-    project: { type: "local_path", path: "/mock/unknown" },
-  }
-}
-
 function inferTitleFromPrompt(prompt: string): string {
   const trimmed = prompt.trim()
   if (!trimmed) return "New task"
@@ -638,30 +621,22 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
     return { projectId, workdirId } as unknown as T
   }
 
-  if (action.type === "task_preview") {
-    return inferDraft(action.input) as unknown as T
-  }
-
   if (action.type === "task_execute") {
     if (action.workdir_id == null) throw new Error("mock: task_execute requires workdir_id")
     const workdirId = action.workdir_id
-    const title = inferTitleFromPrompt(action.draft.prompt)
+    const title = inferTitleFromPrompt(action.prompt)
     const taskId = createTaskInWorkdir(state, workdirId, title)
     setActiveWorkdirTask(state, { workdirId, taskId })
 
-    const projectId =
-      action.draft.project.type === "local_path" ? resolveProjectIdForLocalPath(state, action.draft.project.path) : null
     const workdir = findWorkdir(state.app, workdirId)?.workdir ?? null
-    const workdirPath =
-      workdir?.workdir_path ??
-      (action.draft.project.type === "local_path" ? action.draft.project.path : "/mock")
+    const workdirPath = workdir?.workdir_path ?? "/mock"
 
     const result: TaskExecuteResult = {
-      project_id: projectId ?? "mock_project_unknown",
+      project_id: "mock_project_unknown",
       workdir_id: workdirId,
       task_id: taskId,
       workdir_path: workdirPath,
-      prompt: action.draft.prompt,
+      prompt: action.prompt,
       mode: action.mode as TaskExecuteMode,
     }
 

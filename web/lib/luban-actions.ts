@@ -17,7 +17,6 @@ import type {
   ProjectId,
   SystemTaskKind,
   TaskIntentKind,
-  TaskDraft,
   TaskExecuteMode,
   TaskExecuteResult,
   ThinkingEffort,
@@ -67,8 +66,7 @@ export type LubanActions = {
   readClaudeConfigFile: (path: string) => Promise<string>
   writeClaudeConfigFile: (path: string, contents: string) => Promise<void>
 
-  previewTask: (input: string) => Promise<TaskDraft>
-  executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
+  executeTask: (prompt: string, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
   setTaskStarred: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) => void
   submitFeedback: (args: {
     title: string
@@ -349,12 +347,8 @@ export function createLubanActions(args: {
     await args.request<null>({ type: "claude_config_write_file", path, contents })
   }
 
-  function previewTask(input: string): Promise<TaskDraft> {
-    return args.request<TaskDraft>({ type: "task_preview", input })
-  }
-
-  function executeTask(draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId): Promise<TaskExecuteResult> {
-    return args.request<TaskExecuteResult>({ type: "task_execute", draft, mode, workdir_id: workdirId })
+  function executeTask(prompt: string, mode: TaskExecuteMode, workdirId: WorkspaceId): Promise<TaskExecuteResult> {
+    return args.request<TaskExecuteResult>({ type: "task_execute", prompt, mode, workdir_id: workdirId })
   }
 
   function setTaskStarred(workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) {
@@ -850,7 +844,6 @@ export function createLubanActions(args: {
     listClaudeConfigDir,
     readClaudeConfigFile,
     writeClaudeConfigFile,
-    previewTask,
     executeTask,
     setTaskStarred,
     submitFeedback,

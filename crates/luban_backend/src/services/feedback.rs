@@ -2,10 +2,7 @@ use super::GitWorkspaceService;
 use super::gh_cli::{ensure_gh_cli, run_gh_json};
 use super::github_url::extract_first_github_url;
 use anyhow::{Context as _, anyhow};
-use luban_domain::{
-    ProjectWorkspaceService, TaskDraft, TaskIntentKind, TaskIssueInfo, TaskProjectSpec,
-    TaskRepoInfo,
-};
+use luban_domain::{ProjectWorkspaceService, TaskIntentKind, TaskIssueInfo};
 use rand::{Rng as _, rngs::OsRng};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -34,11 +31,15 @@ struct GhDefaultBranchRef {
 
 #[derive(Deserialize)]
 struct GhRepoView {
-    #[serde(rename = "nameWithOwner")]
-    name_with_owner: String,
     url: String,
     #[serde(rename = "defaultBranchRef")]
     default_branch_ref: Option<GhDefaultBranchRef>,
+}
+
+#[derive(Clone, Debug)]
+struct RepoInfo {
+    url: String,
+    default_branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -122,16 +123,12 @@ pub(super) fn feedback_create_issue(
     })
 }
 
-pub(super) fn feedback_task_draft(
+pub(super) fn feedback_task_prompt(
     service: &GitWorkspaceService,
     issue: TaskIssueInfo,
     intent_kind: TaskIntentKind,
-) -> anyhow::Result<TaskDraft> {
+) -> anyhow::Result<String> {
     ensure_gh_cli()?;
-
-    let project = TaskProjectSpec::GitHubRepo {
-        full_name: FEEDBACK_REPO.to_owned(),
-    };
 
     let repo = run_gh_json::<GhRepoView>(&[
         "repo",
@@ -141,8 +138,7 @@ pub(super) fn feedback_task_draft(
         "nameWithOwner,url,defaultBranchRef",
     ])
     .ok()
-    .map(|view| TaskRepoInfo {
-        full_name: view.name_with_owner,
+    .map(|view| RepoInfo {
         url: view.url,
         default_branch: view
             .default_branch_ref
@@ -150,16 +146,15 @@ pub(super) fn feedback_task_draft(
             .filter(|s| !s.trim().is_empty()),
     });
 
-    feedback_task_draft_with_repo(service, issue, intent_kind, project, repo)
+    feedback_task_prompt_with_repo(service, issue, intent_kind, repo)
 }
 
-fn feedback_task_draft_with_repo(
+fn feedback_task_prompt_with_repo(
     service: &GitWorkspaceService,
     issue: TaskIssueInfo,
     intent_kind: TaskIntentKind,
-    project: TaskProjectSpec,
-    repo: Option<TaskRepoInfo>,
-) -> anyhow::Result<TaskDraft> {
+    repo: Option<RepoInfo>,
+) -> anyhow::Result<String> {
     let known_context = render_feedback_known_context(&repo, &issue);
 
     let template = service
@@ -170,28 +165,15 @@ fn feedback_task_draft_with_repo(
         .unwrap_or_else(|| luban_domain::default_task_prompt_template(intent_kind));
 
     let input = issue.url.clone();
-    let prompt = super::task::render_task_prompt_template(
+    Ok(super::task::render_task_prompt_template(
         &template,
         &input,
         intent_kind.label(),
         &known_context,
-    );
-
-    let summary = compose_feedback_task_summary(intent_kind, &repo, &issue);
-
-    Ok(TaskDraft {
-        input,
-        project,
-        intent_kind,
-        summary,
-        prompt,
-        repo,
-        issue: Some(issue),
-        pull_request: None,
-    })
+    ))
 }
 
-fn render_feedback_known_context(repo: &Option<TaskRepoInfo>, issue: &TaskIssueInfo) -> String {
+fn render_feedback_known_context(repo: &Option<RepoInfo>, issue: &TaskIssueInfo) -> String {
     let mut out = String::new();
     out.push_str("Known context:\n");
 
@@ -205,26 +187,12 @@ fn render_feedback_known_context(repo: &Option<TaskRepoInfo>, issue: &TaskIssueI
     out
 }
 
-fn compose_feedback_task_summary(
-    intent_kind: TaskIntentKind,
-    repo: &Option<TaskRepoInfo>,
-    issue: &TaskIssueInfo,
-) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!("Intent: {}", intent_kind.label()));
-    if let Some(r) = repo {
-        lines.push(format!("Repo: {}", r.full_name));
-    }
-    lines.push(format!("Issue: #{} {}", issue.number, issue.title));
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn feedback_task_draft_includes_issue_url() {
+    fn feedback_task_prompt_includes_issue_url() {
         let issue = TaskIssueInfo {
             number: 123,
             title: "Example".to_owned(),
@@ -235,18 +203,9 @@ mod tests {
                 persist_ui_state: false,
             })
             .unwrap();
-        let project = TaskProjectSpec::GitHubRepo {
-            full_name: FEEDBACK_REPO.to_owned(),
-        };
-        let draft = feedback_task_draft_with_repo(
-            &service,
-            issue.clone(),
-            TaskIntentKind::Fix,
-            project,
-            None,
-        )
-        .unwrap();
-        assert!(draft.prompt.contains(&issue.url));
-        assert!(draft.summary.contains("#123"));
+        let prompt =
+            feedback_task_prompt_with_repo(&service, issue.clone(), TaskIntentKind::Fix, None)
+                .unwrap();
+        assert!(prompt.contains(&issue.url));
     }
 }

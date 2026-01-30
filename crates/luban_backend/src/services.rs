@@ -1766,14 +1766,6 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         result.map_err(anyhow_error_to_string)
     }
 
-    fn task_preview(&self, input: String) -> Result<luban_domain::TaskDraft, String> {
-        task::task_preview(self, input).map_err(anyhow_error_to_string)
-    }
-
-    fn task_prepare_project(&self, spec: luban_domain::TaskProjectSpec) -> Result<PathBuf, String> {
-        task::task_prepare_project(self, spec).map_err(anyhow_error_to_string)
-    }
-
     fn feedback_create_issue(
         &self,
         title: String,
@@ -1783,12 +1775,12 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         feedback::feedback_create_issue(title, body, labels).map_err(anyhow_error_to_string)
     }
 
-    fn feedback_task_draft(
+    fn feedback_task_prompt(
         &self,
         issue: luban_domain::TaskIssueInfo,
         intent_kind: TaskIntentKind,
-    ) -> Result<luban_domain::TaskDraft, String> {
-        feedback::feedback_task_draft(self, issue, intent_kind).map_err(anyhow_error_to_string)
+    ) -> Result<String, String> {
+        feedback::feedback_task_prompt(self, issue, intent_kind).map_err(anyhow_error_to_string)
     }
 
     fn task_prompt_templates_load(
@@ -1978,8 +1970,8 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         }
     }
 
-    fn task_suggest_branch_name(&self, draft: luban_domain::TaskDraft) -> Result<String, String> {
-        task::task_suggest_branch_name(self, draft).map_err(anyhow_error_to_string)
+    fn task_suggest_branch_name(&self, input: String) -> Result<String, String> {
+        task::task_suggest_branch_name(self, input).map_err(anyhow_error_to_string)
     }
 
     fn task_suggest_thread_title(&self, input: String) -> Result<String, String> {

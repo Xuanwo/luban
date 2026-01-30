@@ -396,13 +396,6 @@ pub enum TaskIntentKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaskRepoInfo {
-    pub full_name: String,
-    pub url: String,
-    pub default_branch: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskIssueInfo {
     pub number: u64,
     pub title: String,
@@ -428,36 +421,6 @@ pub enum FeedbackSubmitAction {
 pub struct FeedbackSubmitResult {
     pub issue: TaskIssueInfo,
     pub task: Option<TaskExecuteResult>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaskPullRequestInfo {
-    pub number: u64,
-    pub title: String,
-    pub url: String,
-    pub head_ref: Option<String>,
-    pub base_ref: Option<String>,
-    pub mergeable: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TaskProjectSpec {
-    Unspecified,
-    LocalPath { path: String },
-    GitHubRepo { full_name: String },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaskDraft {
-    pub input: String,
-    pub project: TaskProjectSpec,
-    pub intent_kind: TaskIntentKind,
-    pub summary: String,
-    pub prompt: String,
-    pub repo: Option<TaskRepoInfo>,
-    pub issue: Option<TaskIssueInfo>,
-    pub pull_request: Option<TaskPullRequestInfo>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -677,11 +640,8 @@ pub enum ClientAction {
     AddProjectAndOpen {
         path: String,
     },
-    TaskPreview {
-        input: String,
-    },
     TaskExecute {
-        draft: Box<TaskDraft>,
+        prompt: String,
         mode: TaskExecuteMode,
         #[serde(default, rename = "workdir_id", alias = "workspace_id")]
         workdir_id: Option<WorkspaceId>,
@@ -1006,10 +966,6 @@ pub enum ServerEvent {
         project_id: ProjectId,
         #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
-    },
-    TaskPreviewReady {
-        request_id: String,
-        draft: Box<TaskDraft>,
     },
     TaskExecuted {
         request_id: String,

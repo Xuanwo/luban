@@ -21,7 +21,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
-import type { AppSnapshot, TaskDraft } from "@/lib/luban-api"
+import type { AppSnapshot } from "@/lib/luban-api"
 
 interface NewTaskModalProps {
   open: boolean
@@ -29,7 +29,7 @@ interface NewTaskModalProps {
 }
 
 export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
-  const { app, previewTask, executeTask, openWorkdir, activateTask, activeWorkdirId, createWorkdir, ensureMainWorkdir } = useLuban()
+  const { app, executeTask, openWorkdir, activateTask, activeWorkdirId, createWorkdir, ensureMainWorkdir } = useLuban()
 
   const [input, setInput] = useState("")
   const [executingMode, setExecutingMode] = useState<TaskExecuteMode | null>(null)
@@ -37,9 +37,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
   const [projectSearch, setProjectSearch] = useState("")
   const [workdirSearch, setWorkdirSearch] = useState("")
-  const [preview, setPreview] = useState<TaskDraft | null>(null)
-  const [previewError, setPreviewError] = useState<string | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const appRef = useRef<AppSnapshot | null>(null)
 
@@ -55,38 +52,31 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
       name: p.name,
       path: p.path,
       slug: p.slug,
+      isGit: p.is_git,
       workdirs: p.workdirs.filter((w) => w.status === "active"),
     }))
   }, [app])
 
+  const defaultProjectId = useMemo(() => {
+    if (activeWorkdirId != null) {
+      const opt = projectOptions.find((p) => p.workdirs.some((w) => w.id === activeWorkdirId)) ?? null
+      if (opt) return opt.id
+    }
+    if (projectOptions.length === 1) return projectOptions[0]?.id ?? ""
+    return ""
+  }, [activeWorkdirId, projectOptions])
+
   useEffect(() => {
     if (!open) return
     if (selectedProjectId) return
-    // Default to "auto" when modal opens
-    setSelectedProjectId("auto")
-  }, [open, selectedProjectId])
-
-  const resolveAutoProject = useMemo(() => {
-    if (!app) return null
-    if (activeWorkdirId != null) {
-      for (const p of app.projects) {
-        if (p.workdirs.some((w) => w.id === activeWorkdirId)) {
-          const opt = projectOptions.find((x) => x.id === p.id) ?? null
-          if (opt) return opt
-        }
-      }
-    }
-    if (projectOptions.length === 1) return projectOptions[0] ?? null
-    return null
-  }, [activeWorkdirId, app, projectOptions])
+    if (!defaultProjectId) return
+    setSelectedProjectId(defaultProjectId)
+  }, [defaultProjectId, open, selectedProjectId])
 
   const selectedProject = useMemo(() => {
-    if (selectedProjectId === "auto") {
-      return resolveAutoProject
-    }
     if (!selectedProjectId) return null
     return projectOptions.find((p) => p.id === selectedProjectId) ?? null
-  }, [projectOptions, resolveAutoProject, selectedProjectId])
+  }, [projectOptions, selectedProjectId])
 
   const workdirOptions = useMemo(() => selectedProject?.workdirs ?? [], [selectedProject?.workdirs])
 
@@ -112,12 +102,22 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     )
   }, [workdirOptions, workdirSearch])
 
-  // Check if selected project is a git project (has workdirs)
-  const isGitProject = selectedProject != null && workdirOptions.length > 0
+  // Check if selected project is a git project
+  const isGitProject = selectedProject != null && selectedProject.isGit
 
   useEffect(() => {
     if (!open) return
-    if (!selectedProjectId || selectedProjectId === "auto") {
+    if (!selectedProjectId) {
+      setSelectedWorkdirId(null)
+      return
+    }
+
+    if (!isGitProject) {
+      setSelectedWorkdirId(null)
+      return
+    }
+
+    if (workdirOptions.length === 0) {
       setSelectedWorkdirId(null)
       return
     }
@@ -126,23 +126,39 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     if (selectedWorkdirId === -1) return // "Create new" is always valid
     if (selectedWorkdirId != null && workdirOptions.some((w) => w.id === selectedWorkdirId)) return
 
-    // Default to "Create new..." (-1) for git projects
-    if (workdirOptions.length > 0) {
-      setSelectedWorkdirId(-1)
-    } else {
-      setSelectedWorkdirId(null)
+    if (activeWorkdirId != null) {
+      const activeOpt = workdirOptions.find((w) => w.id === activeWorkdirId) ?? null
+      if (activeOpt) {
+        setSelectedWorkdirId(activeOpt.id)
+        return
+      }
     }
-  }, [activeWorkdirId, open, selectedProjectId, selectedWorkdirId, workdirOptions])
+
+    const mainOpt =
+      selectedProject == null
+        ? null
+        : (workdirOptions.find(
+            (w) =>
+              w.workdir_name === "main" && normalizePathLike(w.workdir_path) === normalizePathLike(selectedProject.path),
+          ) ?? null)
+    if (mainOpt) {
+      setSelectedWorkdirId(mainOpt.id)
+      return
+    }
+
+    const first = workdirOptions[0] ?? null
+    setSelectedWorkdirId(first ? first.id : null)
+  }, [activeWorkdirId, isGitProject, open, selectedProjectId, selectedProject?.path, selectedWorkdirId, workdirOptions])
 
   // Check if we can execute the task
   const canExecute = useMemo(() => {
     if (!input.trim()) return false
     if (selectedProject == null) return false
-    // Non-git project (no workdirs)
-    if (workdirOptions.length === 0) return true
+    // Non-git project does not require explicit workdir selection.
+    if (!isGitProject) return true
     // Git project - need workdir selected (either existing or -1 for create new)
     return selectedWorkdirId != null
-  }, [input, selectedProjectId, selectedProject, workdirOptions.length, selectedWorkdirId])
+  }, [input, isGitProject, selectedProject, selectedWorkdirId])
 
   // Focus input when modal opens
   useEffect(() => {
@@ -150,43 +166,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const trimmed = input.trim()
-    if (!trimmed) {
-      setPreview(null)
-      setPreviewError(null)
-      setPreviewLoading(false)
-      return
-    }
-
-    let cancelled = false
-    setPreviewLoading(true)
-    setPreviewError(null)
-
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const next = await previewTask(trimmed)
-          if (cancelled) return
-          setPreview(next)
-          setPreviewError(null)
-        } catch (err) {
-          if (cancelled) return
-          setPreview(null)
-          setPreviewError(err instanceof Error ? err.message : String(err))
-        } finally {
-          if (!cancelled) setPreviewLoading(false)
-        }
-      })()
-    }, 250)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [input, open, previewTask])
 
   const waitForWorkdir = async (args: {
     projectId: string
@@ -234,30 +213,12 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setExecutingMode(mode)
     try {
       const trimmed = input.trim()
-      const baseDraft: TaskDraft = preview ?? {
-        input: trimmed,
-        project: { type: "local_path", path: selectedProject.path },
-        intent_kind: "other",
-        summary: trimmed.slice(0, 120),
-        prompt: trimmed,
-        repo: null,
-        issue: null,
-        pull_request: null,
-      }
-
-      const draft: TaskDraft = {
-        ...baseDraft,
-        input: trimmed,
-        project: { type: "local_path", path: selectedProject.path },
-      }
 
       const workdirId = await (async (): Promise<number> => {
-        if (selectedProjectId === "auto") {
-          if (activeWorkdirId != null && app?.projects.some((p) => p.id === selectedProject.id && p.workdirs.some((w) => w.id === activeWorkdirId))) {
-            return activeWorkdirId
-          }
+        if (!isGitProject) {
           const main = selectedProject.workdirs.find(
-            (w) => w.workdir_name === "main" && normalizePathLike(w.workdir_path) === normalizePathLike(selectedProject.path),
+            (w) =>
+              w.workdir_name === "main" && normalizePathLike(w.workdir_path) === normalizePathLike(selectedProject.path),
           )
           if (main) return main.id
           const first = selectedProject.workdirs[0]
@@ -273,7 +234,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
         return ensureMainWorkdirId(selectedProject.id, selectedProject.path)
       })()
 
-      const result = await executeTask(draft, mode, workdirId)
+      const result = await executeTask(trimmed, mode, workdirId)
       if (mode === "create") {
         localStorage.setItem(draftKey(result.workdir_id, result.task_id), JSON.stringify({ text: result.prompt }))
       }
@@ -285,8 +246,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
       toast(mode === "create" ? "Draft created" : "Task started")
 
       setInput("")
-      setPreview(null)
-      setPreviewError(null)
       onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -299,8 +258,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setInput("")
     setSelectedProjectId("")
     setSelectedWorkdirId(null)
-    setPreview(null)
-    setPreviewError(null)
     onOpenChange(false)
   }
 
@@ -348,13 +305,15 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
           {/* Left: Project Selector + Template */}
           <div className="flex items-center gap-1.5">
             {/* Project Selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
-                  style={{
-                    backgroundColor: "#fff",
-                    color: "#2d2d2d",
+	            <DropdownMenu>
+	              <DropdownMenuTrigger asChild>
+	                <button
+	                  data-testid="new-task-project-selector"
+	                  data-selected-project-id={selectedProject?.id ?? ""}
+	                  className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
+	                  style={{
+	                    backgroundColor: "#fff",
+	                    color: "#2d2d2d",
                     border: "1px solid #e0e0e0",
                     borderRadius: "5px",
                     fontWeight: 500,
@@ -362,17 +321,15 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                   disabled={executingMode != null}
                 >
                   {/* Colored dot indicator */}
-                  <span
-                    className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
-                    style={{ backgroundColor: "#26b5ce" }}
-                  />
-                  <span>
-                    {selectedProjectId === "auto"
-                      ? "Auto"
-                      : selectedProject?.name || selectedProject?.slug || "Project"}
-                  </span>
-                </button>
-              </DropdownMenuTrigger>
+	                  <span
+	                    className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
+	                    style={{ backgroundColor: "#26b5ce" }}
+	                  />
+	                  <span>
+	                    {selectedProject?.name || selectedProject?.slug || "Project"}
+	                  </span>
+	                </button>
+	              </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
                 sideOffset={4}
@@ -399,60 +356,31 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                   />
                 </div>
 
-                <div className="p-1 max-h-[300px] overflow-y-auto">
-                  {/* Auto option - only show when not searching */}
-                  {!projectSearch.trim() && (
-                    <>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setSelectedProjectId("auto")
-                          setProjectSearch("")
-                        }}
-                        className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-4 h-4 rounded flex items-center justify-center"
-                            style={{ backgroundColor: "#26b5ce" }}
-                          >
-                            <span className="text-[10px] text-white font-medium">A</span>
-                          </span>
-                          <span className="text-[13px]" style={{ color: "#2d2d2d" }}>Auto</span>
-                        </div>
-                        {selectedProjectId === "auto" && (
-                          <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
-                        )}
-                      </DropdownMenuItem>
-
-                      {/* Divider */}
-                      <div className="my-1 mx-2" style={{ borderTop: "1px solid #eee" }} />
-                    </>
-                  )}
-
-                  {/* Project options */}
-                  {filteredProjects.map((p, idx) => (
-                    <DropdownMenuItem
-                      key={p.id}
+	                <div className="p-1 max-h-[300px] overflow-y-auto">
+	                  {/* Project options */}
+		                  {filteredProjects.map((p, idx) => (
+		                    <DropdownMenuItem
+		                      key={p.id}
                       onClick={() => {
                         setSelectedProjectId(p.id)
                         setProjectSearch("")
                       }}
                       className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
                     >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-4 h-4 rounded flex items-center justify-center text-[10px] text-white font-medium"
-                          style={{ backgroundColor: ["#26b5ce", "#f2994a", "#eb5757", "#5e6ad2", "#27ae60"][idx % 5] }}
-                        >
-                          {(p.name || p.slug || "P").charAt(0).toUpperCase()}
-                        </span>
-                        <span className="text-[13px]" style={{ color: "#2d2d2d" }}>{p.name || p.slug}</span>
-                      </div>
-                      {selectedProjectId === p.id && (
-                        <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
+	                      <div className="flex items-center gap-2">
+	                        <span
+	                          className="w-4 h-4 rounded flex items-center justify-center text-[10px] text-white font-medium"
+	                          style={{ backgroundColor: ["#26b5ce", "#f2994a", "#eb5757", "#5e6ad2", "#27ae60"][idx % 5] }}
+	                        >
+	                          {(p.name || p.slug || "P").charAt(0).toUpperCase()}
+	                        </span>
+	                        <span className="text-[13px]" style={{ color: "#2d2d2d" }}>{p.name || p.slug}</span>
+		                      </div>
+		                      {selectedProjectId === p.id && (
+		                        <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+		                      )}
+		                    </DropdownMenuItem>
+		                  ))}
 
                   {filteredProjects.length === 0 && (
                     <div className="px-2 py-3 text-[13px] text-center" style={{ color: "#888" }}>
@@ -463,20 +391,22 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Separator and Worktree selector - only show for git projects */}
-            {isGitProject && selectedProjectId !== "auto" && (
-              <>
+	            {/* Separator and Worktree selector - only show for git projects */}
+	            {isGitProject && (
+	              <>
                 {/* Separator */}
                 <span className="text-[12px]" style={{ color: "#ccc" }}>›</span>
 
                 {/* Worktree Selector */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
-                      style={{
-                        backgroundColor: "#fff",
-                        color: "#2d2d2d",
+	                <DropdownMenu>
+	                  <DropdownMenuTrigger asChild>
+	                    <button
+	                      data-testid="new-task-workdir-selector"
+	                      data-selected-workdir-id={selectedWorkdirId == null ? "" : String(selectedWorkdirId)}
+	                      className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
+	                      style={{
+	                        backgroundColor: "#fff",
+	                        color: "#2d2d2d",
                         border: "1px solid #e0e0e0",
                         borderRadius: "5px",
                         fontWeight: 500,
@@ -612,15 +542,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
             }}
             disabled={executingMode != null}
           />
-          {previewLoading ? (
-            <div className="mt-2 text-[12px]" style={{ color: "#9b9b9b" }}>
-              Preparing task…
-            </div>
-          ) : previewError ? (
-            <div className="mt-2 text-[12px]" style={{ color: "#eb5757" }}>
-              {previewError}
-            </div>
-          ) : null}
         </div>
 
         {/* Footer */}

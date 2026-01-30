@@ -248,12 +248,6 @@ export type TaskIntentKind =
   | "discuss"
   | "other"
 
-export type TaskRepoInfo = {
-  full_name: string
-  url: string
-  default_branch: string | null
-}
-
 export type TaskIssueInfo = {
   number: number
   title: string
@@ -267,31 +261,6 @@ export type FeedbackSubmitAction = "create_issue" | "fix_it"
 export type FeedbackSubmitResult = {
   issue: TaskIssueInfo
   task: TaskExecuteResult | null
-}
-
-export type TaskPullRequestInfo = {
-  number: number
-  title: string
-  url: string
-  head_ref: string | null
-  base_ref: string | null
-  mergeable: string | null
-}
-
-export type TaskProjectSpec =
-  | { type: "unspecified" }
-  | { type: "local_path"; path: string }
-  | { type: "git_hub_repo"; full_name: string }
-
-export type TaskDraft = {
-  input: string
-  project: TaskProjectSpec
-  intent_kind: TaskIntentKind
-  summary: string
-  prompt: string
-  repo: TaskRepoInfo | null
-  issue: TaskIssueInfo | null
-  pull_request: TaskPullRequestInfo | null
 }
 
 export type TaskExecuteMode = "create" | "start"
@@ -360,8 +329,7 @@ export type ClientAction =
   | { type: "pick_project_path" }
   | { type: "add_project"; path: string }
   | { type: "add_project_and_open"; path: string }
-  | { type: "task_preview"; input: string }
-  | { type: "task_execute"; draft: TaskDraft; mode: TaskExecuteMode; workdir_id: WorkspaceId }
+  | { type: "task_execute"; prompt: string; mode: TaskExecuteMode; workdir_id: WorkspaceId }
   | { type: "task_star_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; starred: boolean }
   | {
       type: "feedback_submit"
@@ -477,7 +445,6 @@ export type ServerEvent =
   | { type: "toast"; message: string }
   | { type: "project_path_picked"; request_id: string; path: string | null }
   | { type: "add_project_and_open_ready"; request_id: string; project_id: ProjectId; workdir_id: WorkspaceId }
-  | { type: "task_preview_ready"; request_id: string; draft: TaskDraft }
   | { type: "task_executed"; request_id: string; result: TaskExecuteResult }
   | { type: "feedback_submitted"; request_id: string; result: FeedbackSubmitResult }
   | { type: "codex_check_ready"; request_id: string; ok: boolean; message: string | null }

@@ -23,7 +23,6 @@ import type {
   ServerEvent,
   SystemTaskKind,
   ThreadMeta,
-  TaskDraft,
   TaskExecuteMode,
   TaskExecuteResult,
   TaskIntentKind,
@@ -71,8 +70,7 @@ type LubanContextValue = {
   archiveWorkdir: (workdirId: number) => void
   toggleProjectExpanded: (projectId: ProjectId) => void
 
-  previewTask: (input: string) => Promise<TaskDraft>
-  executeTask: (draft: TaskDraft, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
+  executeTask: (prompt: string, mode: TaskExecuteMode, workdirId: WorkspaceId) => Promise<TaskExecuteResult>
   setTaskStarred: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) => void
   submitFeedback: (args: {
     title: string
@@ -375,7 +373,6 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     openWorkdirPullRequestFailedAction: actions.openWorkdirPullRequestFailedAction,
     archiveWorkdir: actions.archiveWorkdir,
     toggleProjectExpanded: actions.toggleProjectExpanded,
-    previewTask: actions.previewTask,
     executeTask: actions.executeTask,
     setTaskStarred: actions.setTaskStarred,
     submitFeedback: actions.submitFeedback,

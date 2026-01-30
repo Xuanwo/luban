@@ -17,8 +17,7 @@ pub use adapters::{
     AmpConfigEntry, AmpConfigEntryKind, ClaudeConfigEntry, ClaudeConfigEntryKind, CodexConfigEntry,
     CodexConfigEntryKind, ContextImage, CreatedWorkspace, OpenTarget, ProjectIdentity,
     ProjectWorkspaceService, PullRequestCiState, PullRequestInfo, PullRequestState,
-    RunAgentTurnRequest, TaskDraft, TaskIntentKind, TaskIssueInfo, TaskProjectSpec,
-    TaskPullRequestInfo, TaskRepoInfo,
+    RunAgentTurnRequest, TaskIntentKind, TaskIssueInfo,
 };
 mod context_tokens;
 pub use context_tokens::{

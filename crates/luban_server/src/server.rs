@@ -258,7 +258,11 @@ async fn get_tasks(
         }
     };
 
-    let starred = state.engine.starred_tasks_snapshot().await.unwrap_or_default();
+    let starred = state
+        .engine
+        .starred_tasks_snapshot()
+        .await
+        .unwrap_or_default();
 
     let mut tasks = Vec::<luban_api::TaskSummarySnapshot>::new();
     let selected_project_id = query
