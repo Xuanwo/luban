@@ -73,8 +73,9 @@ wait_for_js "document.querySelector('[data-testid=\"task-list-view\"]') != null"
 agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find testid "new-task-button" click
 wait_for_js "document.querySelector('[data-testid=\"new-task-modal\"]') != null"
 
-agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find placeholder "Paste an issue/PR link or describe a task..." fill "Fix: smoke test task preview"
-wait_for_js "document.querySelectorAll('[data-testid=\"new-task-modal\"] select').length >= 1"
+wait_for_js "document.querySelector('[data-testid=\"new-task-input\"]') != null"
+agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" find testid "new-task-input" fill "Fix: smoke test task preview"
+sleep 0.5
 
 agent-browser ${AGENT_BROWSER_HEADED_FLAG:+$AGENT_BROWSER_HEADED_FLAG} --session "${SESSION}" press Escape
 

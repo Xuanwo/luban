@@ -21,6 +21,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
+import type { AppSnapshot, TaskDraft } from "@/lib/luban-api"
 
 interface NewTaskModalProps {
   open: boolean
@@ -28,7 +29,7 @@ interface NewTaskModalProps {
 }
 
 export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
-  const { app, executeTask, openWorkdir, activateTask, activeWorkdirId } = useLuban()
+  const { app, previewTask, executeTask, openWorkdir, activateTask, activeWorkdirId, createWorkdir, ensureMainWorkdir } = useLuban()
 
   const [input, setInput] = useState("")
   const [executingMode, setExecutingMode] = useState<TaskExecuteMode | null>(null)
@@ -36,7 +37,15 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
   const [projectSearch, setProjectSearch] = useState("")
   const [workdirSearch, setWorkdirSearch] = useState("")
+  const [preview, setPreview] = useState<TaskDraft | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const appRef = useRef<AppSnapshot | null>(null)
+
+  useEffect(() => {
+    appRef.current = app
+  }, [app])
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
 
@@ -57,17 +66,27 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setSelectedProjectId("auto")
   }, [open, selectedProjectId])
 
+  const resolveAutoProject = useMemo(() => {
+    if (!app) return null
+    if (activeWorkdirId != null) {
+      for (const p of app.projects) {
+        if (p.workdirs.some((w) => w.id === activeWorkdirId)) {
+          const opt = projectOptions.find((x) => x.id === p.id) ?? null
+          if (opt) return opt
+        }
+      }
+    }
+    if (projectOptions.length === 1) return projectOptions[0] ?? null
+    return null
+  }, [activeWorkdirId, app, projectOptions])
+
   const selectedProject = useMemo(() => {
     if (selectedProjectId === "auto") {
-      // Fall back to first project if only one exists
-      if (projectOptions.length === 1) {
-        return projectOptions[0]
-      }
-      return null
+      return resolveAutoProject
     }
     if (!selectedProjectId) return null
     return projectOptions.find((p) => p.id === selectedProjectId) ?? null
-  }, [projectOptions, selectedProjectId])
+  }, [projectOptions, resolveAutoProject, selectedProjectId])
 
   const workdirOptions = useMemo(() => selectedProject?.workdirs ?? [], [selectedProject?.workdirs])
 
@@ -118,7 +137,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   // Check if we can execute the task
   const canExecute = useMemo(() => {
     if (!input.trim()) return false
-    if (selectedProjectId === "auto") return true
     if (selectedProject == null) return false
     // Non-git project (no workdirs)
     if (workdirOptions.length === 0) return true
@@ -133,22 +151,129 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     }
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+    const trimmed = input.trim()
+    if (!trimmed) {
+      setPreview(null)
+      setPreviewError(null)
+      setPreviewLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPreviewLoading(true)
+    setPreviewError(null)
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const next = await previewTask(trimmed)
+          if (cancelled) return
+          setPreview(next)
+          setPreviewError(null)
+        } catch (err) {
+          if (cancelled) return
+          setPreview(null)
+          setPreviewError(err instanceof Error ? err.message : String(err))
+        } finally {
+          if (!cancelled) setPreviewLoading(false)
+        }
+      })()
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [input, open, previewTask])
+
+  const waitForWorkdir = async (args: {
+    projectId: string
+    predicate: (w: { id: number; workdir_name: string; workdir_path: string; status: string }) => boolean
+    timeoutMs?: number
+  }): Promise<number> => {
+    const deadline = Date.now() + (args.timeoutMs ?? 15_000)
+    while (Date.now() < deadline) {
+      const snap = appRef.current
+      const project = snap?.projects.find((p) => p.id === args.projectId) ?? null
+      const workdir = project?.workdirs.find((w) => args.predicate(w)) ?? null
+      if (workdir) return workdir.id
+      await new Promise((r) => window.setTimeout(r, 200))
+    }
+    throw new Error("Timed out waiting for workdir to be ready")
+  }
+
+  const ensureMainWorkdirId = async (projectId: string, projectPath: string): Promise<number> => {
+    ensureMainWorkdir(projectId)
+    return waitForWorkdir({
+      projectId,
+      predicate: (w) =>
+        w.status === "active" &&
+        w.workdir_name === "main" &&
+        normalizePathLike(w.workdir_path) === normalizePathLike(projectPath),
+    })
+  }
+
+  const createNewWorkdirId = async (projectId: string, existingIds: Set<number>): Promise<number> => {
+    createWorkdir(projectId)
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline) {
+      const snap = appRef.current
+      const project = snap?.projects.find((p) => p.id === projectId) ?? null
+      const next = project?.workdirs.find((w) => w.status === "active" && !existingIds.has(w.id)) ?? null
+      if (next) return next.id
+      await new Promise((r) => window.setTimeout(r, 200))
+    }
+    throw new Error("Timed out waiting for new workdir to be created")
+  }
+
   const handleSubmit = async (mode: TaskExecuteMode) => {
     if (!input.trim()) return
     if (!selectedProject) return
-    if (selectedWorkdirId == null) return
     setExecutingMode(mode)
     try {
-      const result = await executeTask(
-        {
-          raw_input: input.trim(),
-          intent_kind: "other",
-          title: input.trim().slice(0, 100),
-          project: { type: "local_path", path: selectedProject.path },
-        },
-        mode,
-        selectedWorkdirId
-      )
+      const trimmed = input.trim()
+      const baseDraft: TaskDraft = preview ?? {
+        input: trimmed,
+        project: { type: "local_path", path: selectedProject.path },
+        intent_kind: "other",
+        summary: trimmed.slice(0, 120),
+        prompt: trimmed,
+        repo: null,
+        issue: null,
+        pull_request: null,
+      }
+
+      const draft: TaskDraft = {
+        ...baseDraft,
+        input: trimmed,
+        project: { type: "local_path", path: selectedProject.path },
+      }
+
+      const workdirId = await (async (): Promise<number> => {
+        if (selectedProjectId === "auto") {
+          if (activeWorkdirId != null && app?.projects.some((p) => p.id === selectedProject.id && p.workdirs.some((w) => w.id === activeWorkdirId))) {
+            return activeWorkdirId
+          }
+          const main = selectedProject.workdirs.find(
+            (w) => w.workdir_name === "main" && normalizePathLike(w.workdir_path) === normalizePathLike(selectedProject.path),
+          )
+          if (main) return main.id
+          const first = selectedProject.workdirs[0]
+          if (first) return first.id
+          return ensureMainWorkdirId(selectedProject.id, selectedProject.path)
+        }
+
+        if (selectedWorkdirId === -1) {
+          const existing = new Set(selectedProject.workdirs.map((w) => w.id))
+          return createNewWorkdirId(selectedProject.id, existing)
+        }
+        if (selectedWorkdirId != null) return selectedWorkdirId
+        return ensureMainWorkdirId(selectedProject.id, selectedProject.path)
+      })()
+
+      const result = await executeTask(draft, mode, workdirId)
       if (mode === "create") {
         localStorage.setItem(draftKey(result.workdir_id, result.task_id), JSON.stringify({ text: result.prompt }))
       }
@@ -160,6 +285,8 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
       toast(mode === "create" ? "Draft created" : "Task started")
 
       setInput("")
+      setPreview(null)
+      setPreviewError(null)
       onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -172,6 +299,8 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
     setInput("")
     setSelectedProjectId("")
     setSelectedWorkdirId(null)
+    setPreview(null)
+    setPreviewError(null)
     onOpenChange(false)
   }
 
@@ -382,7 +511,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
                     <div className="px-2 py-2" style={{ borderBottom: "1px solid #eee" }}>
                       <input
                         type="text"
-                        placeholder="Set worktree..."
+                        placeholder="Set workdir..."
                         value={workdirSearch}
                         onChange={(e) => setWorkdirSearch(e.target.value)}
                         className="w-full h-7 px-2 text-[13px] focus:outline-none"
@@ -434,7 +563,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
 
                       {filteredWorkdirs.length === 0 && workdirSearch.trim() && (
                         <div className="px-2 py-3 text-[13px] text-center" style={{ color: "#888" }}>
-                          No worktrees found
+                          No workdirs found
                         </div>
                       )}
                     </div>
@@ -469,6 +598,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
           {/* Description */}
           <textarea
             ref={inputRef}
+            data-testid="new-task-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -482,6 +612,15 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
             }}
             disabled={executingMode != null}
           />
+          {previewLoading ? (
+            <div className="mt-2 text-[12px]" style={{ color: "#9b9b9b" }}>
+              Preparing task…
+            </div>
+          ) : previewError ? (
+            <div className="mt-2 text-[12px]" style={{ color: "#eb5757" }}>
+              {previewError}
+            </div>
+          ) : null}
         </div>
 
         {/* Footer */}
