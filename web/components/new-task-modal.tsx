@@ -4,58 +4,39 @@ import type React from "react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
-  GitPullRequest,
-  Loader2,
-  Play,
-  ChevronRight,
-  Bug,
-  Lightbulb,
-  MessageSquare,
-  HelpCircle,
-  Plus,
-  Sparkles,
+  X,
+  Maximize2,
+  GitBranch,
+  Paperclip,
+  Check,
 } from "lucide-react"
 
-import { cn } from "@/lib/utils"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
 import { useLuban } from "@/lib/luban-context"
-import type { TaskDraft, TaskExecuteMode, TaskIntentKind } from "@/lib/luban-api"
+import type { TaskExecuteMode } from "@/lib/luban-api"
 import { draftKey } from "@/lib/ui-prefs"
 import { focusChatInput } from "@/lib/focus-chat-input"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
 
 interface NewTaskModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-function intentLabel(kind: TaskIntentKind): string {
-  switch (kind) {
-    case "fix":
-      return "Fix"
-    case "implement":
-      return "Implement"
-    case "review":
-      return "Review"
-    case "discuss":
-      return "Discuss"
-    case "other":
-      return "Other"
-  }
-}
-
 export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
-  const { app, previewTask, executeTask, openWorkdir, activateTask, activeWorkdirId } = useLuban()
+  const { app, executeTask, openWorkdir, activateTask, activeWorkdirId } = useLuban()
 
   const [input, setInput] = useState("")
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [draft, setDraft] = useState<TaskDraft | null>(null)
-  const [promptExpanded, setPromptExpanded] = useState(false)
-  const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [executingMode, setExecutingMode] = useState<TaskExecuteMode | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
   const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
-  const seqRef = useRef(0)
+  const [projectSearch, setProjectSearch] = useState("")
+  const [workdirSearch, setWorkdirSearch] = useState("")
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
 
@@ -72,94 +53,104 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
   useEffect(() => {
     if (!open) return
     if (selectedProjectId) return
-    if (projectOptions.length === 1) {
-      setSelectedProjectId(projectOptions[0].id)
-      return
-    }
-    if (draft?.project.type === "local_path") {
-      const inferred = normalizePathLike(draft.project.path)
-      const match = projectOptions.find((p) => normalizePathLike(p.path) === inferred)
-      if (match) setSelectedProjectId(match.id)
-    }
-  }, [draft?.project, open, projectOptions, selectedProjectId])
+    // Default to "auto" when modal opens
+    setSelectedProjectId("auto")
+  }, [open, selectedProjectId])
 
   const selectedProject = useMemo(() => {
+    if (selectedProjectId === "auto") {
+      // Fall back to first project if only one exists
+      if (projectOptions.length === 1) {
+        return projectOptions[0]
+      }
+      return null
+    }
     if (!selectedProjectId) return null
     return projectOptions.find((p) => p.id === selectedProjectId) ?? null
   }, [projectOptions, selectedProjectId])
 
   const workdirOptions = useMemo(() => selectedProject?.workdirs ?? [], [selectedProject?.workdirs])
 
+  const filteredProjects = useMemo(() => {
+    if (!projectSearch.trim()) return projectOptions
+    const search = projectSearch.toLowerCase()
+    return projectOptions.filter(
+      (p) =>
+        (p.name?.toLowerCase().includes(search)) ||
+        (p.slug?.toLowerCase().includes(search)) ||
+        (p.path?.toLowerCase().includes(search))
+    )
+  }, [projectOptions, projectSearch])
+
+  const filteredWorkdirs = useMemo(() => {
+    if (!workdirSearch.trim()) return workdirOptions
+    const search = workdirSearch.toLowerCase()
+    return workdirOptions.filter(
+      (w) =>
+        (w.workdir_name?.toLowerCase().includes(search)) ||
+        (w.branch_name?.toLowerCase().includes(search)) ||
+        (w.workdir_path?.toLowerCase().includes(search))
+    )
+  }, [workdirOptions, workdirSearch])
+
+  // Check if selected project is a git project (has workdirs)
+  const isGitProject = selectedProject != null && workdirOptions.length > 0
+
   useEffect(() => {
     if (!open) return
-    if (!selectedProjectId) {
+    if (!selectedProjectId || selectedProjectId === "auto") {
       setSelectedWorkdirId(null)
       return
     }
 
+    // If workdir already selected and valid, keep it
+    if (selectedWorkdirId === -1) return // "Create new" is always valid
     if (selectedWorkdirId != null && workdirOptions.some((w) => w.id === selectedWorkdirId)) return
 
-    const fromActive =
-      activeWorkdirId != null && workdirOptions.some((w) => w.id === activeWorkdirId) ? activeWorkdirId : null
-    const main = workdirOptions.find((w) => w.workdir_name === "main")?.id ?? null
-    const fallback = workdirOptions[0]?.id ?? null
-    setSelectedWorkdirId(fromActive ?? main ?? fallback)
+    // Default to "Create new..." (-1) for git projects
+    if (workdirOptions.length > 0) {
+      setSelectedWorkdirId(-1)
+    } else {
+      setSelectedWorkdirId(null)
+    }
   }, [activeWorkdirId, open, selectedProjectId, selectedWorkdirId, workdirOptions])
 
-  const canExecute = draft != null && selectedProject != null && selectedWorkdirId != null
+  // Check if we can execute the task
+  const canExecute = useMemo(() => {
+    if (!input.trim()) return false
+    if (selectedProjectId === "auto") return true
+    if (selectedProject == null) return false
+    // Non-git project (no workdirs)
+    if (workdirOptions.length === 0) return true
+    // Git project - need workdir selected (either existing or -1 for create new)
+    return selectedWorkdirId != null
+  }, [input, selectedProjectId, selectedProject, workdirOptions.length, selectedWorkdirId])
 
+  // Focus input when modal opens
   useEffect(() => {
-    if (!open) return
-    const trimmed = input.trim()
-    if (trimmed.length === 0) {
-      setDraft(null)
-      setPromptExpanded(false)
-      setAnalysisError(null)
-      return
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 100)
     }
-
-    const seq = (seqRef.current += 1)
-    setIsAnalyzing(true)
-    setPromptExpanded(false)
-    setAnalysisError(null)
-
-    const t = window.setTimeout(() => {
-      previewTask(trimmed)
-        .then((d) => {
-          if (seqRef.current !== seq) return
-          setDraft(d)
-          setPromptExpanded(false)
-          setAnalysisError(null)
-        })
-        .catch((err: unknown) => {
-          if (seqRef.current !== seq) return
-          setDraft(null)
-          setAnalysisError(err instanceof Error ? err.message : String(err))
-        })
-        .finally(() => {
-          if (seqRef.current !== seq) return
-          setIsAnalyzing(false)
-        })
-    }, 650)
-
-    return () => window.clearTimeout(t)
-  }, [input, open, previewTask])
+  }, [open])
 
   const handleSubmit = async (mode: TaskExecuteMode) => {
-    if (!draft) return
+    if (!input.trim()) return
     if (!selectedProject) return
     if (selectedWorkdirId == null) return
     setExecutingMode(mode)
     try {
-      const toExecute: TaskDraft = {
-        ...draft,
-        project: { type: "local_path", path: selectedProject.path },
-      }
-      const result = await executeTask(toExecute, mode, selectedWorkdirId)
+      const result = await executeTask(
+        {
+          raw_input: input.trim(),
+          intent_kind: "other",
+          title: input.trim().slice(0, 100),
+          project: { type: "local_path", path: selectedProject.path },
+        },
+        mode,
+        selectedWorkdirId
+      )
       if (mode === "create") {
         localStorage.setItem(draftKey(result.workdir_id, result.task_id), JSON.stringify({ text: result.prompt }))
-      } else {
-        // No-op
       }
 
       await openWorkdir(result.workdir_id)
@@ -169,8 +160,6 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
       toast(mode === "create" ? "Draft created" : "Task started")
 
       setInput("")
-      setDraft(null)
-      setAnalysisError(null)
       onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -181,226 +170,352 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
 
   const handleClose = () => {
     setInput("")
-    setDraft(null)
-    setPromptExpanded(false)
-    setAnalysisError(null)
     setSelectedProjectId("")
     setSelectedWorkdirId(null)
     onOpenChange(false)
   }
 
-  const intentIcon = (kind: TaskIntentKind): React.ReactNode => {
-    switch (kind) {
-      case "fix":
-        return <Bug className="w-4 h-4" />
-      case "implement":
-        return <Lightbulb className="w-4 h-4" />
-      case "review":
-        return <GitPullRequest className="w-4 h-4" />
-      case "discuss":
-        return <MessageSquare className="w-4 h-4" />
-      case "other":
-        return <HelpCircle className="w-4 h-4" />
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      handleClose()
+    }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      if (canExecute && !executingMode) {
+        void handleSubmit("start")
+      }
     }
   }
 
-  const intentColor = (kind: TaskIntentKind): string => {
-    switch (kind) {
-      case "fix":
-        return "text-status-error"
-      case "implement":
-        return "text-status-success"
-      case "review":
-        return "text-status-running"
-      case "discuss":
-        return "text-status-info"
-      case "other":
-        return "text-status-info"
-    }
-  }
+  const selectedWorkdirLabel = useMemo(() => {
+    if (selectedWorkdirId === -1) return "Create new..."
+    if (selectedWorkdirId == null) return "Workdir"
+    const w = workdirOptions.find((w) => w.id === selectedWorkdirId)
+    if (!w) return "Workdir"
+    return w.workdir_name || w.branch_name || "Workdir"
+  }, [selectedWorkdirId, workdirOptions])
 
-  const selectedProjectLabel = useMemo(() => {
-    if (!selectedProject) return "Select a project..."
-    if (selectedProject.name) return selectedProject.name
-    if (selectedProject.slug) return selectedProject.slug
-    const normalized = normalizePathLike(selectedProject.path)
-    const parts = normalized.split("/")
-    return parts[parts.length - 1] || normalized
-  }, [selectedProject])
+  if (!open) return null
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent data-testid="new-task-modal" className="sm:max-w-[560px] p-0 gap-0 bg-background border-border overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
-          <DialogTitle className="text-base font-medium flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            New Task
-          </DialogTitle>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div className="relative rounded-lg border border-border hover:border-muted-foreground/30 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all duration-200">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Paste an issue/PR link or describe a task..."
-              className={cn(
-                "w-full min-h-[100px] p-4 pb-12 bg-transparent text-sm resize-none font-mono",
-                "placeholder:text-muted-foreground/50 placeholder:font-sans focus:outline-none",
-              )}
-              disabled={executingMode != null}
-              autoFocus
-            />
-          </div>
-
-          {analysisError && (
-            <div className="px-3 py-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
-              {analysisError}
-            </div>
-          )}
-
-          {(isAnalyzing || draft) && (
-            <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
-              {isAnalyzing ? (
-                <div className="p-4 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-muted animate-pulse" />
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-3 w-16 bg-muted rounded animate-pulse" />
-                        <div className="h-5 w-20 bg-muted rounded-full animate-pulse" />
-                      </div>
-                      <div className="h-4 w-48 bg-muted rounded animate-pulse" />
-                    </div>
-                  </div>
-                  <div className="space-y-2 pt-1">
-                    <div className="flex gap-2">
-                      <div className="h-3 w-12 bg-muted rounded animate-pulse" />
-                      <div className="h-3 w-32 bg-muted rounded animate-pulse" />
-                    </div>
-                    <div className="flex gap-2">
-                      <div className="h-3 w-10 bg-muted rounded animate-pulse" />
-                      <div className="h-3 w-64 bg-muted rounded animate-pulse" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>Analyzing intent...</span>
-                  </div>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
+      style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}
+      onClick={handleClose}
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        data-testid="new-task-modal"
+        className="w-full max-w-[740px] flex flex-col"
+        style={{
+          backgroundColor: "#ffffff",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+          borderRadius: "12px",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-1">
+          {/* Left: Project Selector + Template */}
+          <div className="flex items-center gap-1.5">
+            {/* Project Selector */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
+                  style={{
+                    backgroundColor: "#fff",
+                    color: "#2d2d2d",
+                    border: "1px solid #e0e0e0",
+                    borderRadius: "5px",
+                    fontWeight: 500,
+                  }}
+                  disabled={executingMode != null}
+                >
+                  {/* Colored dot indicator */}
+                  <span
+                    className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
+                    style={{ backgroundColor: "#26b5ce" }}
+                  />
+                  <span>
+                    {selectedProjectId === "auto"
+                      ? "Auto"
+                      : selectedProject?.name || selectedProject?.slug || "Project"}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                sideOffset={4}
+                className="w-[240px] rounded-lg bg-white p-0 overflow-hidden"
+                style={{
+                  border: "1px solid #e5e5e5",
+                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+                }}
+                onCloseAutoFocus={(e) => {
+                  e.preventDefault()
+                  setProjectSearch("")
+                }}
+              >
+                {/* Search input */}
+                <div className="px-2 py-2" style={{ borderBottom: "1px solid #eee" }}>
+                  <input
+                    type="text"
+                    placeholder="Set project..."
+                    value={projectSearch}
+                    onChange={(e) => setProjectSearch(e.target.value)}
+                    className="w-full h-7 px-2 text-[13px] focus:outline-none"
+                    style={{ backgroundColor: "transparent", color: "#2d2d2d" }}
+                    autoFocus
+                  />
                 </div>
-              ) : draft ? (
-                <div className="animate-in fade-in duration-300">
-                  <div className="p-4 space-y-1.5">
-                    <div className="flex items-center gap-1.5 text-sm">
-                      <span className={cn("flex items-center gap-1.5", intentColor(draft.intent_kind))}>
-                        {intentIcon(draft.intent_kind)}
-                        {intentLabel(draft.intent_kind).toLowerCase()}
-                      </span>
-                      {draft.issue ? <span className="font-medium">#{draft.issue.number}</span> : null}
-                      {draft.pull_request ? <span className="font-medium">#{draft.pull_request.number}</span> : null}
-                      <span className="text-muted-foreground">in</span>
-                      <span className="font-medium">{selectedProjectLabel}</span>
-                    </div>
-                    {draft.issue?.title || draft.pull_request?.title ? (
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {draft.issue?.title ?? draft.pull_request?.title}
-                      </p>
-                    ) : null}
-                    {!canExecute ? (
-                      <p className="text-xs text-muted-foreground pt-1">
-                        Add a project first, then pick a project to create a task.
-                      </p>
-                    ) : null}
-                  </div>
 
-                  <div className="px-4 pb-4">
-                    <label className="block text-xs text-muted-foreground mb-1">Project</label>
-                    <select
-                      value={selectedProjectId}
-                      onChange={(e) => setSelectedProjectId(e.target.value)}
-                      className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                <div className="p-1 max-h-[300px] overflow-y-auto">
+                  {/* Auto option - only show when not searching */}
+                  {!projectSearch.trim() && (
+                    <>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setSelectedProjectId("auto")
+                          setProjectSearch("")
+                        }}
+                        className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-4 h-4 rounded flex items-center justify-center"
+                            style={{ backgroundColor: "#26b5ce" }}
+                          >
+                            <span className="text-[10px] text-white font-medium">A</span>
+                          </span>
+                          <span className="text-[13px]" style={{ color: "#2d2d2d" }}>Auto</span>
+                        </div>
+                        {selectedProjectId === "auto" && (
+                          <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+                        )}
+                      </DropdownMenuItem>
+
+                      {/* Divider */}
+                      <div className="my-1 mx-2" style={{ borderTop: "1px solid #eee" }} />
+                    </>
+                  )}
+
+                  {/* Project options */}
+                  {filteredProjects.map((p, idx) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProjectId(p.id)
+                        setProjectSearch("")
+                      }}
+                      className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-4 h-4 rounded flex items-center justify-center text-[10px] text-white font-medium"
+                          style={{ backgroundColor: ["#26b5ce", "#f2994a", "#eb5757", "#5e6ad2", "#27ae60"][idx % 5] }}
+                        >
+                          {(p.name || p.slug || "P").charAt(0).toUpperCase()}
+                        </span>
+                        <span className="text-[13px]" style={{ color: "#2d2d2d" }}>{p.name || p.slug}</span>
+                      </div>
+                      {selectedProjectId === p.id && (
+                        <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+
+                  {filteredProjects.length === 0 && (
+                    <div className="px-2 py-3 text-[13px] text-center" style={{ color: "#888" }}>
+                      No projects found
+                    </div>
+                  )}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Separator and Worktree selector - only show for git projects */}
+            {isGitProject && selectedProjectId !== "auto" && (
+              <>
+                {/* Separator */}
+                <span className="text-[12px]" style={{ color: "#ccc" }}>›</span>
+
+                {/* Worktree Selector */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
+                      style={{
+                        backgroundColor: "#fff",
+                        color: "#2d2d2d",
+                        border: "1px solid #e0e0e0",
+                        borderRadius: "5px",
+                        fontWeight: 500,
+                      }}
                       disabled={executingMode != null}
                     >
-                      <option value="" disabled>
-                        Select a project...
-                      </option>
-                      {projectOptions.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name || p.slug || p.path}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="px-4 pb-4 pt-0">
-                    <label className="block text-xs text-muted-foreground mb-1">Workdir</label>
-                    <select
-                      value={selectedWorkdirId ?? ""}
-                      onChange={(e) => setSelectedWorkdirId(e.target.value ? Number(e.target.value) : null)}
-                      className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
-                      disabled={executingMode != null || selectedProject == null || workdirOptions.length === 0}
-                    >
-                      <option value="" disabled>
-                        {selectedProject == null ? "Select a project first..." : workdirOptions.length === 0 ? "No active workdirs" : "Select a workdir..."}
-                      </option>
-                      {workdirOptions.map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {w.workdir_name || w.branch_name || w.workdir_path}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="border-t border-border">
-                    <button
-                      type="button"
-                      onClick={() => setPromptExpanded(!promptExpanded)}
-                      className="w-full px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-                    >
-                      <ChevronRight
-                        className={cn("w-3 h-3 transition-transform duration-200", promptExpanded && "rotate-90")}
+                      <GitBranch
+                        className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3"
+                        style={{ color: "#666" }}
                       />
-                      <span>Task prompts</span>
+                      <span>
+                        {selectedWorkdirId === -1
+                          ? "Create new..."
+                          : selectedWorkdirLabel}
+                      </span>
                     </button>
-                    <div
-                      className={cn(
-                        "overflow-hidden transition-all duration-300 ease-in-out",
-                        promptExpanded ? "max-h-48" : "max-h-0",
-                      )}
-                    >
-                      <div className="px-4 pb-4">
-                        <div className="p-3 rounded-md bg-secondary/50 text-xs text-muted-foreground font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
-                          {draft.prompt}
-                        </div>
-                      </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    sideOffset={4}
+                    className="w-[240px] rounded-lg bg-white p-0 overflow-hidden"
+                    style={{
+                      border: "1px solid #e5e5e5",
+                      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+                    }}
+                    onCloseAutoFocus={(e) => {
+                      e.preventDefault()
+                      setWorkdirSearch("")
+                    }}
+                  >
+                    {/* Search input */}
+                    <div className="px-2 py-2" style={{ borderBottom: "1px solid #eee" }}>
+                      <input
+                        type="text"
+                        placeholder="Set worktree..."
+                        value={workdirSearch}
+                        onChange={(e) => setWorkdirSearch(e.target.value)}
+                        className="w-full h-7 px-2 text-[13px] focus:outline-none"
+                        style={{ backgroundColor: "transparent", color: "#2d2d2d" }}
+                        autoFocus
+                      />
                     </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          )}
+
+                    <div className="p-1 max-h-[300px] overflow-y-auto">
+                      {/* Create new option - only show when not searching */}
+                      {!workdirSearch.trim() && (
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedWorkdirId(-1)
+                              setWorkdirSearch("")
+                            }}
+                            className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
+                          >
+                            <span className="text-[13px]" style={{ color: "#2d2d2d" }}>Create new...</span>
+                            {selectedWorkdirId === -1 && (
+                              <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+                            )}
+                          </DropdownMenuItem>
+
+                          {/* Divider */}
+                          <div className="my-1 mx-2" style={{ borderTop: "1px solid #eee" }} />
+                        </>
+                      )}
+
+                      {/* Workdir options */}
+                      {filteredWorkdirs.map((w) => (
+                        <DropdownMenuItem
+                          key={w.id}
+                          onClick={() => {
+                            setSelectedWorkdirId(w.id)
+                            setWorkdirSearch("")
+                          }}
+                          className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
+                        >
+                          <span className="text-[13px]" style={{ color: "#2d2d2d" }}>
+                            {w.workdir_name || w.branch_name || w.workdir_path}
+                          </span>
+                          {selectedWorkdirId === w.id && (
+                            <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+
+                      {filteredWorkdirs.length === 0 && workdirSearch.trim() && (
+                        <div className="px-2 py-3 text-[13px] text-center" style={{ color: "#888" }}>
+                          No worktrees found
+                        </div>
+                      )}
+                    </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
+          </div>
+
+          {/* Right: Expand + Close */}
+          <div className="flex items-center">
+            <button
+              className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
+              style={{ color: "#666", borderRadius: "5px" }}
+              title="Expand"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleClose}
+              className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
+              style={{ color: "#666", borderRadius: "5px" }}
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        <div className="px-5 py-4 border-t border-border bg-secondary/30 flex items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleSubmit("create")}
-            disabled={!canExecute || executingMode != null || isAnalyzing}
-          >
-            {executingMode === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            {executingMode === "create" ? "Creating..." : "Create Only"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => void handleSubmit("start")}
-            disabled={!canExecute || executingMode != null || isAnalyzing}
-          >
-            {executingMode === "start" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            {executingMode === "start" ? "Starting..." : "Start Now"}
-          </Button>
+        {/* Content Area */}
+        <div className="px-4 pt-2 pb-4">
+          {/* Description */}
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Add task description..."
+            className="w-full text-[15px] resize-none focus:outline-none"
+            style={{
+              minHeight: "80px",
+              color: "#191919",
+              backgroundColor: "transparent",
+              fontWeight: 450,
+            }}
+            disabled={executingMode != null}
+          />
         </div>
-      </DialogContent>
-    </Dialog>
+
+        {/* Footer */}
+        <div
+          className="flex items-center justify-between px-4 py-3"
+          style={{ borderTop: "1px solid #eee" }}
+        >
+          {/* Left: Attachment */}
+          <button
+            className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
+            style={{ color: "#666", borderRadius: "5px" }}
+            title="Attach file"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
+
+          {/* Right: Create button */}
+          <div className="flex items-center">
+            <button
+              onClick={() => void handleSubmit("start")}
+              disabled={!canExecute || executingMode != null}
+              className="h-7 px-4 text-[12px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+              style={{
+                backgroundColor: "#5e6ad2",
+                color: "#ffffff",
+                borderRadius: "5px",
+                fontWeight: 500,
+              }}
+            >
+              {executingMode === "start" ? "Creating..." : "Create task"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
