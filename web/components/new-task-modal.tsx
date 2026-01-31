@@ -561,6 +561,7 @@ export function NewTaskModal({ open, onOpenChange }: NewTaskModalProps) {
           {/* Right: Create button */}
           <div className="flex items-center">
             <button
+              data-testid="new-task-submit-button"
               onClick={() => void handleSubmit("start")}
               disabled={!canExecute || executingMode != null}
               className="h-7 px-4 text-[12px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"

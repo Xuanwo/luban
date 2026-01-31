@@ -12,6 +12,7 @@ import { runInboxRead } from './scenarios/inbox-read.mjs';
 import { runNewTaskModal } from './scenarios/new-task-modal.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
+import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -142,6 +143,7 @@ async function main() {
     await runInboxRead({ page, baseUrl });
     await runStarFavorites({ page, baseUrl });
     await runSettingsPanel({ page, baseUrl });
+    await runTaskListNavigation({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);
@@ -165,4 +167,3 @@ async function main() {
 }
 
 await main();
-

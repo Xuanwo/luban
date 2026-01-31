@@ -132,10 +132,6 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
 
-  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
-  const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
-    args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
-
   useEffect(() => {
     if (!app) {
       setTasksSnapshot(null)
@@ -201,9 +197,6 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
-      if (isImplicitProjectRootWorkdir(workdir.projectPath, { workdirName: workdir.workdirName, workdirPath: workdir.workdirPath })) {
-        return false
-      }
       return true
     })
 

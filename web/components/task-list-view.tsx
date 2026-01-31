@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -94,11 +94,21 @@ interface TaskGroupProps {
 
 function TaskGroup({ title, count, defaultExpanded = true, children }: TaskGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  const userToggledRef = useRef(false)
+
+  useEffect(() => {
+    if (userToggledRef.current) return
+    if (!defaultExpanded) return
+    setExpanded(true)
+  }, [defaultExpanded])
 
   return (
     <div>
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          userToggledRef.current = true
+          setExpanded(!expanded)
+        }}
         className="group w-full flex items-center gap-2 px-4 h-[36px] text-[13px] font-medium hover:bg-[#f7f7f7] transition-colors"
         style={{ color: '#1b1b1b' }}
       >
@@ -135,10 +145,6 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
   const { app } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
-
-  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
-  const isImplicitProjectRootWorkdir = (projectPath: string, args: { workdirName: string; workdirPath: string }) =>
-    args.workdirName === "main" && normalizePathLike(args.workdirPath) === normalizePathLike(projectPath)
 
   useEffect(() => {
     if (!app) {
@@ -192,9 +198,6 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
-      if (isImplicitProjectRootWorkdir(workdir.projectPath, { workdirName: workdir.workdirName, workdirPath: workdir.workdirPath })) {
-        return false
-      }
       return true
     })
 
@@ -317,7 +320,7 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
           ))}
         </TaskGroup>
 
-        <TaskGroup title="Backlog" count={backlogTasks.length} defaultExpanded={false}>
+        <TaskGroup title="Backlog" count={backlogTasks.length} defaultExpanded={backlogTasks.length > 0}>
           {backlogTasks.map((task) => (
             <TaskRow
               key={task.id}

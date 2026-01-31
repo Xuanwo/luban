@@ -105,12 +105,14 @@ interface ProjectItemProps {
   name: string
   color?: string
   active?: boolean
+  testId?: string
   onClick?: () => void
 }
 
-function ProjectItem({ name, color = "bg-[#5e6ad2]", active, onClick }: ProjectItemProps) {
+function ProjectItem({ name, color = "bg-[#5e6ad2]", active, testId, onClick }: ProjectItemProps) {
   return (
     <button
+      data-testid={testId}
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors",
@@ -299,6 +301,7 @@ export function LubanSidebar({
                   name={p.displayName}
                   color={color}
                   active={active}
+                  testId={`sidebar-project-${p.id}`}
                   onClick={() => {
                     onProjectSelected?.(p.id)
                     onViewChange?.("tasks")
