@@ -311,6 +311,9 @@ async fn get_tasks(
                     workspace_name: w.workspace_name.clone(),
                     agent_run_status,
                     has_unread_completion,
+                    task_status: t.task_status,
+                    turn_status: t.turn_status,
+                    last_turn_result: t.last_turn_result,
                     is_starred: starred.contains(&(w.id.0, t.thread_id.0)),
                 });
             }

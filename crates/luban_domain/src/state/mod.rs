@@ -6,6 +6,7 @@ mod ids;
 mod layout;
 mod persisted;
 mod tabs;
+mod task;
 mod workspace;
 
 pub use agent::{AgentRunConfig, QueuedPrompt};
@@ -22,6 +23,7 @@ pub use persisted::{
     PersistedWorkspaceThreadRunConfigOverride,
 };
 pub use tabs::WorkspaceTabs;
+pub use task::{TaskStatus, TurnResult, TurnStatus, parse_task_status};
 pub use workspace::{AppState, Project, Workspace};
 
 pub(crate) const MAX_CONVERSATION_ENTRIES_IN_MEMORY: usize = 5000;

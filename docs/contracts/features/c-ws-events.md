@@ -91,6 +91,7 @@ update this section.
 - `AddProjectAndOpen`
 - `TaskExecute`
 - `TaskStarSet`
+- `TaskStatusSet`
 - `FeedbackSubmit`
 - `DeleteProject`
 - `ToggleProjectExpanded`

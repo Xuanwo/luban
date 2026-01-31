@@ -313,6 +313,8 @@ pub struct ConversationSnapshot {
     pub workspace_id: WorkspaceId,
     #[serde(rename = "task_id", alias = "thread_id")]
     pub thread_id: WorkspaceThreadId,
+    #[serde(default)]
+    pub task_status: TaskStatus,
     pub agent_runner: AgentRunnerKind,
     pub agent_model_id: String,
     pub thinking_effort: ThinkingEffort,
@@ -362,6 +364,35 @@ pub struct AgentRunConfigSnapshot {
 pub enum OperationStatus {
     Idle,
     Running,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Backlog,
+    #[default]
+    Todo,
+    InProgress,
+    InReview,
+    Done,
+    Canceled,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnStatus {
+    #[default]
+    Idle,
+    Running,
+    Awaiting,
+    Paused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnResult {
+    Completed,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -468,6 +499,12 @@ pub struct TaskSummarySnapshot {
     pub workspace_name: String,
     pub agent_run_status: OperationStatus,
     pub has_unread_completion: bool,
+    #[serde(default)]
+    pub task_status: TaskStatus,
+    #[serde(default)]
+    pub turn_status: TurnStatus,
+    #[serde(default)]
+    pub last_turn_result: Option<TurnResult>,
     #[serde(default)]
     pub is_starred: bool,
 }
@@ -652,6 +689,13 @@ pub enum ClientAction {
         #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         starred: bool,
+    },
+    TaskStatusSet {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
+        workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
+        thread_id: WorkspaceThreadId,
+        task_status: TaskStatus,
     },
     FeedbackSubmit {
         title: String,
@@ -1053,4 +1097,10 @@ pub struct ThreadMeta {
     pub remote_thread_id: Option<String>,
     pub title: String,
     pub updated_at_unix_seconds: u64,
+    #[serde(default)]
+    pub task_status: TaskStatus,
+    #[serde(default)]
+    pub turn_status: TurnStatus,
+    #[serde(default)]
+    pub last_turn_result: Option<TurnResult>,
 }

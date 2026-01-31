@@ -27,6 +27,10 @@ Paginated read for a single conversation thread.
 - `200 OK`
 - JSON body: `ConversationSnapshot`
 
+### Task status
+
+- `snapshot.task_status`: explicit lifecycle stage (`TaskStatus`, see `docs/task-and-turn-status.md`)
+
 ### Run config fields
 
 The response includes the effective per-thread run configuration used by the next agent turn:

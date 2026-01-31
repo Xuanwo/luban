@@ -792,6 +792,18 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
+    fn save_conversation_task_status(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+        task_status: luban_domain::TaskStatus,
+    ) -> Result<(), String> {
+        self.sqlite
+            .save_conversation_task_status(project_slug, workspace_name, thread_id, task_status)
+            .map_err(anyhow_error_to_string)
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,

@@ -117,6 +117,7 @@ impl GitWorkspaceService {
         if !events_path.exists() {
             return Ok(Some(ConversationSnapshot {
                 thread_id: meta.thread_id,
+                task_status: luban_domain::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -162,6 +163,7 @@ impl GitWorkspaceService {
         let entries_total = entries.len() as u64;
         Ok(Some(ConversationSnapshot {
             thread_id: meta.thread_id,
+            task_status: luban_domain::TaskStatus::Todo,
             runner: None,
             agent_model_id: None,
             thinking_effort: None,

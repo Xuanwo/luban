@@ -204,6 +204,9 @@ export async function mockFetchTasks(args: { projectId?: string } = {}): Promise
           workdir_name: workdir.workdir_name,
           agent_run_status: workdir.agent_run_status,
           has_unread_completion: workdir.has_unread_completion,
+          task_status: t.task_status,
+          turn_status: t.turn_status,
+          last_turn_result: t.last_turn_result,
           is_starred: state.starredTasks.has(workdirTaskKey(workdir.id, t.task_id)),
         })
       }
@@ -300,7 +303,15 @@ function createTaskInWorkdir(state: RuntimeState, workdirId: WorkspaceId, title:
   const taskId: WorkspaceThreadId = state.nextTaskId
   state.nextTaskId += 1
   const now = Math.floor(Date.now() / 1000)
-  snap.tasks = [{ task_id: taskId, remote_thread_id: null, title, updated_at_unix_seconds: now }, ...snap.tasks]
+  snap.tasks = [{
+    task_id: taskId,
+    remote_thread_id: null,
+    title,
+    updated_at_unix_seconds: now,
+    task_status: "backlog",
+    turn_status: "idle",
+    last_turn_result: null,
+  }, ...snap.tasks]
   snap.tabs.open_tabs = [taskId, ...snap.tabs.open_tabs.filter((id) => id !== taskId)]
   snap.tabs.active_tab = taskId
   snap.rev = state.rev
@@ -309,6 +320,7 @@ function createTaskInWorkdir(state: RuntimeState, workdirId: WorkspaceId, title:
     rev: state.rev,
     workdir_id: workdirId,
     task_id: taskId,
+    task_status: "backlog",
     agent_runner: "codex",
     agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
     thinking_effort: state.app.agent.default_thinking_effort ?? "medium",

@@ -17,9 +17,12 @@ import type {
   MentionItemSnapshot,
   OperationStatus,
   ProjectId,
+  TaskStatus,
   TaskSummarySnapshot,
   TasksSnapshot,
   ThreadsSnapshot,
+  TurnResult,
+  TurnStatus,
   WorkspaceChangesSnapshot,
   WorkspaceDiffFileSnapshot,
   WorkspaceDiffSnapshot,
@@ -112,6 +115,7 @@ function conversationBase(args: {
   title: string
   runner?: AgentRunnerKind
   runStatus?: OperationStatus
+  taskStatus?: TaskStatus
   entries: ConversationEntry[]
 }): ConversationSnapshot {
   const runner = args.runner ?? "codex"
@@ -119,6 +123,7 @@ function conversationBase(args: {
     rev: 1,
     workdir_id: args.workdirId,
     task_id: args.taskId,
+    task_status: args.taskStatus ?? "todo",
     agent_runner: runner,
     agent_model_id: "gpt-5",
     thinking_effort: "medium",
@@ -307,21 +312,21 @@ export function defaultMockFixtures(): MockFixtures {
       workdir_id: workdir1,
       tabs: tabs1,
       tasks: [
-        { task_id: task1, remote_thread_id: null, title: "Mock task 1", updated_at_unix_seconds: unixSeconds(-30) },
-        { task_id: task2, remote_thread_id: null, title: "Mock task 2", updated_at_unix_seconds: unixSeconds(-10) },
+        { task_id: task1, remote_thread_id: null, title: "Mock task 1", updated_at_unix_seconds: unixSeconds(-30), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task2, remote_thread_id: null, title: "Mock task 2", updated_at_unix_seconds: unixSeconds(-10), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
       ],
     },
     [workdir2]: {
       rev: 1,
       workdir_id: workdir2,
       tabs: tabs2,
-      tasks: [{ task_id: task3, remote_thread_id: null, title: "PR: pending", updated_at_unix_seconds: unixSeconds(-5) }],
+      tasks: [{ task_id: task3, remote_thread_id: null, title: "PR: pending", updated_at_unix_seconds: unixSeconds(-5), task_status: "in_progress" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null }],
     },
     [workdir3]: {
       rev: 1,
       workdir_id: workdir3,
       tabs: tabs3,
-      tasks: [{ task_id: task1, remote_thread_id: null, title: "Local task", updated_at_unix_seconds: unixSeconds(-120) }],
+      tasks: [{ task_id: task1, remote_thread_id: null, title: "Local task", updated_at_unix_seconds: unixSeconds(-120), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "failed" as TurnResult }],
     },
   }
 
@@ -330,18 +335,21 @@ export function defaultMockFixtures(): MockFixtures {
       workdirId: workdir1,
       taskId: task1,
       title: "Mock task 1",
+      taskStatus: "todo",
       entries: [userMessage("Hello from mock task 1."), agentMessage("Mock agent reply.")],
     }),
     [key(workdir1, task2)]: conversationBase({
       workdirId: workdir1,
       taskId: task2,
       title: "Mock task 2",
+      taskStatus: "backlog",
       entries: [userMessage("Hello from mock task 2.")],
     }),
     [key(workdir2, task3)]: conversationBase({
       workdirId: workdir2,
       taskId: task3,
       title: "PR: pending",
+      taskStatus: "in_progress",
       entries: [userMessage("Please open a PR."), agentMessage("Working on it.")],
       runStatus: "running",
     }),
@@ -349,6 +357,7 @@ export function defaultMockFixtures(): MockFixtures {
       workdirId: workdir3,
       taskId: task1,
       title: "Local task",
+      taskStatus: "todo",
       entries: [userMessage("Local project task.")],
     }),
   }
@@ -451,6 +460,9 @@ export function defaultMockFixtures(): MockFixtures {
         workdir_name: "main",
         agent_run_status: "idle",
         has_unread_completion: false,
+        task_status: "todo",
+        turn_status: "idle",
+        last_turn_result: "completed",
         is_starred: false,
       } satisfies TaskSummarySnapshot,
       {
@@ -463,6 +475,9 @@ export function defaultMockFixtures(): MockFixtures {
         workdir_name: "feat-ui",
         agent_run_status: "running",
         has_unread_completion: true,
+        task_status: "in_progress",
+        turn_status: "running",
+        last_turn_result: null,
         is_starred: false,
       } satisfies TaskSummarySnapshot,
     ],

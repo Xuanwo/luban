@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 15;
+const LATEST_SCHEMA_VERSION: u32 = 16;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -143,6 +143,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0015_conversation_agent_runner.sql"
         )),
     ),
+    (
+        16,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0016_conversation_task_status.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -258,6 +265,13 @@ enum DbCommand {
         model_id: String,
         thinking_effort: ThinkingEffort,
         amp_mode: Option<String>,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    SaveConversationTaskStatus {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        task_status: luban_domain::TaskStatus,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
     InsertContextItem {
@@ -495,6 +509,23 @@ impl SqliteStore {
                                 &model_id,
                                 thinking_effort,
                                 amp_mode.as_deref(),
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::SaveConversationTaskStatus {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                task_status,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.save_conversation_task_status(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                task_status,
                             ));
                         }
                         (
@@ -825,6 +856,26 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn save_conversation_task_status(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        task_status: luban_domain::TaskStatus,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::SaveConversationTaskStatus {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                task_status,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn insert_context_item(
         &self,
         project_slug: String,
@@ -926,6 +977,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::SaveConversationRunConfig { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::SaveConversationTaskStatus { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -2225,8 +2279,8 @@ impl SqliteDatabase {
         let now = now_unix_seconds();
         let default_title = format!("Thread {thread_local_id}");
         self.conn.execute(
-            "INSERT INTO conversations (project_slug, workspace_name, thread_local_id, thread_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?5)
+            "INSERT INTO conversations (project_slug, workspace_name, thread_local_id, thread_id, title, task_status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, NULL, ?4, 'backlog', ?5, ?5)
              ON CONFLICT(project_slug, workspace_name, thread_local_id) DO NOTHING",
             params![
                 project_slug,
@@ -2303,10 +2357,30 @@ impl SqliteDatabase {
         self.ensure_conversation(project_slug, workspace_name, 1)?;
         self.repair_conversation_rows_for_entries(project_slug, workspace_name)?;
         let mut stmt = self.conn.prepare(
-            "SELECT thread_local_id, thread_id, title, updated_at
-             FROM conversations
-             WHERE project_slug = ?1 AND workspace_name = ?2
-             ORDER BY updated_at DESC, thread_local_id DESC",
+            "SELECT c.thread_local_id,
+                    c.thread_id,
+                    c.title,
+                    c.updated_at,
+                    c.task_status,
+                    c.queue_paused,
+                    c.run_started_at_unix_ms,
+                    c.run_finished_at_unix_ms,
+                    (SELECT COUNT(*)
+                     FROM conversation_queued_prompts qp
+                     WHERE qp.project_slug = c.project_slug
+                       AND qp.workspace_name = c.workspace_name
+                       AND qp.thread_local_id = c.thread_local_id) AS pending_prompt_count,
+                    (SELECT e.kind
+                     FROM conversation_entries e
+                     WHERE e.project_slug = c.project_slug
+                       AND e.workspace_name = c.workspace_name
+                       AND e.thread_local_id = c.thread_local_id
+                       AND e.kind IN ('turn_error', 'turn_canceled', 'turn_duration')
+                     ORDER BY e.seq DESC
+                     LIMIT 1) AS last_turn_kind
+             FROM conversations c
+             WHERE c.project_slug = ?1 AND c.workspace_name = ?2
+             ORDER BY c.updated_at DESC, c.thread_local_id DESC",
         )?;
         let rows = stmt.query_map(params![project_slug, workspace_name], |row| {
             Ok((
@@ -2314,12 +2388,29 @@ impl SqliteDatabase {
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?;
 
         let mut threads = Vec::new();
         for row in rows {
-            let (thread_local_id, remote_thread_id, title, updated_at) = row?;
+            let (
+                thread_local_id,
+                remote_thread_id,
+                title,
+                updated_at,
+                task_status,
+                queue_paused,
+                run_started_at_unix_ms,
+                run_finished_at_unix_ms,
+                pending_prompt_count,
+                last_turn_kind,
+            ) = row?;
             let Some(thread_local_id) = u64::try_from(thread_local_id).ok() else {
                 continue;
             };
@@ -2327,11 +2418,36 @@ impl SqliteDatabase {
                 continue;
             };
             let title = title.unwrap_or_else(|| format!("Thread {thread_local_id}"));
+            let task_status = luban_domain::parse_task_status(&task_status)
+                .unwrap_or(luban_domain::TaskStatus::Todo);
+            let running = run_started_at_unix_ms.is_some() && run_finished_at_unix_ms.is_none();
+            let pending_prompt_count = u64::try_from(pending_prompt_count).unwrap_or(0);
+            let turn_status = if running {
+                luban_domain::TurnStatus::Running
+            } else if pending_prompt_count > 0 {
+                if queue_paused != 0 {
+                    luban_domain::TurnStatus::Paused
+                } else {
+                    luban_domain::TurnStatus::Awaiting
+                }
+            } else {
+                luban_domain::TurnStatus::Idle
+            };
+            let last_turn_result = match last_turn_kind.as_deref() {
+                Some("turn_duration") => Some(luban_domain::TurnResult::Completed),
+                Some("turn_error") | Some("turn_canceled") => {
+                    Some(luban_domain::TurnResult::Failed)
+                }
+                _ => None,
+            };
             threads.push(ConversationThreadMeta {
                 thread_id: WorkspaceThreadId::from_u64(thread_local_id),
                 remote_thread_id,
                 title,
                 updated_at_unix_seconds: updated_at,
+                task_status,
+                turn_status,
+                last_turn_result,
             });
         }
 
@@ -2558,6 +2674,7 @@ impl SqliteDatabase {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
         let (
             thread_id,
+            task_status,
             queue_paused,
             run_started_at_unix_ms,
             run_finished_at_unix_ms,
@@ -2568,19 +2685,20 @@ impl SqliteDatabase {
         ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
+                "SELECT thread_id, task_status, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
                         row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<String>>(6)?,
                         row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
@@ -2589,6 +2707,7 @@ impl SqliteDatabase {
             .map(
                 |(
                     thread_id,
+                    task_status,
                     queue_paused,
                     started,
                     finished,
@@ -2603,8 +2722,11 @@ impl SqliteDatabase {
                 let agent_runner = agent_runner
                     .as_deref()
                     .and_then(luban_domain::parse_agent_runner_kind);
+                let task_status = luban_domain::parse_task_status(&task_status)
+                    .unwrap_or(luban_domain::TaskStatus::Todo);
                 (
                     thread_id,
+                    task_status,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
@@ -2615,7 +2737,17 @@ impl SqliteDatabase {
                 )
             },
             )
-            .unwrap_or((None, false, None, None, None, None, None, None));
+            .unwrap_or((
+                None,
+                luban_domain::TaskStatus::Todo,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ));
 
         let mut stmt = self.conn.prepare(
             "SELECT payload_json
@@ -2658,6 +2790,7 @@ impl SqliteDatabase {
         let entries_total = entries.len() as u64;
         Ok(ConversationSnapshot {
             thread_id,
+            task_status,
             runner: agent_runner,
             agent_model_id,
             thinking_effort,
@@ -2684,6 +2817,7 @@ impl SqliteDatabase {
 
         let (
             thread_id,
+            task_status,
             queue_paused,
             run_started_at_unix_ms,
             run_finished_at_unix_ms,
@@ -2694,19 +2828,20 @@ impl SqliteDatabase {
         ) = self
             .conn
             .query_row(
-                "SELECT thread_id, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
+                "SELECT thread_id, task_status, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
                 params![project_slug, workspace_name, thread_local_id as i64],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
                         row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<String>>(6)?,
                         row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
@@ -2715,6 +2850,7 @@ impl SqliteDatabase {
             .map(
                 |(
                     thread_id,
+                    task_status,
                     queue_paused,
                     started,
                     finished,
@@ -2729,8 +2865,11 @@ impl SqliteDatabase {
                 let agent_runner = agent_runner
                     .as_deref()
                     .and_then(luban_domain::parse_agent_runner_kind);
+                let task_status = luban_domain::parse_task_status(&task_status)
+                    .unwrap_or(luban_domain::TaskStatus::Todo);
                 (
                     thread_id,
+                    task_status,
                     queue_paused != 0,
                     started.and_then(|v| u64::try_from(v).ok()),
                     finished.and_then(|v| u64::try_from(v).ok()),
@@ -2741,7 +2880,17 @@ impl SqliteDatabase {
                 )
             },
             )
-            .unwrap_or((None, false, None, None, None, None, None, None));
+            .unwrap_or((
+                None,
+                luban_domain::TaskStatus::Todo,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ));
 
         let total_entries: u64 = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_entries
@@ -2811,6 +2960,7 @@ impl SqliteDatabase {
 
         Ok(ConversationSnapshot {
             thread_id,
+            task_status,
             runner: agent_runner,
             agent_model_id,
             thinking_effort,
@@ -2928,6 +3078,31 @@ impl SqliteDatabase {
                 model_id,
                 thinking_effort.as_str(),
                 amp_mode,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn save_conversation_task_status(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        task_status: luban_domain::TaskStatus,
+    ) -> anyhow::Result<()> {
+        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
+        let now = now_unix_seconds();
+        self.conn.execute(
+            "UPDATE conversations
+             SET task_status = ?4,
+                 updated_at = ?5
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                task_status.as_str(),
                 now
             ],
         )?;

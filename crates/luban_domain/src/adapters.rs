@@ -1,6 +1,7 @@
 use crate::{
     AgentRunnerKind, AgentThreadEvent, AttachmentRef, ContextItem, ConversationSnapshot,
-    ConversationThreadMeta, PersistedAppState, QueuedPrompt, SystemTaskKind, ThinkingEffort,
+    ConversationThreadMeta, PersistedAppState, QueuedPrompt, SystemTaskKind, TaskStatus,
+    ThinkingEffort,
 };
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
@@ -308,6 +309,16 @@ pub trait ProjectWorkspaceService: Send + Sync {
         _model_id: String,
         _thinking_effort: ThinkingEffort,
         _amp_mode: Option<String>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn save_conversation_task_status(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+        _task_status: TaskStatus,
     ) -> Result<(), String> {
         Ok(())
     }

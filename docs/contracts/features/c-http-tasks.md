@@ -28,6 +28,8 @@ client to iterate all workdirs and fan out requests.
 
 - `TasksSnapshot.tasks[]` items are `TaskSummarySnapshot`.
 - `TaskSummarySnapshot.is_starred` indicates whether the user has starred the task.
+- `TaskSummarySnapshot.task_status` is an explicit lifecycle stage (`TaskStatus`).
+- `TaskSummarySnapshot.turn_status` and `TaskSummarySnapshot.last_turn_result` provide derived turn-level status (see `docs/task-and-turn-status.md`).
 
 ## Invariants
 

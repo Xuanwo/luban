@@ -47,22 +47,22 @@ export function LubanIDE() {
   const handleOpenFullViewFromInbox = (notification: InboxNotification) => {
     void (async () => {
       await openWorkspace(notification.workdirId)
-            await activateTask(notification.taskId)
-        setSelectedTask({
-          id: notification.id,
-          workspaceId: notification.workdirId,
-          title: notification.taskTitle,
-          status:
-            notification.type === "completed"
-              ? "done"
-              : notification.type === "failed"
-                ? "cancelled"
-                : "in-progress",
-          workdir: notification.workdir,
-          projectName: notification.projectName,
-          projectColor: notification.projectColor,
-          createdAt: notification.timestamp,
-        })
+      await activateTask(notification.taskId)
+      setSelectedTask({
+        id: notification.id,
+        workspaceId: notification.workdirId,
+        title: notification.taskTitle,
+        status:
+          notification.type === "completed"
+            ? "done"
+            : notification.type === "failed"
+              ? "canceled"
+              : "in_progress",
+        workdir: notification.workdir,
+        projectName: notification.projectName,
+        projectColor: notification.projectColor,
+        createdAt: notification.timestamp,
+      })
       setActiveView("tasks")
       setShowDetail(true)
     })()
@@ -81,12 +81,6 @@ export function LubanIDE() {
     return out
   }, [app])
 
-  const taskStatusFromSummary = (args: { agentRunStatus: string; hasUnreadCompletion: boolean }): Task["status"] => {
-    if (args.agentRunStatus === "running") return "in-progress"
-    if (args.hasUnreadCompletion) return "done"
-    return "todo"
-  }
-
   const taskFromSummary = (summary: TaskSummarySnapshot): Task => {
     const project = projectInfoById.get(summary.project_id) ?? { name: summary.project_id, color: "bg-violet-500" }
     return {
@@ -94,10 +88,7 @@ export function LubanIDE() {
       workspaceId: summary.workdir_id,
       taskId: summary.task_id,
       title: summary.title,
-      status: taskStatusFromSummary({
-        agentRunStatus: summary.agent_run_status,
-        hasUnreadCompletion: summary.has_unread_completion,
-      }),
+      status: summary.task_status,
       workdir: summary.workdir_name || summary.branch_name,
       projectName: project.name,
       projectColor: project.color,

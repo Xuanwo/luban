@@ -673,6 +673,20 @@ impl AppState {
                 conversation.draft.clear();
                 conversation.draft_attachments.clear();
 
+                let mut task_status_effects = Vec::new();
+                if matches!(
+                    conversation.task_status,
+                    crate::TaskStatus::Backlog | crate::TaskStatus::Todo
+                ) {
+                    conversation.task_status = crate::TaskStatus::InProgress;
+                    task_status_effects.push(Effect::StoreConversationTaskStatus {
+                        workspace_id,
+                        thread_id,
+                        task_status: conversation.task_status,
+                    });
+                    task_status_effects.push(Effect::LoadWorkspaceThreads { workspace_id });
+                }
+
                 let runner = runner.unwrap_or(conversation.agent_runner);
                 let amp_mode = if runner == crate::AgentRunnerKind::Amp {
                     amp_mode
@@ -715,30 +729,33 @@ impl AppState {
                         attachments,
                         run_config,
                     });
-                    return Vec::new();
+                    return task_status_effects;
                 }
 
                 if conversation.queue_paused && !conversation.pending_prompts.is_empty() {
-                    return vec![start_agent_run(
+                    let mut effects = task_status_effects;
+                    effects.push(start_agent_run(
                         conversation,
                         workspace_id,
                         thread_id,
                         text,
                         attachments,
                         run_config,
-                    )];
+                    ));
+                    return effects;
                 }
 
                 if conversation.pending_prompts.is_empty() {
                     conversation.queue_paused = false;
-                    let mut effects = vec![start_agent_run(
+                    let mut effects = task_status_effects;
+                    effects.push(start_agent_run(
                         conversation,
                         workspace_id,
                         thread_id,
                         text,
                         attachments,
                         run_config,
-                    )];
+                    ));
                     if should_auto_title {
                         effects.push(Effect::LoadWorkspaceThreads { workspace_id });
                         if self.agent_codex_enabled {
@@ -762,9 +779,13 @@ impl AppState {
                     attachments,
                     run_config,
                 });
-                start_next_queued_prompt(conversation, workspace_id, thread_id)
-                    .into_iter()
-                    .collect()
+                let mut effects = task_status_effects;
+                effects.extend(start_next_queued_prompt(
+                    conversation,
+                    workspace_id,
+                    thread_id,
+                ));
+                effects
             }
             Action::QueueAgentMessage {
                 workspace_id,
@@ -1347,10 +1368,10 @@ impl AppState {
                     let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                     tabs.allocate_thread_id()
                 };
-                self.conversations.insert(
-                    (workspace_id, thread_id),
-                    self.default_conversation(thread_id),
-                );
+                let mut conversation = self.default_conversation(thread_id);
+                conversation.task_status = crate::TaskStatus::Backlog;
+                self.conversations
+                    .insert((workspace_id, thread_id), conversation);
                 self.ensure_workspace_tabs_mut(workspace_id)
                     .activate(thread_id);
                 vec![
@@ -1503,6 +1524,7 @@ impl AppState {
                         });
                     conversation.title = meta.title;
                     conversation.thread_id = meta.remote_thread_id;
+                    conversation.task_status = meta.task_status;
                 }
                 let mut did_update_tabs = false;
                 if let Some(tabs) = self.workspace_tabs.get_mut(&workspace_id) {
@@ -1812,6 +1834,28 @@ impl AppState {
                     Vec::new()
                 }
             }
+            Action::TaskStatusSet {
+                workspace_id,
+                thread_id,
+                task_status,
+            } => {
+                let Some(conversation) = self.conversations.get_mut(&(workspace_id, thread_id))
+                else {
+                    return Vec::new();
+                };
+                if conversation.task_status == task_status {
+                    return Vec::new();
+                }
+                conversation.task_status = task_status;
+                vec![
+                    Effect::StoreConversationTaskStatus {
+                        workspace_id,
+                        thread_id,
+                        task_status,
+                    },
+                    Effect::LoadWorkspaceThreads { workspace_id },
+                ]
+            }
             Action::SidebarProjectOrderChanged { project_ids } => {
                 let mut seen = HashSet::<String>::new();
                 let valid: HashSet<String> = self
@@ -2023,6 +2067,7 @@ impl AppState {
             local_thread_id: thread_id,
             title: format!("Thread {}", thread_id.0),
             thread_id: None,
+            task_status: crate::TaskStatus::Todo,
             draft: String::new(),
             draft_attachments: Vec::new(),
             run_config_overridden_by_user: false,
@@ -2427,18 +2472,27 @@ mod tests {
                     remote_thread_id: Some("remote-3".to_owned()),
                     title: "Thread 3".to_owned(),
                     updated_at_unix_seconds: 300,
+                    task_status: crate::TaskStatus::Todo,
+                    turn_status: crate::TurnStatus::Idle,
+                    last_turn_result: None,
                 },
                 ConversationThreadMeta {
                     thread_id: WorkspaceThreadId(2),
                     remote_thread_id: Some("remote-2".to_owned()),
                     title: "Thread 2".to_owned(),
                     updated_at_unix_seconds: 200,
+                    task_status: crate::TaskStatus::Todo,
+                    turn_status: crate::TurnStatus::Idle,
+                    last_turn_result: None,
                 },
                 ConversationThreadMeta {
                     thread_id: WorkspaceThreadId(1),
                     remote_thread_id: Some("remote-1".to_owned()),
                     title: "Thread 1".to_owned(),
                     updated_at_unix_seconds: 100,
+                    task_status: crate::TaskStatus::Todo,
+                    turn_status: crate::TurnStatus::Idle,
+                    last_turn_result: None,
                 },
             ],
         });
@@ -2583,6 +2637,7 @@ mod tests {
 
         let snapshot = ConversationSnapshot {
             thread_id: None,
+            task_status: crate::TaskStatus::Todo,
             runner: None,
             agent_model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
@@ -2817,6 +2872,7 @@ mod tests {
 
         let snapshot = ConversationSnapshot {
             thread_id: None,
+            task_status: crate::TaskStatus::Todo,
             runner: None,
             agent_model_id: None,
             thinking_effort: None,
@@ -3885,6 +3941,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4047,6 +4104,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: Some("thread_0".to_owned()),
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4102,6 +4160,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4142,6 +4201,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4164,6 +4224,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4205,6 +4266,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: None,
                 thinking_effort: None,
@@ -4247,6 +4309,7 @@ mod tests {
             thread_id,
             snapshot: ConversationSnapshot {
                 thread_id: None,
+                task_status: crate::TaskStatus::Todo,
                 runner: None,
                 agent_model_id: Some("gpt-5.2-codex".to_owned()),
                 thinking_effort: Some(ThinkingEffort::High),

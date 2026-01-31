@@ -4,7 +4,7 @@ use super::{
     attachments::AttachmentRef,
     layout::OperationStatus,
 };
-use crate::{CodexThreadItem, CodexUsage, ContextTokenKind, ThinkingEffort};
+use crate::{CodexThreadItem, CodexUsage, ContextTokenKind, TaskStatus, ThinkingEffort};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -120,6 +120,8 @@ pub(crate) fn entries_is_suffix(suffix: &[ConversationEntry], full: &[Conversati
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConversationSnapshot {
     pub thread_id: Option<String>,
+    #[serde(default = "default_task_status")]
+    pub task_status: TaskStatus,
     #[serde(default)]
     pub runner: Option<crate::AgentRunnerKind>,
     #[serde(default)]
@@ -143,12 +145,19 @@ pub struct ConversationSnapshot {
     pub run_finished_at_unix_ms: Option<u64>,
 }
 
+fn default_task_status() -> TaskStatus {
+    TaskStatus::Todo
+}
+
 #[derive(Clone, Debug)]
 pub struct ConversationThreadMeta {
     pub thread_id: WorkspaceThreadId,
     pub remote_thread_id: Option<String>,
     pub title: String,
     pub updated_at_unix_seconds: u64,
+    pub task_status: TaskStatus,
+    pub turn_status: crate::TurnStatus,
+    pub last_turn_result: Option<crate::TurnResult>,
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +165,7 @@ pub struct WorkspaceConversation {
     pub local_thread_id: WorkspaceThreadId,
     pub title: String,
     pub thread_id: Option<String>,
+    pub task_status: TaskStatus,
     pub draft: String,
     pub draft_attachments: Vec<DraftAttachment>,
     pub run_config_overridden_by_user: bool,
@@ -182,6 +192,7 @@ pub struct WorkspaceConversation {
 
 impl WorkspaceConversation {
     pub(crate) fn reset_entries_from_snapshot(&mut self, snapshot: ConversationSnapshot) {
+        self.task_status = snapshot.task_status;
         self.entries = snapshot.entries;
         self.entries_total = snapshot.entries_total.max(
             snapshot

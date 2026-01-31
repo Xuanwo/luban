@@ -63,6 +63,11 @@ pub enum Effect {
         thinking_effort: crate::ThinkingEffort,
         amp_mode: Option<String>,
     },
+    StoreConversationTaskStatus {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        task_status: crate::TaskStatus,
+    },
     LoadConversation {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,

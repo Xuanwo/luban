@@ -156,6 +156,9 @@ export type TaskSummarySnapshot = {
   workdir_name: string
   agent_run_status: OperationStatus
   has_unread_completion: boolean
+  task_status: TaskStatus
+  turn_status: TurnStatus
+  last_turn_result: TurnResult | null
   is_starred: boolean
 }
 
@@ -175,6 +178,9 @@ export type ThreadMeta = {
   remote_thread_id: string | null
   title: string
   updated_at_unix_seconds: number
+  task_status: TaskStatus
+  turn_status: TurnStatus
+  last_turn_result: TurnResult | null
 }
 
 export type AttachmentKind = "image" | "text" | "file"
@@ -203,6 +209,7 @@ export type ConversationSnapshot = {
   rev: number
   workdir_id: WorkspaceId
   task_id: WorkspaceThreadId
+  task_status: TaskStatus
   agent_runner: AgentRunnerKind
   agent_model_id: string
   thinking_effort: ThinkingEffort
@@ -236,6 +243,18 @@ export type QueuedPromptSnapshot = {
 }
 
 export type OperationStatus = "idle" | "running"
+
+export type TaskStatus =
+  | "backlog"
+  | "todo"
+  | "in_progress"
+  | "in_review"
+  | "done"
+  | "canceled"
+
+export type TurnStatus = "idle" | "running" | "awaiting" | "paused"
+
+export type TurnResult = "completed" | "failed"
 
 export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh"
 
@@ -331,6 +350,7 @@ export type ClientAction =
   | { type: "add_project_and_open"; path: string }
   | { type: "task_execute"; prompt: string; mode: TaskExecuteMode; workdir_id: WorkspaceId }
   | { type: "task_star_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; starred: boolean }
+  | { type: "task_status_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; task_status: TaskStatus }
   | {
       type: "feedback_submit"
       title: string

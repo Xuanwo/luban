@@ -1,7 +1,8 @@
 use crate::{
     AgentRunnerKind, AgentThreadEvent, AppearanceTheme, AttachmentRef, ChatScrollAnchor,
     ContextTokenKind, ConversationSnapshot, ConversationThreadMeta, OpenTarget, PersistedAppState,
-    ProjectId, SystemTaskKind, TaskIntentKind, ThinkingEffort, WorkspaceId, WorkspaceThreadId,
+    ProjectId, SystemTaskKind, TaskIntentKind, TaskStatus, ThinkingEffort, WorkspaceId,
+    WorkspaceThreadId,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -335,6 +336,11 @@ pub enum Action {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         starred: bool,
+    },
+    TaskStatusSet {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        task_status: TaskStatus,
     },
 
     SidebarProjectOrderChanged {

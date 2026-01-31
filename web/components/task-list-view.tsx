@@ -15,9 +15,7 @@ import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchTasks } from "@/lib/luban-http"
-import type { TaskSummarySnapshot, TasksSnapshot } from "@/lib/luban-api"
-
-type TaskStatus = "todo" | "in-progress" | "done" | "cancelled"
+import type { TaskStatus, TasksSnapshot } from "@/lib/luban-api"
 
 export interface Task {
   id: string
@@ -33,13 +31,17 @@ export interface Task {
 
 const StatusIcon = ({ status }: { status: TaskStatus }) => {
   switch (status) {
+    case "backlog":
+      return <Circle className="w-[14px] h-[14px]" style={{ color: '#d4d4d4' }} />
     case "todo":
       return <Circle className="w-[14px] h-[14px]" style={{ color: '#9b9b9b' }} />
-    case "in-progress":
+    case "in_progress":
       return <CircleDot className="w-[14px] h-[14px]" style={{ color: '#f2994a' }} />
+    case "in_review":
+      return <CircleDot className="w-[14px] h-[14px]" style={{ color: '#5e6ad2' }} />
     case "done":
       return <CheckCircle2 className="w-[14px] h-[14px]" style={{ color: '#5e6ad2' }} />
-    case "cancelled":
+    case "canceled":
       return <Circle className="w-[14px] h-[14px]" style={{ color: '#d4d4d4' }} />
   }
 }
@@ -129,12 +131,6 @@ interface TaskListViewProps {
   onTaskClick?: (task: Task) => void
 }
 
-function taskStatusFromWorkspace(args: { agentRunStatus: string; hasUnreadCompletion: boolean }): TaskStatus {
-  if (args.agentRunStatus === "running") return "in-progress"
-  if (args.hasUnreadCompletion) return "done"
-  return "todo"
-}
-
 export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps) {
   const { app } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
@@ -211,7 +207,7 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
         workspaceId: t.workdir_id,
         taskId: t.task_id,
         title: t.title,
-        status: taskStatusFromWorkspace({ agentRunStatus: t.agent_run_status, hasUnreadCompletion: t.has_unread_completion }),
+        status: t.task_status,
         workdir: t.workdir_name || t.branch_name,
         projectName: project.name,
         projectColor: project.color,
@@ -232,9 +228,12 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
     return { name: "Projects", color: "bg-violet-500" }
   }, [activeProjectId, app])
 
-  const inProgressTasks = tasks.filter((t) => t.status === "in-progress")
+  const inProgressTasks = tasks.filter((t) => t.status === "in_progress")
+  const inReviewTasks = tasks.filter((t) => t.status === "in_review")
   const todoTasks = tasks.filter((t) => t.status === "todo")
+  const backlogTasks = tasks.filter((t) => t.status === "backlog")
   const doneTasks = tasks.filter((t) => t.status === "done")
+  const canceledTasks = tasks.filter((t) => t.status === "canceled")
 
   return (
     <div className="h-full flex flex-col" data-testid="task-list-view">
@@ -290,6 +289,20 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
           ))}
         </TaskGroup>
 
+        <TaskGroup title="In Review" count={inReviewTasks.length}>
+          {inReviewTasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              selected={selectedTask === task.id}
+              onClick={() => {
+                setSelectedTask(task.id)
+                onTaskClick?.(task)
+              }}
+            />
+          ))}
+        </TaskGroup>
+
         <TaskGroup title="Todo" count={todoTasks.length}>
           {todoTasks.map((task) => (
             <TaskRow
@@ -304,8 +317,36 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
           ))}
         </TaskGroup>
 
+        <TaskGroup title="Backlog" count={backlogTasks.length} defaultExpanded={false}>
+          {backlogTasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              selected={selectedTask === task.id}
+              onClick={() => {
+                setSelectedTask(task.id)
+                onTaskClick?.(task)
+              }}
+            />
+          ))}
+        </TaskGroup>
+
         <TaskGroup title="Done" count={doneTasks.length} defaultExpanded={false}>
           {doneTasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              selected={selectedTask === task.id}
+              onClick={() => {
+                setSelectedTask(task.id)
+                onTaskClick?.(task)
+              }}
+            />
+          ))}
+        </TaskGroup>
+
+        <TaskGroup title="Canceled" count={canceledTasks.length} defaultExpanded={false}>
+          {canceledTasks.map((task) => (
             <TaskRow
               key={task.id}
               task={task}

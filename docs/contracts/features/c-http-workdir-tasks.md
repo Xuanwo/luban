@@ -33,6 +33,9 @@ Task titles are user-facing and should be short:
 
 - The response must be deserializable into `ThreadsSnapshot`.
 - Task ordering must match the UI expectations documented in `docs/workspace-thread-tabs.md`.
+- `ThreadsSnapshot.tasks[]` items are `ThreadMeta`.
+- `ThreadMeta.task_status` is the explicit lifecycle stage (`TaskStatus`).
+- `ThreadMeta.turn_status` and `ThreadMeta.last_turn_result` are derived turn-level status (see `docs/task-and-turn-status.md`).
 
 ## Web usage
 

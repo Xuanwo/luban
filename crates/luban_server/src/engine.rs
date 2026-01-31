@@ -434,6 +434,34 @@ impl Engine {
                             remote_thread_id: t.remote_thread_id,
                             title: t.title,
                             updated_at_unix_seconds: t.updated_at_unix_seconds,
+                            task_status: match t.task_status {
+                                luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                                luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                                luban_domain::TaskStatus::InProgress => {
+                                    luban_api::TaskStatus::InProgress
+                                }
+                                luban_domain::TaskStatus::InReview => {
+                                    luban_api::TaskStatus::InReview
+                                }
+                                luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                                luban_domain::TaskStatus::Canceled => {
+                                    luban_api::TaskStatus::Canceled
+                                }
+                            },
+                            turn_status: match t.turn_status {
+                                luban_domain::TurnStatus::Idle => luban_api::TurnStatus::Idle,
+                                luban_domain::TurnStatus::Running => luban_api::TurnStatus::Running,
+                                luban_domain::TurnStatus::Awaiting => {
+                                    luban_api::TurnStatus::Awaiting
+                                }
+                                luban_domain::TurnStatus::Paused => luban_api::TurnStatus::Paused,
+                            },
+                            last_turn_result: t.last_turn_result.map(|v| match v {
+                                luban_domain::TurnResult::Completed => {
+                                    luban_api::TurnResult::Completed
+                                }
+                                luban_domain::TurnResult::Failed => luban_api::TurnResult::Failed,
+                            }),
                         })
                         .collect(),
                 });
@@ -1714,6 +1742,14 @@ impl Engine {
             rev: self.rev,
             workspace_id,
             thread_id,
+            task_status: match loaded.task_status {
+                luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                luban_domain::TaskStatus::InProgress => luban_api::TaskStatus::InProgress,
+                luban_domain::TaskStatus::InReview => luban_api::TaskStatus::InReview,
+                luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+            },
             agent_runner: match runner {
                 luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                 luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
@@ -2449,6 +2485,27 @@ impl Engine {
                         model_id,
                         thinking_effort,
                         amp_mode,
+                    )
+                })
+                .await;
+                Ok(VecDeque::new())
+            }
+            Effect::StoreConversationTaskStatus {
+                workspace_id,
+                thread_id,
+                task_status,
+            } => {
+                let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+                    return Ok(VecDeque::new());
+                };
+                let services = self.services.clone();
+                let thread_local_id = thread_id.as_u64();
+                let _ = tokio::task::spawn_blocking(move || {
+                    services.save_conversation_task_status(
+                        scope.project_slug,
+                        scope.workspace_name,
+                        thread_local_id,
+                        task_status,
                     )
                 })
                 .await;
@@ -3262,6 +3319,24 @@ impl Engine {
                 remote_thread_id: t.remote_thread_id.clone(),
                 title: t.title.clone(),
                 updated_at_unix_seconds: t.updated_at_unix_seconds,
+                task_status: match t.task_status {
+                    luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                    luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                    luban_domain::TaskStatus::InProgress => luban_api::TaskStatus::InProgress,
+                    luban_domain::TaskStatus::InReview => luban_api::TaskStatus::InReview,
+                    luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                    luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+                },
+                turn_status: match t.turn_status {
+                    luban_domain::TurnStatus::Idle => luban_api::TurnStatus::Idle,
+                    luban_domain::TurnStatus::Running => luban_api::TurnStatus::Running,
+                    luban_domain::TurnStatus::Awaiting => luban_api::TurnStatus::Awaiting,
+                    luban_domain::TurnStatus::Paused => luban_api::TurnStatus::Paused,
+                },
+                last_turn_result: t.last_turn_result.map(|v| match v {
+                    luban_domain::TurnResult::Completed => luban_api::TurnResult::Completed,
+                    luban_domain::TurnResult::Failed => luban_api::TurnResult::Failed,
+                }),
             })
             .collect::<Vec<_>>();
 
@@ -3510,6 +3585,14 @@ impl Engine {
             rev: self.rev,
             workspace_id,
             thread_id,
+            task_status: match conversation.task_status {
+                luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                luban_domain::TaskStatus::InProgress => luban_api::TaskStatus::InProgress,
+                luban_domain::TaskStatus::InReview => luban_api::TaskStatus::InReview,
+                luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+            },
             agent_runner: match conversation.agent_runner {
                 luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                 luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
@@ -4124,6 +4207,22 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
             workspace_id: WorkspaceId::from_u64(workspace_id.0),
             thread_id: WorkspaceThreadId::from_u64(thread_id.0),
             starred,
+        }),
+        luban_api::ClientAction::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status,
+        } => Some(Action::TaskStatusSet {
+            workspace_id: WorkspaceId::from_u64(workspace_id.0),
+            thread_id: WorkspaceThreadId::from_u64(thread_id.0),
+            task_status: match task_status {
+                luban_api::TaskStatus::Backlog => luban_domain::TaskStatus::Backlog,
+                luban_api::TaskStatus::Todo => luban_domain::TaskStatus::Todo,
+                luban_api::TaskStatus::InProgress => luban_domain::TaskStatus::InProgress,
+                luban_api::TaskStatus::InReview => luban_domain::TaskStatus::InReview,
+                luban_api::TaskStatus::Done => luban_domain::TaskStatus::Done,
+                luban_api::TaskStatus::Canceled => luban_domain::TaskStatus::Canceled,
+            },
         }),
         luban_api::ClientAction::FeedbackSubmit { .. } => None,
         luban_api::ClientAction::DeleteProject { .. } => None,
@@ -5279,6 +5378,9 @@ mod tests {
                 remote_thread_id: None,
                 title: format!("thread-{}", id.as_u64()),
                 updated_at_unix_seconds: 0,
+                task_status: luban_domain::TaskStatus::Todo,
+                turn_status: luban_domain::TurnStatus::Idle,
+                last_turn_result: None,
             })
             .collect::<Vec<_>>();
 
