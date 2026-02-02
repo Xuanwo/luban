@@ -386,14 +386,15 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
         <span style={{ marginLeft: '4px' }}>{message.content}</span>
         <span style={{ margin: '0 4px' }}>·</span>
         <span className="inline-flex items-center gap-1">
-          {message.status === "running" && (
+          {message.status === "running" ? (
             <Loader2
               data-testid="event-running-icon"
               className="w-3 h-3 animate-spin flex-shrink-0"
               style={{ color: COLORS.textMuted }}
             />
+          ) : (
+            <span data-testid="event-timestamp">{formatRelativeTime(message.timestamp)}</span>
           )}
-          <span>{formatRelativeTime(message.timestamp)}</span>
         </span>
       </span>
     </div>

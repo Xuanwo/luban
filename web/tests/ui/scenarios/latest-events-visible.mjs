@@ -26,4 +26,5 @@ export async function runLatestEventsVisible({ page }) {
   const runningRow = eventLocator.filter({ hasText: 'Progress update 3' }).first();
   await runningRow.waitFor({ state: 'visible' });
   await runningRow.getByTestId('event-running-icon').waitFor({ state: 'visible' });
+  await waitForLocatorCount(runningRow.getByTestId('event-timestamp'), 0, 5_000);
 }
