@@ -513,9 +513,12 @@ function UserActivityEvent({ message }: UserActivityEventProps) {
       </div>
       
       {/* Message content */}
-      <div style={{ fontSize: '15px', fontWeight: 400, lineHeight: '24px', color: COLORS.textPrimary }}>
+      <div
+        data-testid="activity-user-message-content"
+        style={{ fontSize: '13px', fontWeight: 400, lineHeight: '1.625', color: COLORS.textPrimary }}
+      >
         {message.content.split("\n").map((line, idx) => (
-          <p key={idx} className="min-h-[24px]">
+          <p key={idx} className="min-h-[1.625em]">
             {line || "\u00A0"}
           </p>
         ))}
@@ -594,6 +597,7 @@ function AgentActivityEvent({ message }: AgentActivityEventProps) {
 
           {/* Agent message content */}
           <div 
+            data-testid="activity-agent-message-content"
             className="luban-font-chat"
             style={{ fontSize: '15px', fontWeight: 400, lineHeight: '24px', color: COLORS.textPrimary }}
           >

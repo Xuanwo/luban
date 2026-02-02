@@ -21,6 +21,24 @@ export async function runLatestEventsVisible({ page }) {
   const progressEvents = eventLocator.filter({ hasText: 'Progress update' });
   await waitForLocatorCount(progressEvents, 3, 20_000);
 
+  const userActivityContent = page.getByTestId('activity-user-message-content');
+  const agentActivityContent = page.getByTestId('activity-agent-message-content');
+  if ((await userActivityContent.count()) > 0 && (await agentActivityContent.count()) > 0) {
+    const lastUser = userActivityContent.last();
+    const lastAgent = agentActivityContent.last();
+    await lastUser.scrollIntoViewIfNeeded();
+    await lastAgent.scrollIntoViewIfNeeded();
+
+    const agentMarkdownRoot = lastAgent.locator(':scope > div').first();
+    await agentMarkdownRoot.waitFor({ state: 'visible' });
+
+    const userFontSize = await lastUser.evaluate((el) => getComputedStyle(el).fontSize);
+    const agentFontSize = await agentMarkdownRoot.evaluate((el) => getComputedStyle(el).fontSize);
+    if (userFontSize !== agentFontSize) {
+      throw new Error(`expected user/agent message font size to match, got user=${userFontSize}, agent=${agentFontSize}`);
+    }
+  }
+
   const progressUpdate1 = eventLocator.filter({ hasText: 'Progress update 1' }).first();
   await progressUpdate1.waitFor({ state: 'visible' });
   await progressUpdate1.scrollIntoViewIfNeeded();
