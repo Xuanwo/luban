@@ -4,7 +4,7 @@ import type React from "react"
 import { useState, useCallback } from "react"
 import Image from "next/image"
 
-import { Brain, Check, Clock, Copy, FileCode, FileText, Wrench } from "lucide-react"
+import { Brain, Check, Clock, Copy, FileCode, FileText, Loader2, Wrench } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { Message } from "@/lib/conversation-ui"
@@ -85,6 +85,12 @@ export function ConversationMessage({
         className="text-[11px] text-muted-foreground/80"
         data-testid="conversation-event"
       >
+        {message.status === "running" && (
+          <Loader2
+            data-testid="event-running-icon"
+            className="inline-block w-3 h-3 animate-spin mr-1 align-[-2px]"
+          />
+        )}
         {message.eventSource === "agent" ? "Agent: " : message.eventSource === "system" ? "System: " : ""}
         {message.content}
       </div>

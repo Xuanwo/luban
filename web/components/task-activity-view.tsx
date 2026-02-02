@@ -362,19 +362,27 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
           backgroundColor: COLORS.background
         }}
       >
-        <div
-          className="flex items-center justify-center text-white"
-          style={{ 
-            width: '14px', 
-            height: '14px', 
-            borderRadius: '50%',
-            backgroundColor: eventActor.color,
-            fontSize: '7px',
-            fontWeight: 500
-          }}
-        >
-          {eventActor.initial}
-        </div>
+        {message.status === "running" ? (
+          <Loader2
+            data-testid="event-running-icon"
+            className="w-3.5 h-3.5 animate-spin flex-shrink-0"
+            style={{ color: eventActor.color }}
+          />
+        ) : (
+          <div
+            className="flex items-center justify-center text-white"
+            style={{ 
+              width: '14px', 
+              height: '14px', 
+              borderRadius: '50%',
+              backgroundColor: eventActor.color,
+              fontSize: '7px',
+              fontWeight: 500
+            }}
+          >
+            {eventActor.initial}
+          </div>
+        )}
       </div>
       
       {/* Event text - Linear style: 12px, muted colors, inline */}

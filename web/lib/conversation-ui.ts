@@ -19,6 +19,8 @@ export interface ActivityEvent {
   badge?: string
 }
 
+type ActivityStatus = ActivityEvent["status"]
+
 export interface SystemEvent {
   id: string
   type: "event"
@@ -36,6 +38,7 @@ export interface Message {
   timestamp?: string
   isStreaming?: boolean
   isCancelled?: boolean
+  status?: ActivityStatus
   activities?: ActivityEvent[]
   metadata?: {
     toolCalls?: number
@@ -380,6 +383,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
         id: `e_${entry.entry_id}`,
         type: "event",
         eventSource: "system",
+        status: "done",
         eventType,
         content,
         timestamp: unixMsToIso(entry.created_at_unix_ms),
@@ -436,12 +440,14 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
 
       if (ev.type === "item") {
         const activity = activityFromAgentItem(ev)
+        const status = inferActivityStatusFromPayload(ev.payload)
         const baseId = `ae_${ev.id}`
         if (isInTail) {
           out.push({
             id: `${baseId}_${entry.entry_id}`,
             type: "event",
             eventSource: "agent",
+            status,
             content: activity.title,
             timestamp: new Date().toISOString(),
           })
@@ -450,6 +456,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           if (typeof existing === "number") {
             const prev = out[existing]
             if (prev && prev.type === "event") {
+              prev.status = status
               prev.content = activity.title
             }
           } else {
@@ -457,6 +464,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
               id: baseId,
               type: "event",
               eventSource: "agent",
+              status,
               content: activity.title,
               timestamp: new Date().toISOString(),
             })
@@ -471,6 +479,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           id: `ae_turn_duration_${out.length}_${ev.duration_ms}`,
           type: "event",
           eventSource: "agent",
+          status: "done",
           content: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
           timestamp: new Date().toISOString(),
         })
@@ -482,6 +491,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           id: `ae_turn_usage_${out.length}`,
           type: "event",
           eventSource: "agent",
+          status: "done",
           content: "Turn usage",
           timestamp: new Date().toISOString(),
         })
@@ -493,6 +503,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           id: `ae_turn_error_${out.length}`,
           type: "event",
           eventSource: "agent",
+          status: "done",
           content: `Turn error: ${ev.message}`,
           timestamp: new Date().toISOString(),
         })
@@ -504,6 +515,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           id: `ae_turn_canceled_${out.length}`,
           type: "event",
           eventSource: "agent",
+          status: "done",
           content: "Turn canceled",
           timestamp: new Date().toISOString(),
         })

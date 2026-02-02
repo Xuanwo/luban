@@ -413,17 +413,32 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
-          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 1" } },
+          event: {
+            type: "item",
+            id: "tail_progress",
+            kind: "command_execution",
+            payload: { command: "Progress update 1", status: "completed", aggregated_output: "" },
+          },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
-          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 2" } },
+          event: {
+            type: "item",
+            id: "tail_progress",
+            kind: "command_execution",
+            payload: { command: "Progress update 2", status: "completed", aggregated_output: "" },
+          },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
-          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 3" } },
+          event: {
+            type: "item",
+            id: "tail_progress",
+            kind: "command_execution",
+            payload: { command: "Progress update 3", status: "in_progress", aggregated_output: "" },
+          },
         },
       ],
     }),

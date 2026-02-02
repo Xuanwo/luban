@@ -23,5 +23,7 @@ export async function runLatestEventsVisible({ page }) {
 
   await eventLocator.filter({ hasText: 'Progress update 1' }).first().waitFor({ state: 'visible' });
   await eventLocator.filter({ hasText: 'Progress update 2' }).first().waitFor({ state: 'visible' });
-  await eventLocator.filter({ hasText: 'Progress update 3' }).first().waitFor({ state: 'visible' });
+  const runningRow = eventLocator.filter({ hasText: 'Progress update 3' }).first();
+  await runningRow.waitFor({ state: 'visible' });
+  await runningRow.getByTestId('event-running-icon').waitFor({ state: 'visible' });
 }
