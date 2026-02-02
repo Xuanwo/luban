@@ -362,27 +362,19 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
           backgroundColor: COLORS.background
         }}
       >
-        {message.status === "running" ? (
-          <Loader2
-            data-testid="event-running-icon"
-            className="w-3.5 h-3.5 animate-spin flex-shrink-0"
-            style={{ color: eventActor.color }}
-          />
-        ) : (
-          <div
-            className="flex items-center justify-center text-white"
-            style={{ 
-              width: '14px', 
-              height: '14px', 
-              borderRadius: '50%',
-              backgroundColor: eventActor.color,
-              fontSize: '7px',
-              fontWeight: 500
-            }}
-          >
-            {eventActor.initial}
-          </div>
-        )}
+        <div
+          className="flex items-center justify-center text-white"
+          style={{ 
+            width: '14px', 
+            height: '14px', 
+            borderRadius: '50%',
+            backgroundColor: eventActor.color,
+            fontSize: '7px',
+            fontWeight: 500
+          }}
+        >
+          {eventActor.initial}
+        </div>
       </div>
       
       {/* Event text - Linear style: 12px, muted colors, inline */}
@@ -393,7 +385,16 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
         <b style={{ fontWeight: 500 }}>{eventActor.name}</b>
         <span style={{ marginLeft: '4px' }}>{message.content}</span>
         <span style={{ margin: '0 4px' }}>·</span>
-        <span>{formatRelativeTime(message.timestamp)}</span>
+        <span className="inline-flex items-center gap-1">
+          {message.status === "running" && (
+            <Loader2
+              data-testid="event-running-icon"
+              className="w-3 h-3 animate-spin flex-shrink-0"
+              style={{ color: COLORS.textMuted }}
+            />
+          )}
+          <span>{formatRelativeTime(message.timestamp)}</span>
+        </span>
       </span>
     </div>
   )
