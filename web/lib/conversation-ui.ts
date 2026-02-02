@@ -245,16 +245,21 @@ export function activityFromAgentItem(entry: Extract<AgentEvent, { type: "item" 
   return activityFromAgentItemLike({ id: entry.id, kind: entry.kind, payload: entry.payload })
 }
 
+function inferActivityStatusFromPayload(payload: unknown): ActivityStatus {
+  const status = (payload as any)?.status
+  if (status === "in_progress") return "running"
+  return "done"
+}
+
 export function buildAgentActivities(conversation: ConversationSnapshot | null): ActivityEvent[] {
   if (!conversation) return []
 
-  const out: ActivityEvent[] = []
-  const seen = new Set<string>()
+  const order: string[] = []
+  const latestById = new Map<string, ActivityEvent>()
 
-  const push = (event: ActivityEvent) => {
-    if (seen.has(event.id)) return
-    seen.add(event.id)
-    out.push(event)
+  const upsert = (event: ActivityEvent) => {
+    if (!latestById.has(event.id)) order.push(event.id)
+    latestById.set(event.id, event)
   }
 
   const lastUserIndex = (() => {
@@ -269,11 +274,12 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
     if (entry.type !== "agent_event") continue
     const ev = entry.event
     if (ev.type === "item") {
-      push(activityFromAgentItem(ev))
+      const base = activityFromAgentItem(ev)
+      upsert({ ...base, status: inferActivityStatusFromPayload(ev.payload) })
       continue
     }
     if (ev.type === "turn_duration") {
-      push({
+      upsert({
         id: `turn_duration_${ev.duration_ms}`,
         type: "complete",
         title: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
@@ -282,7 +288,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
       continue
     }
     if (ev.type === "turn_usage") {
-      push({
+      upsert({
         id: "turn_usage",
         type: "tool_call",
         title: "Turn usage",
@@ -292,7 +298,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
       continue
     }
     if (ev.type === "turn_error") {
-      push({
+      upsert({
         id: "turn_error",
         type: "tool_call",
         title: "Turn error",
@@ -302,7 +308,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
       continue
     }
     if (ev.type === "turn_canceled") {
-      push({
+      upsert({
         id: "turn_canceled",
         type: "tool_call",
         title: "Turn canceled",
@@ -312,23 +318,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
     }
   }
 
-  if (conversation.run_status === "running" && conversation.in_progress_entries.length > 0) {
-    for (const pending of conversation.in_progress_entries) {
-      if (pending.type !== "agent_event") continue
-      const ev = pending.event
-      if (ev.type !== "item") continue
-      push(
-        activityFromAgentItemLike({
-          id: ev.id,
-          kind: ev.kind,
-          payload: ev.payload,
-          forcedStatus: "running",
-        }),
-      )
-    }
-  }
-
-  return out
+  return order.map((id) => latestById.get(id)!).filter(Boolean)
 }
 
 export function buildMessages(conversation: ConversationSnapshot | null): Message[] {
@@ -360,7 +350,8 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
     }
   }
 
-  const seenAgentEventIds = new Set<string>()
+  const agentMessageIndexById = new Map<string, number>()
+  const agentEventIndexById = new Map<string, number>()
 
   for (const entry of conversation.entries) {
     if (entry.type === "system_event") {
@@ -383,7 +374,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
       })()
 
       out.push({
-        id: `e_${entry.id}`,
+        id: `e_${entry.entry_id}`,
         type: "event",
         eventSource: "system",
         eventType,
@@ -396,7 +387,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
     if (entry.type === "user_event") {
       if (entry.event.type === "message") {
         out.push({
-          id: `u_${out.length}`,
+          id: `u_${entry.entry_id}`,
           type: "user",
           eventSource: "user",
           content: entry.event.text,
@@ -410,27 +401,45 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
     if (entry.type === "agent_event") {
       const ev = entry.event
       if (ev.type === "message") {
-        seenAgentEventIds.add(ev.id)
-        out.push({
-          id: `a_${ev.id}`,
-          type: "assistant",
-          eventSource: "agent",
-          content: ev.text.trim(),
-          timestamp: new Date().toISOString(),
-        })
+        const id = `a_${ev.id}`
+        const existing = agentMessageIndexById.get(id)
+        if (typeof existing === "number") {
+          const prev = out[existing]
+          if (prev && prev.type === "assistant") {
+            prev.content = ev.text.trim()
+          }
+        } else {
+          out.push({
+            id,
+            type: "assistant",
+            eventSource: "agent",
+            content: ev.text.trim(),
+            timestamp: new Date().toISOString(),
+          })
+          agentMessageIndexById.set(id, out.length - 1)
+        }
         continue
       }
 
       if (ev.type === "item") {
-        seenAgentEventIds.add(ev.id)
         const activity = activityFromAgentItem(ev)
-        out.push({
-          id: `ae_${ev.id}`,
-          type: "event",
-          eventSource: "agent",
-          content: activity.title,
-          timestamp: new Date().toISOString(),
-        })
+        const id = `ae_${ev.id}`
+        const existing = agentEventIndexById.get(id)
+        if (typeof existing === "number") {
+          const prev = out[existing]
+          if (prev && prev.type === "event") {
+            prev.content = activity.title
+          }
+        } else {
+          out.push({
+            id,
+            type: "event",
+            eventSource: "agent",
+            content: activity.title,
+            timestamp: new Date().toISOString(),
+          })
+          agentEventIndexById.set(id, out.length - 1)
+        }
         continue
       }
 
@@ -473,44 +482,6 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
           type: "event",
           eventSource: "agent",
           content: "Turn canceled",
-          timestamp: new Date().toISOString(),
-        })
-        continue
-      }
-    }
-  }
-
-  if (conversation.run_status === "running" && conversation.in_progress_entries.length > 0) {
-    for (const pending of conversation.in_progress_entries) {
-      if (pending.type !== "agent_event") continue
-      const ev = pending.event
-
-      if (ev.type === "message") {
-        if (seenAgentEventIds.has(ev.id)) continue
-        out.push({
-          id: `a_${ev.id}`,
-          type: "assistant",
-          eventSource: "agent",
-          content: ev.text.trim(),
-          timestamp: new Date().toISOString(),
-          isStreaming: true,
-        })
-        continue
-      }
-
-      if (ev.type === "item") {
-        if (seenAgentEventIds.has(ev.id)) continue
-        const activity = activityFromAgentItemLike({
-          id: ev.id,
-          kind: ev.kind,
-          payload: ev.payload,
-          forcedStatus: "running",
-        })
-        out.push({
-          id: `ae_${ev.id}`,
-          type: "event",
-          eventSource: "agent",
-          content: activity.title,
           timestamp: new Date().toISOString(),
         })
         continue

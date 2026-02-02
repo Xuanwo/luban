@@ -102,17 +102,26 @@ function key(workdirId: WorkspaceId, taskId: WorkspaceThreadId): string {
   return `${workdirId}:${taskId}`
 }
 
+function newEntryId(prefix: string): string {
+  return `${prefix}_${Math.random().toString(16).slice(2)}`
+}
+
 function userMessage(text: string): ConversationEntry {
-  return { type: "user_event", event: { type: "message", text, attachments: [] } }
+  return { type: "user_event", entry_id: newEntryId("ue"), event: { type: "message", text, attachments: [] } }
 }
 
 function agentMessage(text: string): ConversationEntry {
-  return { type: "agent_event", event: { type: "message", id: `agent_msg_${Math.random().toString(16).slice(2)}`, text } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    event: { type: "message", id: `agent_msg_${Math.random().toString(16).slice(2)}`, text },
+  }
 }
 
 function agentActivity(kind: AgentItemKind, payload: unknown): ConversationEntry {
   return {
     type: "agent_event",
+    entry_id: newEntryId("ae"),
     event: { type: "item", id: `agent_act_${Math.random().toString(16).slice(2)}`, kind, payload },
   }
 }
@@ -126,7 +135,7 @@ function systemEvent(args: {
 }): ConversationEntry {
   return {
     type: "system_event",
-    id: args.id,
+    entry_id: args.id,
     created_at_unix_ms: args.createdAtUnixMs,
     event: args.event,
   }
@@ -140,7 +149,6 @@ function conversationBase(args: {
   runStatus?: OperationStatus
   taskStatus?: TaskStatus
   entries: ConversationEntry[]
-  inProgressEntries?: ConversationEntry[]
 }): ConversationSnapshot {
   const runner = args.runner ?? "codex"
   return {
@@ -159,7 +167,6 @@ function conversationBase(args: {
     entries_total: args.entries.length,
     entries_start: 0,
     entries_truncated: false,
-    in_progress_entries: args.inProgressEntries ?? [],
     pending_prompts: [],
     queue_paused: false,
     remote_thread_id: null,
@@ -435,19 +442,93 @@ export function defaultMockFixtures(): MockFixtures {
           event: { event_type: "task_status_changed", from: "backlog", to: "in_progress" },
         }),
         userMessage("Please open a PR."),
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_1",
+            kind: "reasoning",
+            payload: { text: "Analyzing the codebase structure to understand the project layout" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_2",
+            kind: "command_execution",
+            payload: { command: "git status", status: "completed", aggregated_output: "On branch main\nnothing to commit" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_3",
+            kind: "file_change",
+            payload: { changes: [{ path: "src/utils/helpers.ts", kind: "update" }] },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_4",
+            kind: "command_execution",
+            payload: { command: "pnpm run lint", status: "completed", aggregated_output: "✓ No ESLint warnings or errors" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: { type: "item", id: "prog_5", kind: "web_search", payload: { query: "TypeScript best practices for error handling" } },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_6",
+            kind: "file_change",
+            payload: { changes: [{ path: "src/lib/api.ts", kind: "update" }, { path: "src/lib/types.ts", kind: "create" }] },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_7",
+            kind: "command_execution",
+            payload: { command: "pnpm run test", status: "completed", aggregated_output: "Test Suites: 12 passed\nTests: 48 passed" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_8",
+            kind: "reasoning",
+            payload: { text: "Preparing the pull request with proper commit message" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: {
+            type: "item",
+            id: "prog_9",
+            kind: "command_execution",
+            payload: { command: "git add -A && git commit -m 'feat: add new API endpoints'", status: "in_progress" },
+          },
+        },
       ],
       runStatus: "running",
-      inProgressEntries: [
-        { type: "agent_event", event: { type: "item", id: "prog_1", kind: "reasoning", payload: { text: "Analyzing the codebase structure to understand the project layout" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_2", kind: "command_execution", payload: { command: "git status", status: "completed", aggregated_output: "On branch main\nnothing to commit" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_3", kind: "file_change", payload: { changes: [{ path: "src/utils/helpers.ts", kind: "update" }] } } },
-        { type: "agent_event", event: { type: "item", id: "prog_4", kind: "command_execution", payload: { command: "pnpm run lint", status: "completed", aggregated_output: "✓ No ESLint warnings or errors" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_5", kind: "web_search", payload: { query: "TypeScript best practices for error handling" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_6", kind: "file_change", payload: { changes: [{ path: "src/lib/api.ts", kind: "update" }, { path: "src/lib/types.ts", kind: "create" }] } } },
-        { type: "agent_event", event: { type: "item", id: "prog_7", kind: "command_execution", payload: { command: "pnpm run test", status: "completed", aggregated_output: "Test Suites: 12 passed\nTests: 48 passed" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_8", kind: "reasoning", payload: { text: "Preparing the pull request with proper commit message" } } },
-        { type: "agent_event", event: { type: "item", id: "prog_9", kind: "command_execution", payload: { command: "git add -A && git commit -m 'feat: add new API endpoints'", status: "in_progress" } } },
-      ],
     }),
     [key(workdir3, task1)]: conversationBase({
       workdirId: workdir3,

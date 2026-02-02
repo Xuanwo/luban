@@ -29,14 +29,13 @@ Paginated read for a single conversation thread.
 
 ### Events
 
-`snapshot.entries` is an ordered timeline. Each element is a `ConversationEntry` tagged by `type`:
+`snapshot.entries` is an ordered timeline. Each element is a `ConversationEntry` tagged by `type` and includes a stable `entry_id` (unique per entry):
 
 - `system_event`: provider-appended lifecycle transitions (task created, status changes, etc.)
 - `user_event`: user-originated events (today: `event.type=message`)
 - `agent_event`: agent-originated events (messages, tool steps, turn lifecycle events)
 
-`snapshot.in_progress_entries` may include additional `ConversationEntry` values that are not yet
-persisted into `snapshot.entries` (typically `agent_event` while a turn is running).
+Streaming/tool updates are represented as additional appended `agent_event` entries; clients may fold by `AgentEvent.id` if desired.
 
 ### System events
 
@@ -46,7 +45,7 @@ user-visible lifecycle transitions (for example: task creation, task status chan
 The event payload is structured:
 
 - `type`: `system_event`
-- `id`: stable string identifier (unique within the conversation)
+- `entry_id`: stable string identifier (unique within the conversation)
 - `created_at_unix_ms`: millisecond timestamp
 - `event.event_type`: `task_created` | `task_status_changed`
 
@@ -55,6 +54,7 @@ The event payload is structured:
 User events are structured:
 
 - `type`: `user_event`
+- `entry_id`: stable string identifier (unique within the conversation)
 - `event.type`: `message`
 - `event.text`: string
 - `event.attachments`: array of `AttachmentRef`
@@ -64,16 +64,17 @@ User events are structured:
 Agent events are structured:
 
 - `type`: `agent_event`
+- `entry_id`: stable string identifier (unique within the conversation)
 - `event.type`: `message` | `item` | `turn_usage` | `turn_duration` | `turn_canceled` | `turn_error`
 
 For `event.type=message`:
 
-- `event.id`: stable string identifier (unique within the conversation)
+- `event.id`: stable string identifier (stable per message; multiple entries may share the same id)
 - `event.text`: string
 
 For `event.type=item`:
 
-- `event.id`: stable string identifier (unique within the conversation)
+- `event.id`: stable string identifier (stable per tool item; multiple entries may share the same id)
 - `event.kind`: `AgentItemKind`
 - `event.payload`: JSON value (implementation-defined)
 

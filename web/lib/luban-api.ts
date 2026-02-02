@@ -221,7 +221,6 @@ export type ConversationSnapshot = {
   entries_total?: number
   entries_start?: number
   entries_truncated?: boolean
-  in_progress_entries: ConversationEntry[]
   pending_prompts: QueuedPromptSnapshot[]
   queue_paused: boolean
   remote_thread_id: string | null
@@ -233,7 +232,7 @@ export type ConversationSystemEvent =
   | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
 
 export type ConversationSystemEventEntry = {
-  id: string
+  entry_id: string
   created_at_unix_ms: number
   event: ConversationSystemEvent
 }
@@ -346,9 +345,9 @@ export type AgentItem = {
 }
 
 export type ConversationEntry =
-  | { type: "system_event"; id: string; created_at_unix_ms: number; event: ConversationSystemEvent }
-  | { type: "user_event"; event: UserEvent }
-  | { type: "agent_event"; event: AgentEvent }
+  | { type: "system_event"; entry_id: string; created_at_unix_ms: number; event: ConversationSystemEvent }
+  | { type: "user_event"; entry_id: string; event: UserEvent }
+  | { type: "agent_event"; entry_id: string; event: AgentEvent }
 
 export type UserEvent = { type: "message"; text: string; attachments: AttachmentRef[] }
 

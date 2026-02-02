@@ -32,8 +32,8 @@ See `crates/luban_api`:
 Wire invariant for conversations:
 
 - `ConversationEntry` is tagged by `type` and only includes: `system_event`, `user_event`, `agent_event`.
-- `ConversationSnapshot.in_progress_entries` may be sent while a turn is running to preview agent events
-  that are not yet persisted into `entries`.
+- Each `ConversationEntry` includes a stable `entry_id` (unique per entry).
+- Streaming/tool updates are sent as additional appended `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
 
 ## Invariants
 
