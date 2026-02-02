@@ -21,7 +21,28 @@ export async function runLatestEventsVisible({ page }) {
   const progressEvents = eventLocator.filter({ hasText: 'Progress update' });
   await waitForLocatorCount(progressEvents, 3, 20_000);
 
-  await eventLocator.filter({ hasText: 'Progress update 1' }).first().waitFor({ state: 'visible' });
+  const progressUpdate1 = eventLocator.filter({ hasText: 'Progress update 1' }).first();
+  await progressUpdate1.waitFor({ state: 'visible' });
+  await progressUpdate1.scrollIntoViewIfNeeded();
+
+  const avatar = progressUpdate1.getByTestId('event-avatar');
+  const text = progressUpdate1.getByTestId('event-text');
+  await avatar.waitFor({ state: 'visible' });
+  await text.waitFor({ state: 'visible' });
+
+  const avatarBox = await avatar.boundingBox();
+  const textBox = await text.boundingBox();
+  if (!avatarBox) throw new Error('missing avatar bounding box');
+  if (!textBox) throw new Error('missing text bounding box');
+
+  const avatarCenterY = avatarBox.y + avatarBox.height / 2;
+  const textCenterY = textBox.y + textBox.height / 2;
+  const delta = Math.abs(avatarCenterY - textCenterY);
+  const tolerance = 1.5;
+  if (delta > tolerance) {
+    throw new Error(`expected avatar/text vertical alignment within ${tolerance}px, got delta=${delta}px`);
+  }
+
   await eventLocator.filter({ hasText: 'Progress update 2' }).first().waitFor({ state: 'visible' });
   const runningRow = eventLocator.filter({ hasText: 'Progress update 3' }).first();
   await runningRow.waitFor({ state: 'visible' });

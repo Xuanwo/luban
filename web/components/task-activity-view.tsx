@@ -355,14 +355,14 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
         className="flex items-center justify-center flex-shrink-0 relative z-10"
         style={{ 
           width: '14px', 
-          height: '18px',
+          height: '16.8px',
           marginLeft: '13px',  /* Align icon center (13+7=20px) with card avatar center */
           marginRight: '4px',
-          paddingTop: '2px',
           backgroundColor: COLORS.background
         }}
       >
         <div
+          data-testid="event-avatar"
           className="flex items-center justify-center text-white"
           style={{ 
             width: '14px', 
@@ -379,6 +379,7 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
       
       {/* Event text - Linear style: 12px, muted colors, inline */}
       <span 
+        data-testid="event-text"
         className="flex items-center flex-wrap"
         style={{ fontSize: '12px', lineHeight: '16.8px', color: COLORS.textMuted }}
       >
