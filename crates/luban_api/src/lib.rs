@@ -332,8 +332,6 @@ pub struct ConversationSnapshot {
     pub entries_start: u64,
     #[serde(default)]
     pub entries_truncated: bool,
-    #[serde(default, alias = "in_progress_items")]
-    pub in_progress_entries: Vec<ConversationEntry>,
     #[serde(default)]
     pub pending_prompts: Vec<QueuedPromptSnapshot>,
     #[serde(default)]
@@ -543,7 +541,8 @@ pub enum ConversationEntry {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationSystemEventEntry {
-    pub id: String,
+    #[serde(rename = "entry_id", alias = "id")]
+    pub entry_id: String,
     pub created_at_unix_ms: u64,
     pub event: ConversationSystemEvent,
 }
@@ -557,6 +556,8 @@ pub enum ConversationSystemEvent {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserEventEntry {
+    #[serde(default)]
+    pub entry_id: String,
     pub event: UserEvent,
 }
 
@@ -574,6 +575,8 @@ pub struct UserMessage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentEventEntry {
+    #[serde(default)]
+    pub entry_id: String,
     pub event: AgentEvent,
 }
 

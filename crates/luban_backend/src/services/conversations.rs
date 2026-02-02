@@ -79,20 +79,23 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
             created_at_unix_ms,
             event,
         } => Some(ConversationEntry::SystemEvent {
-            id,
+            entry_id: id,
             created_at_unix_ms,
             event,
         }),
         LegacyConversationEntry::UserMessage { text, attachments } => {
             Some(ConversationEntry::UserEvent {
+                entry_id: String::new(),
                 event: UserEvent::Message { text, attachments },
             })
         }
         LegacyConversationEntry::CodexItem { item } => match *item {
             CodexThreadItem::AgentMessage { id, text } => Some(ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: AgentEvent::Message { id, text },
             }),
             other => Some(ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -101,13 +104,16 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
         LegacyConversationEntry::TurnUsage { .. } => None,
         LegacyConversationEntry::TurnDuration { duration_ms } => {
             Some(ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: AgentEvent::TurnDuration { duration_ms },
             })
         }
         LegacyConversationEntry::TurnCanceled => Some(ConversationEntry::AgentEvent {
+            entry_id: String::new(),
             event: AgentEvent::TurnCanceled,
         }),
         LegacyConversationEntry::TurnError { message } => Some(ConversationEntry::AgentEvent {
+            entry_id: String::new(),
             event: AgentEvent::TurnError { message },
         }),
     }
@@ -346,7 +352,7 @@ impl GitWorkspaceService {
             .filter(|e| matches!(e, ConversationEntry::UserEvent { .. }))
             .count();
         let snapshot_has_unscoped_codex_items = snapshot.entries.iter().any(|e| match e {
-            ConversationEntry::AgentEvent { event } => match event {
+            ConversationEntry::AgentEvent { event, .. } => match event {
                 AgentEvent::Message { id, .. } => !id.contains('/'),
                 AgentEvent::Item { item } => !super::codex_item_id(item).contains('/'),
                 _ => false,
@@ -354,7 +360,7 @@ impl GitWorkspaceService {
             _ => false,
         });
         let snapshot_has_scoped_codex_items = snapshot.entries.iter().any(|e| match e {
-            ConversationEntry::AgentEvent { event } => match event {
+            ConversationEntry::AgentEvent { event, .. } => match event {
                 AgentEvent::Message { id, .. } => id.contains('/'),
                 AgentEvent::Item { item } => super::codex_item_id(item).contains('/'),
                 _ => false,
@@ -510,6 +516,7 @@ mod tests {
             .filter_map(|e| match e {
                 ConversationEntry::AgentEvent {
                     event: AgentEvent::Message { text, .. },
+                    ..
                 } => Some(text.as_str()),
                 _ => None,
             })
@@ -549,24 +556,28 @@ mod tests {
 
         let broken_entries = vec![
             ConversationEntry::UserEvent {
+                entry_id: String::new(),
                 event: UserEvent::Message {
                     text: "u1".to_owned(),
                     attachments: Vec::new(),
                 },
             },
             ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "A".to_owned(),
                 },
             },
             ConversationEntry::UserEvent {
+                entry_id: String::new(),
                 event: UserEvent::Message {
                     text: "u2".to_owned(),
                     attachments: Vec::new(),
                 },
             },
             ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "B".to_owned(),
@@ -586,8 +597,8 @@ mod tests {
             .filter(|e| matches!(e, ConversationEntry::AgentEvent { .. }))
             .count();
         assert_eq!(
-            before_agent_count, 1,
-            "expected broken import to drop duplicates"
+            before_agent_count, 2,
+            "expected broken import to preserve duplicates"
         );
 
         let after = svc
@@ -599,6 +610,7 @@ mod tests {
             .filter_map(|e| match e {
                 ConversationEntry::AgentEvent {
                     event: AgentEvent::Message { text, .. },
+                    ..
                 } => Some(text.as_str()),
                 _ => None,
             })

@@ -1,8 +1,5 @@
 use crate::persistence;
-use crate::state::{
-    apply_draft_text_diff, codex_item_id, entries_is_prefix, entries_is_suffix,
-    flush_in_progress_items,
-};
+use crate::state::{apply_draft_text_diff, entries_is_prefix, entries_is_suffix};
 use crate::{
     Action, AgentRunConfig, AppState, AttachmentRef, CodexThreadEvent, ConversationEntry,
     DraftAttachment, Effect, MainPane, OperationStatus, PersistedAppState, Project, ProjectId,
@@ -14,7 +11,7 @@ use crate::{
 };
 use std::collections::VecDeque;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     path::PathBuf,
 };
 
@@ -41,11 +38,9 @@ fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> 
     conversation.run_status = OperationStatus::Idle;
     conversation.current_run_config = None;
     conversation.active_run_id = None;
-    flush_in_progress_items(conversation);
-    conversation.in_progress_items.clear();
-    conversation.in_progress_order.clear();
     conversation.queue_paused = true;
     conversation.push_entry(ConversationEntry::AgentEvent {
+        entry_id: String::new(),
         event: crate::AgentEvent::TurnCanceled,
     });
     Some(run_id)
@@ -506,7 +501,7 @@ impl AppState {
                             .entries
                             .iter()
                             .filter_map(|entry| match entry {
-                                ConversationEntry::UserEvent { event } => match event {
+                                ConversationEntry::UserEvent { event, .. } => match event {
                                     crate::UserEvent::Message { text, .. } => {
                                         Some(text.trim().to_owned())
                                     }
@@ -580,6 +575,8 @@ impl AppState {
                 snapshot,
             } => {
                 let default_amp_mode = self.agent_amp_mode.clone();
+                let mut snapshot = snapshot;
+                snapshot.ensure_entry_ids();
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 let snapshot_model_id = snapshot
                     .agent_model_id
@@ -628,9 +625,7 @@ impl AppState {
 
                 let should_apply_queue_snapshot = conversation.entries.is_empty()
                     && conversation.pending_prompts.is_empty()
-                    && conversation.run_status == OperationStatus::Idle
-                    && conversation.in_progress_items.is_empty()
-                    && conversation.in_progress_order.is_empty();
+                    && conversation.run_status == OperationStatus::Idle;
                 if should_apply_queue_snapshot {
                     conversation.pending_prompts = VecDeque::from(snapshot.pending_prompts.clone());
                     conversation.queue_paused = snapshot.queue_paused;
@@ -1253,9 +1248,6 @@ impl AppState {
                         let _ = usage;
                         conversation.run_status = OperationStatus::Idle;
                         conversation.current_run_config = None;
-                        flush_in_progress_items(conversation);
-                        conversation.in_progress_items.clear();
-                        conversation.in_progress_order.clear();
                         start_next_queued_prompt(conversation, workspace_id, thread_id)
                             .into_iter()
                             .collect()
@@ -1265,6 +1257,7 @@ impl AppState {
                             return Vec::new();
                         }
                         conversation.push_entry(ConversationEntry::AgentEvent {
+                            entry_id: String::new(),
                             event: crate::AgentEvent::TurnDuration { duration_ms },
                         });
                         Vec::new()
@@ -1273,16 +1266,14 @@ impl AppState {
                         if conversation.active_run_id != Some(run_id) {
                             return Vec::new();
                         }
-                        flush_in_progress_items(conversation);
                         conversation.push_entry(ConversationEntry::AgentEvent {
+                            entry_id: String::new(),
                             event: crate::AgentEvent::TurnError {
                                 message: error.message.clone(),
                             },
                         });
                         conversation.run_status = OperationStatus::Idle;
                         conversation.current_run_config = None;
-                        conversation.in_progress_items.clear();
-                        conversation.in_progress_order.clear();
                         conversation.queue_paused = true;
                         self.last_error = Some(error.message);
                         Vec::new()
@@ -1292,41 +1283,28 @@ impl AppState {
                         if conversation.active_run_id != Some(run_id) {
                             return Vec::new();
                         }
-                        let id = codex_item_id(&item).to_owned();
-                        conversation.in_progress_items.insert(id.clone(), item);
-                        if !conversation.in_progress_order.iter().any(|v| v == &id) {
-                            conversation.in_progress_order.push_back(id);
-                        }
+                        conversation.push_codex_item(item);
                         Vec::new()
                     }
                     CodexThreadEvent::ItemCompleted { item } => {
                         if conversation.active_run_id != Some(run_id) {
                             return Vec::new();
                         }
-                        let id = codex_item_id(&item);
-                        conversation.in_progress_items.remove(id);
-                        if let Some(pos) =
-                            conversation.in_progress_order.iter().position(|v| v == id)
-                        {
-                            conversation.in_progress_order.remove(pos);
-                        }
-                        conversation.push_codex_item_if_new(item);
+                        conversation.push_codex_item(item);
                         Vec::new()
                     }
                     CodexThreadEvent::Error { message } => {
                         if conversation.active_run_id != Some(run_id) {
                             return Vec::new();
                         }
-                        flush_in_progress_items(conversation);
                         conversation.push_entry(ConversationEntry::AgentEvent {
+                            entry_id: String::new(),
                             event: crate::AgentEvent::TurnError {
                                 message: message.clone(),
                             },
                         });
                         conversation.run_status = OperationStatus::Idle;
                         conversation.current_run_config = None;
-                        conversation.in_progress_items.clear();
-                        conversation.in_progress_order.clear();
                         conversation.queue_paused = true;
                         self.last_error = Some(message);
                         Vec::new()
@@ -1350,9 +1328,6 @@ impl AppState {
                     if conversation.run_status == OperationStatus::Running {
                         conversation.run_status = OperationStatus::Idle;
                         conversation.current_run_config = None;
-                        flush_in_progress_items(conversation);
-                        conversation.in_progress_items.clear();
-                        conversation.in_progress_order.clear();
                     }
                 }
 
@@ -1390,7 +1365,7 @@ impl AppState {
                 let mut conversation = self.default_conversation(thread_id);
                 conversation.task_status = crate::TaskStatus::Backlog;
                 conversation.push_entry(ConversationEntry::SystemEvent {
-                    id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
+                    entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
                     created_at_unix_ms: now_unix_ms(),
                     event: crate::ConversationSystemEvent::TaskCreated,
                 });
@@ -1873,7 +1848,7 @@ impl AppState {
                 let from_status = conversation.task_status;
                 conversation.task_status = task_status;
                 conversation.push_entry(ConversationEntry::SystemEvent {
-                    id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
+                    entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
                     created_at_unix_ms: now_unix_ms(),
                     event: crate::ConversationSystemEvent::TaskStatusChanged {
                         from: from_status,
@@ -2111,15 +2086,12 @@ impl AppState {
             entries: Vec::new(),
             entries_total: 0,
             entries_start: 0,
-            codex_item_ids: HashSet::new(),
             active_run_id: None,
             next_run_id: 1,
             run_status: OperationStatus::Idle,
             run_started_at_unix_ms: None,
             run_finished_at_unix_ms: None,
             current_run_config: None,
-            in_progress_items: BTreeMap::new(),
-            in_progress_order: VecDeque::new(),
             next_queued_prompt_id: 1,
             pending_prompts: VecDeque::new(),
             queue_paused: false,
@@ -2357,6 +2329,7 @@ fn start_agent_run(
     conversation.active_run_id = Some(run_id);
 
     conversation.push_entry(ConversationEntry::UserEvent {
+        entry_id: String::new(),
         event: crate::UserEvent::Message {
             text: text.clone(),
             attachments: attachments.clone(),
@@ -2366,8 +2339,6 @@ fn start_agent_run(
     conversation.run_started_at_unix_ms = None;
     conversation.run_finished_at_unix_ms = None;
     conversation.current_run_config = Some(run_config.clone());
-    conversation.in_progress_items.clear();
-    conversation.in_progress_order.clear();
 
     Effect::RunAgentTurn {
         workspace_id,
@@ -2386,6 +2357,19 @@ mod tests {
         ChatScrollAnchor, CodexCommandExecutionStatus, CodexThreadError, CodexThreadItem,
         CodexUsage, ContextTokenKind, ConversationSnapshot, ConversationThreadMeta,
     };
+
+    fn codex_item_id(item: &CodexThreadItem) -> &str {
+        match item {
+            CodexThreadItem::AgentMessage { id, .. } => id,
+            CodexThreadItem::Reasoning { id, .. } => id,
+            CodexThreadItem::CommandExecution { id, .. } => id,
+            CodexThreadItem::FileChange { id, .. } => id,
+            CodexThreadItem::McpToolCall { id, .. } => id,
+            CodexThreadItem::WebSearch { id, .. } => id,
+            CodexThreadItem::TodoList { id, .. } => id,
+            CodexThreadItem::Error { id, .. } => id,
+        }
+    }
 
     fn default_thread_id() -> WorkspaceThreadId {
         WorkspaceThreadId(1)
@@ -2914,6 +2898,7 @@ mod tests {
             amp_mode: None,
             entries: (1..=8)
                 .map(|idx| ConversationEntry::UserEvent {
+                    entry_id: String::new(),
                     event: crate::UserEvent::Message {
                         text: format!("Message {idx}"),
                         attachments: Vec::new(),
@@ -3571,7 +3556,7 @@ mod tests {
     }
 
     #[test]
-    fn in_progress_order_tracks_started_items_and_removes_on_complete() {
+    fn agent_item_updates_are_appended_as_entries() {
         let mut state = AppState::new();
         state.apply(Action::AddProject {
             path: PathBuf::from("/tmp/repo"),
@@ -3600,6 +3585,7 @@ mod tests {
             .expect("missing conversation")
             .active_run_id
             .expect("missing active run id");
+
         state.apply(Action::AgentEventReceived {
             workspace_id,
             thread_id,
@@ -3629,39 +3615,22 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
-        assert_eq!(
-            conversation
-                .in_progress_order
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec!["r-1".to_owned(), "c-1".to_owned()]
-        );
 
-        state.apply(Action::AgentEventReceived {
-            workspace_id,
-            thread_id,
-            run_id,
-            event: CodexThreadEvent::ItemCompleted {
-                item: CodexThreadItem::Reasoning {
-                    id: "r-1".to_owned(),
-                    text: "done".to_owned(),
-                },
-            },
-        });
-
-        let conversation = state
-            .workspace_thread_conversation(workspace_id, thread_id)
-            .expect("missing conversation");
-        assert_eq!(
-            conversation
-                .in_progress_order
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec!["c-1".to_owned()]
-        );
-        assert!(!conversation.in_progress_items.contains_key("r-1"));
+        let agent_item_entries: Vec<(&str, &str)> = conversation
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ConversationEntry::AgentEvent {
+                    entry_id,
+                    event: crate::AgentEvent::Item { item },
+                } => Some((entry_id.as_str(), codex_item_id(item.as_ref()))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(agent_item_entries.len(), 2);
+        assert_eq!(agent_item_entries[0].1, "r-1");
+        assert_eq!(agent_item_entries[1].1, "c-1");
+        assert_ne!(agent_item_entries[0].0, agent_item_entries[1].0);
     }
 
     #[test]
@@ -3779,7 +3748,8 @@ mod tests {
         assert!(matches!(
             conversation.entries.last(),
             Some(ConversationEntry::AgentEvent {
-                event: crate::AgentEvent::TurnCanceled
+                event: crate::AgentEvent::TurnCanceled,
+                ..
             })
         ));
 
@@ -4129,14 +4099,15 @@ mod tests {
                 .run_status,
             OperationStatus::Running
         );
-        assert_eq!(
-            state
-                .workspace_conversation(workspace_id)
-                .unwrap()
-                .in_progress_items
-                .len(),
-            1
-        );
+        let before_entries = &state.workspace_conversation(workspace_id).unwrap().entries;
+        assert_eq!(before_entries.len(), 2);
+        assert!(matches!(
+            &before_entries[1],
+            ConversationEntry::AgentEvent {
+                event: crate::AgentEvent::Message { id, .. },
+                ..
+            } if id == "item_0"
+        ));
 
         state.apply(Action::ConversationLoaded {
             workspace_id,
@@ -4160,12 +4131,12 @@ mod tests {
 
         let conversation = state.workspace_conversation(workspace_id).unwrap();
         assert_eq!(conversation.run_status, OperationStatus::Running);
-        assert_eq!(conversation.in_progress_items.len(), 1);
-        assert_eq!(conversation.entries.len(), 1);
+        assert_eq!(conversation.entries.len(), 2);
         assert!(matches!(
             &conversation.entries[0],
             ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. }
+                event: crate::UserEvent::Message { text, .. },
+                ..
             } if text == "Hello"
         ));
         assert_eq!(conversation.thread_id.as_deref(), Some("thread_0"));
@@ -4207,6 +4178,7 @@ mod tests {
                 thinking_effort: None,
                 amp_mode: None,
                 entries: vec![ConversationEntry::UserEvent {
+                    entry_id: String::new(),
                     event: crate::UserEvent::Message {
                         text: "Hello".to_owned(),
                         attachments: Vec::new(),
@@ -4226,13 +4198,15 @@ mod tests {
         assert!(matches!(
             &after[0],
             ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. }
+                event: crate::UserEvent::Message { text, .. },
+                ..
             } if text == "Hello"
         ));
         assert!(matches!(
             &after[1],
             ConversationEntry::AgentEvent {
-                event: crate::AgentEvent::TurnDuration { duration_ms: 1234 }
+                event: crate::AgentEvent::TurnDuration { duration_ms: 1234 },
+                ..
             }
         ));
     }
@@ -4254,6 +4228,7 @@ mod tests {
                 thinking_effort: None,
                 amp_mode: None,
                 entries: vec![ConversationEntry::UserEvent {
+                    entry_id: String::new(),
                     event: crate::UserEvent::Message {
                         text: "Hello".to_owned(),
                         attachments: Vec::new(),
@@ -4280,12 +4255,14 @@ mod tests {
                 amp_mode: None,
                 entries: vec![
                     ConversationEntry::UserEvent {
+                        entry_id: String::new(),
                         event: crate::UserEvent::Message {
                             text: "Hello".to_owned(),
                             attachments: Vec::new(),
                         },
                     },
                     ConversationEntry::AgentEvent {
+                        entry_id: String::new(),
                         event: crate::AgentEvent::TurnDuration { duration_ms: 1234 },
                     },
                 ],
@@ -4303,10 +4280,12 @@ mod tests {
             &after[..],
             [
                 ConversationEntry::UserEvent {
-                    event: crate::UserEvent::Message { .. }
+                    event: crate::UserEvent::Message { .. },
+                    ..
                 },
                 ConversationEntry::AgentEvent {
-                    event: crate::AgentEvent::TurnDuration { duration_ms: 1234 }
+                    event: crate::AgentEvent::TurnDuration { duration_ms: 1234 },
+                    ..
                 }
             ]
         ));
@@ -4468,7 +4447,8 @@ mod tests {
         assert!(matches!(
             &conversation.entries[0],
             ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. }
+                event: crate::UserEvent::Message { text, .. },
+                ..
             } if text == "Hello"
         ));
     }
@@ -4519,7 +4499,8 @@ mod tests {
                 matches!(
                     e,
                     ConversationEntry::AgentEvent {
-                        event: crate::AgentEvent::Message { id, .. }
+                        event: crate::AgentEvent::Message { id, .. },
+                        ..
                     } if id == "item_0"
                 )
             })
@@ -4579,7 +4560,8 @@ mod tests {
                 matches!(
                     e,
                     ConversationEntry::AgentEvent {
-                        event: crate::AgentEvent::Message { id, .. }
+                        event: crate::AgentEvent::Message { id, .. },
+                        ..
                     } if id == "item_0"
                 )
             })
@@ -4611,11 +4593,11 @@ mod tests {
 
         let conversation = state.workspace_conversation(workspace_id).unwrap();
         assert_eq!(conversation.run_status, OperationStatus::Idle);
-        assert!(conversation.in_progress_items.is_empty());
         assert!(matches!(
             conversation.entries.last(),
             Some(ConversationEntry::AgentEvent {
-                event: crate::AgentEvent::TurnCanceled
+                event: crate::AgentEvent::TurnCanceled,
+                ..
             })
         ));
     }
@@ -4785,13 +4767,15 @@ mod tests {
         assert!(matches!(
             &conversation.entries[0],
             ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. }
+                event: crate::UserEvent::Message { text, .. },
+                ..
             } if text == "First"
         ));
         assert!(matches!(
             &conversation.entries[1],
             ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. }
+                event: crate::UserEvent::Message { text, .. },
+                ..
             } if text == "Second"
         ));
     }
@@ -4931,7 +4915,8 @@ mod tests {
             !matches!(
                 entry,
                 ConversationEntry::AgentEvent {
-                    event: crate::AgentEvent::TurnError { .. }
+                    event: crate::AgentEvent::TurnError { .. },
+                    ..
                 }
             )
         }));

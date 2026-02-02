@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 17;
+const LATEST_SCHEMA_VERSION: u32 = 18;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -155,6 +155,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations/0017_conversation_events_v2.sql"
+        )),
+    ),
+    (
+        18,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0018_conversation_entry_id.sql"
         )),
     ),
 ];
@@ -2310,25 +2317,27 @@ impl SqliteDatabase {
         )?;
 
         if inserted > 0 {
+            let entry_id = "sys_1".to_owned();
             let entry = ConversationEntry::SystemEvent {
-                id: "sys_1".to_owned(),
+                entry_id: entry_id.clone(),
                 created_at_unix_ms: now_unix_millis(),
                 event: luban_domain::ConversationSystemEvent::TaskCreated,
             };
             let payload_json =
                 serde_json::to_string(&entry).context("failed to serialize conversation entry")?;
             self.conn.execute(
-                "INSERT OR IGNORE INTO conversation_entries
-                 (project_slug, workspace_name, thread_local_id, seq, kind, codex_item_id, payload_json, created_at)
-                 VALUES (?1, ?2, ?3, 1, 'system_event', NULL, ?4, ?5)",
-                params![
-                    project_slug,
-                    workspace_name,
-                    thread_local_id as i64,
-                    payload_json,
-                    now
-                ],
-            )?;
+                    "INSERT OR IGNORE INTO conversation_entries
+                     (project_slug, workspace_name, thread_local_id, seq, entry_id, kind, codex_item_id, payload_json, created_at)
+                     VALUES (?1, ?2, ?3, 1, ?4, 'system_event', NULL, ?5, ?6)",
+                    params![
+                        project_slug,
+                        workspace_name,
+                        thread_local_id as i64,
+                        entry_id,
+                        payload_json,
+                        now,
+                    ],
+                )?;
         }
 
         Ok(())
@@ -2543,7 +2552,7 @@ impl SqliteDatabase {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserEvent { event } => match event {
+            ConversationEntry::UserEvent { event, .. } => match event {
                 luban_domain::UserEvent::Message { text, .. } => {
                     let title = luban_domain::derive_thread_title(text);
                     if title.is_empty() { None } else { Some(title) }
@@ -2554,27 +2563,43 @@ impl SqliteDatabase {
 
         let now = now_unix_seconds();
         let tx = self.conn.transaction()?;
-        for entry in entries {
-            let (kind, codex_item_id) = conversation_entry_index_fields(entry);
-            let payload_json = serde_json::to_string(entry).context("failed to serialize entry")?;
-            tx.execute(
+        let mut next_seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1
+             FROM conversation_entries
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+            |row| row.get(0),
+        )?;
+        {
+            let mut stmt = tx.prepare(
                 "INSERT OR IGNORE INTO conversation_entries
-                 (project_slug, workspace_name, thread_local_id, seq, kind, codex_item_id, payload_json, created_at)
-                 VALUES (?1, ?2, ?3,
-                   (SELECT COALESCE(MAX(seq), 0) + 1
-                    FROM conversation_entries
-                    WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3),
-                   ?4, ?5, ?6, ?7)",
-                params![
+                 (project_slug, workspace_name, thread_local_id, seq, entry_id, kind, codex_item_id, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for entry in entries {
+                let (kind, codex_item_id, entry_id) = conversation_entry_index_fields(entry);
+                let entry_id = if entry_id.is_empty() {
+                    format!("e_{next_seq}")
+                } else {
+                    entry_id.to_owned()
+                };
+                let mut stored_entry = entry.clone();
+                set_conversation_entry_id(&mut stored_entry, entry_id.clone());
+                let payload_json =
+                    serde_json::to_string(&stored_entry).context("failed to serialize entry")?;
+                stmt.execute(params![
                     project_slug,
                     workspace_name,
                     thread_local_id as i64,
+                    next_seq,
+                    entry_id,
                     kind,
                     codex_item_id,
                     payload_json,
                     now
-                ],
-            )?;
+                ])?;
+                next_seq += 1;
+            }
         }
         tx.execute(
             "UPDATE conversations
@@ -2614,7 +2639,7 @@ impl SqliteDatabase {
         )?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserEvent { event } => match event {
+            ConversationEntry::UserEvent { event, .. } => match event {
                 luban_domain::UserEvent::Message { text, .. } => {
                     let title = luban_domain::derive_thread_title(text);
                     if title.is_empty() { None } else { Some(title) }
@@ -2626,19 +2651,27 @@ impl SqliteDatabase {
         if !entries.is_empty() {
             let mut stmt = tx.prepare(
                 "INSERT OR IGNORE INTO conversation_entries
-                 (project_slug, workspace_name, thread_local_id, seq, kind, codex_item_id, payload_json, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (project_slug, workspace_name, thread_local_id, seq, entry_id, kind, codex_item_id, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             for (idx, entry) in entries.iter().enumerate() {
                 let seq = (idx.saturating_add(1)) as i64;
-                let (kind, codex_item_id) = conversation_entry_index_fields(entry);
+                let (kind, codex_item_id, entry_id) = conversation_entry_index_fields(entry);
+                let entry_id = if entry_id.is_empty() {
+                    format!("e_{seq}")
+                } else {
+                    entry_id.to_owned()
+                };
+                let mut stored_entry = entry.clone();
+                set_conversation_entry_id(&mut stored_entry, entry_id.clone());
                 let payload_json =
-                    serde_json::to_string(entry).context("failed to serialize entry")?;
+                    serde_json::to_string(&stored_entry).context("failed to serialize entry")?;
                 stmt.execute(params![
                     project_slug,
                     workspace_name,
                     thread_local_id as i64,
                     seq,
+                    entry_id,
                     kind,
                     codex_item_id,
                     payload_json,
@@ -2783,21 +2816,22 @@ impl SqliteDatabase {
             ));
 
         let mut stmt = self.conn.prepare(
-            "SELECT payload_json
+            "SELECT entry_id, payload_json
              FROM conversation_entries
              WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
              ORDER BY seq ASC",
         )?;
         let rows = stmt.query_map(
             params![project_slug, workspace_name, thread_local_id as i64],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )?;
 
         let mut entries = Vec::new();
         for row in rows {
-            let json = row?;
-            let entry: ConversationEntry =
+            let (entry_id, json) = row?;
+            let mut entry: ConversationEntry =
                 serde_json::from_str(&json).context("failed to parse entry")?;
+            set_conversation_entry_id(&mut entry, entry_id);
             entries.push(entry);
         }
 
@@ -2947,7 +2981,7 @@ impl SqliteDatabase {
             let start_exclusive = i64::try_from(start).unwrap_or(i64::MAX);
             let end_inclusive = i64::try_from(end).unwrap_or(i64::MAX);
             let mut stmt = self.conn.prepare(
-                "SELECT payload_json
+                "SELECT entry_id, payload_json
                  FROM conversation_entries
                  WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
                    AND seq > ?4 AND seq <= ?5
@@ -2961,13 +2995,14 @@ impl SqliteDatabase {
                     start_exclusive,
                     end_inclusive
                 ],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )?;
 
             for row in rows {
-                let json = row?;
-                let entry: ConversationEntry =
+                let (entry_id, json) = row?;
+                let mut entry: ConversationEntry =
                     serde_json::from_str(&json).context("failed to parse entry")?;
+                set_conversation_entry_id(&mut entry, entry_id);
                 entries.push(entry);
             }
         }
@@ -3171,7 +3206,7 @@ impl SqliteDatabase {
             );
 
             let entry = ConversationEntry::SystemEvent {
-                id,
+                entry_id: id,
                 created_at_unix_ms: now_unix_millis(),
                 event: luban_domain::ConversationSystemEvent::TaskStatusChanged {
                     from,
@@ -3373,39 +3408,46 @@ fn migrate_conversation_entries_v17(conn: &mut Connection) -> anyhow::Result<()>
                 created_at_unix_ms,
                 event,
             } => ConversationEntry::SystemEvent {
-                id,
+                entry_id: id,
                 created_at_unix_ms,
                 event,
             },
             LegacyConversationEntry::UserMessage { text, attachments } => {
                 ConversationEntry::UserEvent {
+                    entry_id: String::new(),
                     event: luban_domain::UserEvent::Message { text, attachments },
                 }
             }
             LegacyConversationEntry::CodexItem { item } => match *item {
                 luban_domain::CodexThreadItem::AgentMessage { id, text } => {
                     ConversationEntry::AgentEvent {
+                        entry_id: String::new(),
                         event: luban_domain::AgentEvent::Message { id, text },
                     }
                 }
                 other => ConversationEntry::AgentEvent {
+                    entry_id: String::new(),
                     event: luban_domain::AgentEvent::Item {
                         item: Box::new(other),
                     },
                 },
             },
             LegacyConversationEntry::TurnUsage { usage } => ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: luban_domain::AgentEvent::TurnUsage { usage },
             },
             LegacyConversationEntry::TurnDuration { duration_ms } => {
                 ConversationEntry::AgentEvent {
+                    entry_id: String::new(),
                     event: luban_domain::AgentEvent::TurnDuration { duration_ms },
                 }
             }
             LegacyConversationEntry::TurnCanceled => ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: luban_domain::AgentEvent::TurnCanceled,
             },
             LegacyConversationEntry::TurnError { message } => ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: luban_domain::AgentEvent::TurnError { message },
             },
         }
@@ -3487,22 +3529,40 @@ fn workspace_status_from_i64(v: i64) -> anyhow::Result<WorkspaceStatus> {
     }
 }
 
-fn conversation_entry_index_fields(entry: &ConversationEntry) -> (&'static str, Option<&str>) {
+fn conversation_entry_index_fields(
+    entry: &ConversationEntry,
+) -> (&'static str, Option<&str>, &str) {
     match entry {
-        ConversationEntry::SystemEvent { .. } => ("system_event", None),
-        ConversationEntry::UserEvent { event } => match event {
-            luban_domain::UserEvent::Message { .. } => ("user_message", None),
+        ConversationEntry::SystemEvent { entry_id, .. } => {
+            ("system_event", None, entry_id.as_str())
+        }
+        ConversationEntry::UserEvent { entry_id, event } => match event {
+            luban_domain::UserEvent::Message { .. } => ("user_message", None, entry_id.as_str()),
         },
-        ConversationEntry::AgentEvent { event } => match event {
-            luban_domain::AgentEvent::Message { id, .. } => ("codex_item", Some(id.as_str())),
-            luban_domain::AgentEvent::Item { item } => {
-                ("codex_item", Some(codex_item_id(item.as_ref())))
+        ConversationEntry::AgentEvent { entry_id, event } => match event {
+            luban_domain::AgentEvent::Message { id, .. } => {
+                ("codex_item", Some(id.as_str()), entry_id.as_str())
             }
-            luban_domain::AgentEvent::TurnUsage { .. } => ("turn_usage", None),
-            luban_domain::AgentEvent::TurnDuration { .. } => ("turn_duration", None),
-            luban_domain::AgentEvent::TurnCanceled => ("turn_canceled", None),
-            luban_domain::AgentEvent::TurnError { .. } => ("turn_error", None),
+            luban_domain::AgentEvent::Item { item } => (
+                "codex_item",
+                Some(codex_item_id(item.as_ref())),
+                entry_id.as_str(),
+            ),
+            luban_domain::AgentEvent::TurnUsage { .. } => ("turn_usage", None, entry_id.as_str()),
+            luban_domain::AgentEvent::TurnDuration { .. } => {
+                ("turn_duration", None, entry_id.as_str())
+            }
+            luban_domain::AgentEvent::TurnCanceled => ("turn_canceled", None, entry_id.as_str()),
+            luban_domain::AgentEvent::TurnError { .. } => ("turn_error", None, entry_id.as_str()),
         },
+    }
+}
+
+fn set_conversation_entry_id(entry: &mut ConversationEntry, entry_id: String) {
+    match entry {
+        ConversationEntry::SystemEvent { entry_id: slot, .. } => *slot = entry_id,
+        ConversationEntry::UserEvent { entry_id: slot, .. } => *slot = entry_id,
+        ConversationEntry::AgentEvent { entry_id: slot, .. } => *slot = entry_id,
     }
 }
 
@@ -3726,7 +3786,8 @@ mod tests {
         assert!(matches!(
             snapshot.entries.as_slice(),
             [ConversationEntry::UserEvent {
-                event: luban_domain::UserEvent::Message { text, .. }
+                event: luban_domain::UserEvent::Message { text, .. },
+                ..
             }, ..] if text == "Hello"
         ));
     }
@@ -3867,9 +3928,11 @@ mod tests {
         };
         let entry = match item {
             CodexThreadItem::AgentMessage { id, text } => ConversationEntry::AgentEvent {
+                entry_id: "e_1".to_owned(),
                 event: luban_domain::AgentEvent::Message { id, text },
             },
             other => ConversationEntry::AgentEvent {
+                entry_id: "e_1".to_owned(),
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -4023,6 +4086,7 @@ mod tests {
 
         for idx in 0..10_u64 {
             let entry = ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: luban_domain::AgentEvent::TurnDuration { duration_ms: idx },
             };
             db.append_conversation_entries("p", "w", 1, std::slice::from_ref(&entry))
@@ -4037,13 +4101,16 @@ mod tests {
             &snapshot.entries[..],
             [
                 ConversationEntry::AgentEvent {
-                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 4 }
+                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 4 },
+                    ..
                 },
                 ConversationEntry::AgentEvent {
-                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 5 }
+                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 5 },
+                    ..
                 },
                 ConversationEntry::AgentEvent {
-                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 6 }
+                    event: luban_domain::AgentEvent::TurnDuration { duration_ms: 6 },
+                    ..
                 }
             ]
         ));
@@ -4105,12 +4172,14 @@ mod tests {
         db.ensure_conversation("p", "w", 1).unwrap();
 
         let entry_a = ConversationEntry::AgentEvent {
+            entry_id: String::new(),
             event: luban_domain::AgentEvent::Message {
                 id: "turn-a/item_0".to_owned(),
                 text: "A".to_owned(),
             },
         };
         let entry_b = ConversationEntry::AgentEvent {
+            entry_id: String::new(),
             event: luban_domain::AgentEvent::Message {
                 id: "turn-b/item_0".to_owned(),
                 text: "B".to_owned(),
@@ -4129,6 +4198,7 @@ mod tests {
             .filter_map(|e| match e {
                 ConversationEntry::AgentEvent {
                     event: luban_domain::AgentEvent::Message { id, text },
+                    ..
                 } => Some((id.as_str(), text.as_str())),
                 _ => None,
             })
@@ -4213,6 +4283,7 @@ mod tests {
 
         db.ensure_conversation("p2", "w", 1).unwrap();
         let entry = ConversationEntry::UserEvent {
+            entry_id: String::new(),
             event: luban_domain::UserEvent::Message {
                 text: "hello".to_owned(),
                 attachments: Vec::new(),
@@ -4286,7 +4357,7 @@ mod tests {
         let conv = db.load_conversation("p1", "w", 1).unwrap();
         assert!(
             conv.entries.iter().any(
-                |e| matches!(e, ConversationEntry::UserEvent { event: luban_domain::UserEvent::Message { text, .. } } if text == "hello")
+                |e| matches!(e, ConversationEntry::UserEvent { event: luban_domain::UserEvent::Message { text, .. }, .. } if text == "hello")
             ),
             "expected conversation entries to be preserved across workspace move"
         );
@@ -4347,6 +4418,7 @@ mod tests {
         db.save_app_state(&snapshot).unwrap();
         db.ensure_conversation("p", "w", 1).unwrap();
         let entry = ConversationEntry::UserEvent {
+            entry_id: String::new(),
             event: luban_domain::UserEvent::Message {
                 text: "hello".to_owned(),
                 attachments: Vec::new(),

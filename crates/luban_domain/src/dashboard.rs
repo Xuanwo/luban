@@ -151,9 +151,11 @@ pub fn dashboard_preview(
             match entry {
                 ConversationEntry::UserEvent {
                     event: crate::UserEvent::Message { text, .. },
+                    ..
                 } => messages.push(DashboardPreviewMessage::User(text.clone())),
                 ConversationEntry::AgentEvent {
                     event: crate::AgentEvent::Message { text, .. },
+                    ..
                 } => messages.push(DashboardPreviewMessage::Agent(text.clone())),
                 _ => {}
             }
@@ -219,9 +221,11 @@ fn latest_message_snippet(entries: &[ConversationEntry]) -> Option<String> {
         match entry {
             ConversationEntry::UserEvent {
                 event: crate::UserEvent::Message { text, .. },
+                ..
             } => return normalize_snippet(text),
             ConversationEntry::AgentEvent {
                 event: crate::AgentEvent::Message { text, .. },
+                ..
             } => return normalize_snippet(text),
             _ => continue,
         }

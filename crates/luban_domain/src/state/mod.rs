@@ -28,7 +28,4 @@ pub use workspace::{AppState, Project, Workspace};
 
 pub(crate) const MAX_CONVERSATION_ENTRIES_IN_MEMORY: usize = 5000;
 
-pub(crate) use conversation::{
-    apply_draft_text_diff, codex_item_id, entries_is_prefix, entries_is_suffix,
-    flush_in_progress_items,
-};
+pub(crate) use conversation::{apply_draft_text_diff, entries_is_prefix, entries_is_suffix};

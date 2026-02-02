@@ -1771,7 +1771,6 @@ impl Engine {
             entries_total,
             entries_start,
             entries_truncated,
-            in_progress_entries: Vec::new(),
             pending_prompts: loaded
                 .pending_prompts
                 .iter()
@@ -3630,16 +3629,6 @@ impl Engine {
             entries_total: total_entries as u64,
             entries_start: start as u64,
             entries_truncated,
-            in_progress_entries: conversation
-                .in_progress_order
-                .iter()
-                .filter_map(|id| conversation.in_progress_items.get(id))
-                .map(|item| {
-                    luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
-                        event: map_codex_thread_item_to_agent_event(item),
-                    })
-                })
-                .collect(),
             pending_prompts: conversation
                 .pending_prompts
                 .iter()
@@ -4121,11 +4110,11 @@ fn map_workspace_tabs_snapshot(tabs: &luban_domain::WorkspaceTabs) -> WorkspaceT
 fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationEntry {
     match entry {
         ConversationEntry::SystemEvent {
-            id,
+            entry_id,
             created_at_unix_ms,
             event,
         } => luban_api::ConversationEntry::SystemEvent(luban_api::ConversationSystemEventEntry {
-            id: id.clone(),
+            entry_id: entry_id.clone(),
             created_at_unix_ms: *created_at_unix_ms,
             event: match event {
                 luban_domain::ConversationSystemEvent::TaskCreated => {
@@ -4157,7 +4146,7 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                 }
             },
         }),
-        ConversationEntry::UserEvent { event } => {
+        ConversationEntry::UserEvent { entry_id, event } => {
             let event = match event {
                 luban_domain::UserEvent::Message { text, attachments } => {
                     luban_api::UserEvent::Message(luban_api::UserMessage {
@@ -4166,9 +4155,12 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                     })
                 }
             };
-            luban_api::ConversationEntry::UserEvent(luban_api::UserEventEntry { event })
+            luban_api::ConversationEntry::UserEvent(luban_api::UserEventEntry {
+                entry_id: entry_id.clone(),
+                event,
+            })
         }
-        ConversationEntry::AgentEvent { event } => {
+        ConversationEntry::AgentEvent { entry_id, event } => {
             let event = match event {
                 luban_domain::AgentEvent::Message { id, text } => {
                     luban_api::AgentEvent::Message(luban_api::AgentMessage {
@@ -4195,7 +4187,10 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                     }
                 }
             };
-            luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry { event })
+            luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
+                entry_id: entry_id.clone(),
+                event,
+            })
         }
     }
 }
@@ -5240,6 +5235,7 @@ mod tests {
             .expect("conversation must exist");
         for i in 0..7000u32 {
             convo.entries.push(ConversationEntry::AgentEvent {
+                entry_id: String::new(),
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(CodexThreadItem::CommandExecution {
                         id: format!("cmd_{i}"),
@@ -5253,19 +5249,6 @@ mod tests {
         }
         convo.entries_start = 0;
         convo.entries_total = convo.entries.len() as u64;
-        convo.codex_item_ids = convo
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ConversationEntry::AgentEvent {
-                    event: luban_domain::AgentEvent::Item { item },
-                } => match item.as_ref() {
-                    CodexThreadItem::CommandExecution { id, .. } => Some(id.clone()),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect();
         let total = convo.entries.len();
 
         let (events, _) = broadcast::channel::<WsServerMessage>(1);
