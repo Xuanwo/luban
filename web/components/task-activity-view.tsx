@@ -346,6 +346,7 @@ function SystemEventItem({ message, actor }: SystemEventItemProps) {
     <div 
       className="flex items-start"
       style={{ padding: '1px 0' }}
+      data-testid="activity-event"
     >
       {/* Icon column - 14x14 circular icon, centered with card avatars */}
       {/* Card avatar center: -6px margin + 16px padding + 10px radius = 20px from container edge */}
@@ -396,36 +397,60 @@ interface CollapsedEventsGroupProps {
 }
 
 function CollapsedEventsGroup({ events, onExpand }: CollapsedEventsGroupProps) {
-  const summaryParts = events.slice(0, 3).map(e => e.content)
-  const summary = summaryParts.join(", ") + (events.length > 3 ? "..." : "")
+  const tail = events.slice(Math.max(0, events.length - 3))
+  const hiddenCount = Math.max(0, events.length - tail.length)
+  const summaryParts = tail.map((e) => e.content)
+  const summary = summaryParts.join(", ") + (hiddenCount > 0 ? "..." : "")
   
   return (
-    <div 
-      className="flex items-center"
-      style={{ padding: '1px 0' }}
-    >
-      <div
-        className="flex items-center justify-center flex-shrink-0 relative z-10"
-        style={{ 
-          width: '14px', 
-          marginLeft: '13px',
-          marginRight: '4px',
-          backgroundColor: COLORS.background
-        }}
-      >
-        <ChevronsUpDown 
-          className="w-3.5 h-3.5" 
-          style={{ color: COLORS.textMuted }}
-        />
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center" style={{ padding: '1px 0' }}>
+        <div
+          className="flex items-center justify-center flex-shrink-0 relative z-10"
+          style={{ 
+            width: '14px', 
+            marginLeft: '13px',
+            marginRight: '4px',
+            backgroundColor: COLORS.background
+          }}
+        >
+          <ChevronsUpDown 
+            className="w-3.5 h-3.5" 
+            style={{ color: COLORS.textMuted }}
+          />
+        </div>
+        
+        <button
+          onClick={onExpand}
+          className="flex-1 min-w-0 hover:underline cursor-pointer text-left truncate"
+          style={{ fontSize: '12px', lineHeight: '16.8px', color: COLORS.textMuted }}
+        >
+          Show {hiddenCount} earlier events: {summary}
+        </button>
       </div>
-      
-      <button
-        onClick={onExpand}
-        className="flex-1 min-w-0 hover:underline cursor-pointer text-left truncate"
-        style={{ fontSize: '12px', lineHeight: '16.8px', color: COLORS.textMuted }}
-      >
-        Show {events.length} events: {summary}
-      </button>
+
+      <div className="flex flex-col gap-2">
+        {tail.map((message, index) => {
+          const hasNextEvent = index < tail.length - 1
+          return (
+            <div key={message.id} className="relative">
+              {hasNextEvent && (
+                <div 
+                  className="absolute"
+                  style={{
+                    left: '19.5px',
+                    top: '20px',
+                    bottom: '-8px',
+                    width: '1px',
+                    backgroundColor: COLORS.timeline
+                  }}
+                />
+              )}
+              <SystemEventItem message={message} />
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -325,6 +325,7 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
   if (!conversation) return []
 
   const out: Message[] = []
+  const tailStart = Math.max(0, conversation.entries.length - 3)
 
   const unixMsToIso = (unixMs: number | null | undefined): string | undefined => {
     if (typeof unixMs !== "number" || !Number.isFinite(unixMs)) return undefined
@@ -353,7 +354,9 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
   const agentMessageIndexById = new Map<string, number>()
   const agentEventIndexById = new Map<string, number>()
 
-  for (const entry of conversation.entries) {
+  for (let i = 0; i < conversation.entries.length; i += 1) {
+    const entry = conversation.entries[i]!
+    const isInTail = i >= tailStart
     if (entry.type === "system_event") {
       const ev = entry.event as any
       const eventType = (() => {
@@ -401,44 +404,64 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
     if (entry.type === "agent_event") {
       const ev = entry.event
       if (ev.type === "message") {
-        const id = `a_${ev.id}`
-        const existing = agentMessageIndexById.get(id)
-        if (typeof existing === "number") {
-          const prev = out[existing]
-          if (prev && prev.type === "assistant") {
-            prev.content = ev.text.trim()
-          }
-        } else {
+        const baseId = `a_${ev.id}`
+        if (isInTail) {
           out.push({
-            id,
+            id: `${baseId}_${entry.entry_id}`,
             type: "assistant",
             eventSource: "agent",
             content: ev.text.trim(),
             timestamp: new Date().toISOString(),
           })
-          agentMessageIndexById.set(id, out.length - 1)
+        } else {
+          const existing = agentMessageIndexById.get(baseId)
+          if (typeof existing === "number") {
+            const prev = out[existing]
+            if (prev && prev.type === "assistant") {
+              prev.content = ev.text.trim()
+            }
+          } else {
+            out.push({
+              id: baseId,
+              type: "assistant",
+              eventSource: "agent",
+              content: ev.text.trim(),
+              timestamp: new Date().toISOString(),
+            })
+            agentMessageIndexById.set(baseId, out.length - 1)
+          }
         }
         continue
       }
 
       if (ev.type === "item") {
         const activity = activityFromAgentItem(ev)
-        const id = `ae_${ev.id}`
-        const existing = agentEventIndexById.get(id)
-        if (typeof existing === "number") {
-          const prev = out[existing]
-          if (prev && prev.type === "event") {
-            prev.content = activity.title
-          }
-        } else {
+        const baseId = `ae_${ev.id}`
+        if (isInTail) {
           out.push({
-            id,
+            id: `${baseId}_${entry.entry_id}`,
             type: "event",
             eventSource: "agent",
             content: activity.title,
             timestamp: new Date().toISOString(),
           })
-          agentEventIndexById.set(id, out.length - 1)
+        } else {
+          const existing = agentEventIndexById.get(baseId)
+          if (typeof existing === "number") {
+            const prev = out[existing]
+            if (prev && prev.type === "event") {
+              prev.content = activity.title
+            }
+          } else {
+            out.push({
+              id: baseId,
+              type: "event",
+              eventSource: "agent",
+              content: activity.title,
+              timestamp: new Date().toISOString(),
+            })
+            agentEventIndexById.set(baseId, out.length - 1)
+          }
         }
         continue
       }
@@ -490,9 +513,12 @@ export function buildMessages(conversation: ConversationSnapshot | null): Messag
   }
 
   if (conversation.run_status === "running") {
-    const last = out[out.length - 1]
-    if (last && last.type === "assistant") {
-      last.isStreaming = true
+    for (let i = out.length - 1; i >= 0; i -= 1) {
+      const msg = out[i]
+      if (msg && msg.type === "assistant") {
+        msg.isStreaming = true
+        break
+      }
     }
   }
 

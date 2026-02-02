@@ -409,6 +409,22 @@ export function defaultMockFixtures(): MockFixtures {
         agentActivity("file_change", { changes: [{ path: "docs/api/auth.md", kind: "create" }] }),
         agentActivity("command_execution", { command: "pnpm run docs:build", status: "completed", aggregated_output: "Documentation built successfully" }),
         agentMessage("I've updated the documentation:\n\n1. Updated `docs/auth.md` with the new refactored API\n2. Created `docs/api/auth.md` with detailed API reference\n\nThe documentation has been built successfully."),
+        // Tool / activity updates with the same id should still render the last 3 entries as distinct events.
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 1" } },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 2" } },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          event: { type: "item", id: "tail_progress", kind: "reasoning", payload: { text: "Progress update 3" } },
+        },
       ],
     }),
     [key(workdir1, task2)]: conversationBase({

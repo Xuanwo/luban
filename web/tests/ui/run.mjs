@@ -9,6 +9,7 @@ import { BrowserManager } from 'agent-browser/dist/browser.js';
 
 import { waitForHttpOk } from './lib/utils.mjs';
 import { runInboxRead } from './scenarios/inbox-read.mjs';
+import { runLatestEventsVisible } from './scenarios/latest-events-visible.mjs';
 import { runNewTaskModal } from './scenarios/new-task-modal.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
@@ -146,6 +147,7 @@ async function main() {
     await runSettingsPanel({ page, baseUrl });
     await runTaskListNavigation({ page, baseUrl });
     await runTaskStatusChange({ page, baseUrl });
+    await runLatestEventsVisible({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);
