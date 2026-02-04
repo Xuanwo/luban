@@ -241,11 +241,12 @@ interface TaskListViewProps {
 }
 
 export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps) {
-  const { app, setTaskStatus } = useLuban()
+  const { app, wsConnected, setTaskStatus, subscribeServerEvents } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const agentRunner = app?.agent.default_runner ?? null
   const refreshInFlightRef = useRef(false)
+  const prevWsConnectedRef = useRef(false)
 
   const formatCreatedAt = useCallback((createdAtUnixSeconds: number): string => {
     if (!createdAtUnixSeconds) return ""
@@ -296,17 +297,27 @@ export function TaskListView({ activeProjectId, onTaskClick }: TaskListViewProps
   }, [activeProjectId, app])
 
   useEffect(() => {
+    const prev = prevWsConnectedRef.current
+    prevWsConnectedRef.current = wsConnected
+    if (prev || !wsConnected) return
+    void refreshTasks()
+  }, [refreshTasks, wsConnected])
+
+  useEffect(() => {
     if (!activeProjectId) return
-    const tasks = tasksSnapshot?.tasks ?? []
-    const needsFastPolling = tasks.some((t) => {
-      if (t.agent_run_status === "running" || t.turn_status === "running" || t.turn_status === "awaiting") return true
-      if (t.has_unread_completion && t.last_turn_result === "completed") return true
-      return false
+    return subscribeServerEvents((event) => {
+      if (event.type !== "task_summaries_changed") return
+      if (event.project_id !== activeProjectId) return
+      setTasksSnapshot((prev) => {
+        if (!prev) return prev
+        const nextTasks = [
+          ...prev.tasks.filter((t) => t.workdir_id !== event.workdir_id),
+          ...event.tasks,
+        ]
+        return { ...prev, tasks: nextTasks, rev: prev.rev + 1 }
+      })
     })
-    const intervalMs = needsFastPolling ? 1500 : 12_000
-    const id = window.setInterval(() => void refreshTasks(), intervalMs)
-    return () => window.clearInterval(id)
-  }, [activeProjectId, refreshTasks, tasksSnapshot])
+  }, [activeProjectId, subscribeServerEvents])
 
   const applyLocalTaskStatus = useCallback((args: { workspaceId: WorkspaceId; taskId: WorkspaceThreadId; status: TaskStatus }) => {
     setTasksSnapshot((prev) => {

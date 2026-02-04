@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createContext, useContext, useEffect, useMemo, useRef } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 
 import type {
@@ -57,6 +57,7 @@ type LubanContextValue = {
   taskTabs: WorkspaceTabsSnapshot | null
   conversation: ConversationSnapshot | null
   wsConnected: boolean
+  subscribeServerEvents: (handler: (event: ServerEvent) => void) => () => void
 
   pickProjectPath: () => Promise<string | null>
   addProject: (path: string) => void
@@ -182,14 +183,32 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     activeWorkspace: activeWorkdir,
   } = store.state
   const eventHandlerRef = useRef<(event: ServerEvent) => void>(() => {})
+  const serverEventSubscribersRef = useRef<Set<(event: ServerEvent) => void>>(new Set())
   const pendingAutoOpenWorkspaceIdRef = useRef<WorkspaceId | null>(null)
   const lastActiveProjectIdxRef = useRef<number | null>(null)
   const prevWsConnectedRef = useRef<boolean>(false)
 
+  const subscribeServerEvents = useCallback((handler: (event: ServerEvent) => void) => {
+    const subscribers = serverEventSubscribersRef.current
+    subscribers.add(handler)
+    return () => {
+      subscribers.delete(handler)
+    }
+  }, [])
+
   useExternalLinkInterceptor()
 
   const { wsConnected, sendAction: sendActionTransport, request: requestTransport } = useLubanTransport({
-    onEvent: (event) => eventHandlerRef.current(event),
+    onEvent: (event) => {
+      eventHandlerRef.current(event)
+      for (const handler of serverEventSubscribersRef.current) {
+        try {
+          handler(event)
+        } catch (err) {
+          console.warn("server event subscriber failed", err)
+        }
+      }
+    },
     onError: (message) => {
       console.warn("server error:", message)
       toast.error(message)
@@ -368,6 +387,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     taskTabs,
     conversation,
     wsConnected,
+    subscribeServerEvents,
     pickProjectPath: actions.pickProjectPath,
     addProject: actions.addProject,
     addProjectAndOpen: actions.addProjectAndOpen,

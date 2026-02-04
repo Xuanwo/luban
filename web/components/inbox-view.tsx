@@ -225,7 +225,7 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
 }
 
 export function InboxView({ onOpenFullView }: InboxViewProps) {
-  const { app, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
+  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
@@ -235,6 +235,8 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
   >({})
   const previewByNotificationIdRef = useRef(previewByNotificationId)
   const previewInFlightRef = useRef<Set<string>>(new Set())
+  const prevWsConnectedRef = useRef(false)
+  const stableUpdatedAtByTaskRef = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     previewByNotificationIdRef.current = previewByNotificationId
@@ -252,6 +254,11 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
       try {
         const snap = await fetchTasks()
         if (cancelled) return
+        const stable = stableUpdatedAtByTaskRef.current
+        for (const t of snap.tasks ?? []) {
+          const key = `${t.workdir_id}:${t.task_id}`
+          if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
+        }
         setTasksSnapshot(snap)
       } catch (err) {
         console.warn("fetchTasks failed", err)
@@ -267,11 +274,42 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
     if (!app) return
     try {
       const snap = await fetchTasks()
+      const stable = stableUpdatedAtByTaskRef.current
+      for (const t of snap.tasks ?? []) {
+        const key = `${t.workdir_id}:${t.task_id}`
+        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
+      }
       setTasksSnapshot(snap)
     } catch (err) {
       console.warn("fetchTasks failed", err)
     }
   }, [app])
+
+  useEffect(() => {
+    const prev = prevWsConnectedRef.current
+    prevWsConnectedRef.current = wsConnected
+    if (prev || !wsConnected) return
+    void refreshTasks()
+  }, [refreshTasks, wsConnected])
+
+  useEffect(() => {
+    return subscribeServerEvents((event) => {
+      if (event.type !== "task_summaries_changed") return
+      const stable = stableUpdatedAtByTaskRef.current
+      for (const t of event.tasks ?? []) {
+        const key = `${t.workdir_id}:${t.task_id}`
+        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
+      }
+      setTasksSnapshot((prev) => {
+        if (!prev) return prev
+        const nextTasks = [
+          ...prev.tasks.filter((t) => t.workdir_id !== event.workdir_id),
+          ...event.tasks,
+        ]
+        return { ...prev, tasks: nextTasks, rev: prev.rev + 1 }
+      })
+    })
+  }, [subscribeServerEvents])
 
   const applyLocalTaskLifecycleStatus = useCallback((args: { workdirId: number; taskId: number; status: TaskStatus }) => {
     setTasksSnapshot((prev) => {
@@ -358,8 +396,11 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
       return true
     })
 
+    const stable = stableUpdatedAtByTaskRef.current
     filtered.sort((a, b) => {
-      const primary = b.updated_at_unix_seconds - a.updated_at_unix_seconds
+      const aStable = stable.get(`${a.workdir_id}:${a.task_id}`) ?? a.updated_at_unix_seconds
+      const bStable = stable.get(`${b.workdir_id}:${b.task_id}`) ?? b.updated_at_unix_seconds
+      const primary = bStable - aStable
       if (primary !== 0) return primary
       const workdir = b.workdir_id - a.workdir_id
       if (workdir !== 0) return workdir

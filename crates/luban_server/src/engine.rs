@@ -7,8 +7,8 @@ use luban_api::{
 use luban_backend::{GitWorkspaceService, SqliteStoreOptions};
 use luban_domain::{
     Action, AppState, AttachmentKind, AttachmentRef, CodexThreadEvent, CodexThreadItem,
-    ConversationEntry, Effect, OpenTarget, OperationStatus, ProjectWorkspaceService,
-    PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
+    ConversationEntry, ConversationThreadMeta, Effect, OpenTarget, OperationStatus,
+    ProjectWorkspaceService, PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
     PullRequestState as DomainPullRequestState, ThinkingEffort, WorkspaceId, WorkspaceThreadId,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -264,6 +264,7 @@ pub struct Engine {
     cancel_flags: HashMap<(WorkspaceId, WorkspaceThreadId), CancelFlagEntry>,
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
+    workspace_threads_cache: HashMap<WorkspaceId, Vec<ConversationThreadMeta>>,
 }
 
 #[derive(Clone)]
@@ -290,6 +291,7 @@ impl Engine {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         let refresh_tx = tx.clone();
@@ -425,60 +427,56 @@ impl Engine {
                     .workspace_tabs(wid)
                     .map(map_workspace_tabs_snapshot)
                     .unwrap_or_default();
-                let snapshot = threads.map(|threads| ThreadsSnapshot {
-                    rev: self.rev,
-                    workspace_id,
-                    tabs,
-                    threads: {
-                        let mut seen_thread_ids = HashSet::<WorkspaceThreadId>::new();
-                        threads
-                            .into_iter()
-                            .filter(|t| seen_thread_ids.insert(t.thread_id))
-                            .map(|t| luban_api::ThreadMeta {
-                                thread_id: luban_api::WorkspaceThreadId(t.thread_id.as_u64()),
-                                remote_thread_id: t.remote_thread_id,
-                                title: t.title,
-                                created_at_unix_seconds: t.created_at_unix_seconds,
-                                updated_at_unix_seconds: t.updated_at_unix_seconds,
-                                task_status: match t.task_status {
-                                    luban_domain::TaskStatus::Backlog => {
-                                        luban_api::TaskStatus::Backlog
-                                    }
-                                    luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
-                                    luban_domain::TaskStatus::Iterating => {
-                                        luban_api::TaskStatus::Iterating
-                                    }
-                                    luban_domain::TaskStatus::Validating => {
-                                        luban_api::TaskStatus::Validating
-                                    }
-                                    luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
-                                    luban_domain::TaskStatus::Canceled => {
-                                        luban_api::TaskStatus::Canceled
-                                    }
-                                },
-                                turn_status: match t.turn_status {
-                                    luban_domain::TurnStatus::Idle => luban_api::TurnStatus::Idle,
-                                    luban_domain::TurnStatus::Running => {
-                                        luban_api::TurnStatus::Running
-                                    }
-                                    luban_domain::TurnStatus::Awaiting => {
-                                        luban_api::TurnStatus::Awaiting
-                                    }
-                                    luban_domain::TurnStatus::Paused => {
-                                        luban_api::TurnStatus::Paused
-                                    }
-                                },
-                                last_turn_result: t.last_turn_result.map(|v| match v {
-                                    luban_domain::TurnResult::Completed => {
-                                        luban_api::TurnResult::Completed
-                                    }
-                                    luban_domain::TurnResult::Failed => {
-                                        luban_api::TurnResult::Failed
-                                    }
-                                }),
-                            })
-                            .collect()
-                    },
+                let snapshot = threads.map(|threads| {
+                    let mut threads = threads;
+                    dedup_thread_metas_in_place(&mut threads);
+                    let mapped_threads = threads
+                        .iter()
+                        .map(|t| luban_api::ThreadMeta {
+                            thread_id: luban_api::WorkspaceThreadId(t.thread_id.as_u64()),
+                            remote_thread_id: t.remote_thread_id.clone(),
+                            title: t.title.clone(),
+                            created_at_unix_seconds: t.created_at_unix_seconds,
+                            updated_at_unix_seconds: t.updated_at_unix_seconds,
+                            task_status: match t.task_status {
+                                luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                                luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                                luban_domain::TaskStatus::Iterating => {
+                                    luban_api::TaskStatus::Iterating
+                                }
+                                luban_domain::TaskStatus::Validating => {
+                                    luban_api::TaskStatus::Validating
+                                }
+                                luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                                luban_domain::TaskStatus::Canceled => {
+                                    luban_api::TaskStatus::Canceled
+                                }
+                            },
+                            turn_status: match t.turn_status {
+                                luban_domain::TurnStatus::Idle => luban_api::TurnStatus::Idle,
+                                luban_domain::TurnStatus::Running => luban_api::TurnStatus::Running,
+                                luban_domain::TurnStatus::Awaiting => {
+                                    luban_api::TurnStatus::Awaiting
+                                }
+                                luban_domain::TurnStatus::Paused => luban_api::TurnStatus::Paused,
+                            },
+                            last_turn_result: t.last_turn_result.map(|v| match v {
+                                luban_domain::TurnResult::Completed => {
+                                    luban_api::TurnResult::Completed
+                                }
+                                luban_domain::TurnResult::Failed => luban_api::TurnResult::Failed,
+                            }),
+                        })
+                        .collect::<Vec<_>>();
+
+                    self.workspace_threads_cache.insert(wid, threads);
+
+                    ThreadsSnapshot {
+                        rev: self.rev,
+                        workspace_id,
+                        tabs,
+                        threads: mapped_threads,
+                    }
                 });
 
                 let _ = reply.send(snapshot.map_err(|e| anyhow::anyhow!(e)));
@@ -1845,6 +1843,7 @@ impl Engine {
             let conversation_key = conversation_key_for_action(&action);
             let queue_state_key = queue_state_key_for_action(&action);
             let threads_event = threads_event_for_action(&action);
+            let task_summaries_workspace_id = task_summaries_workspace_id_for_action(&action);
 
             let new_effects = self.state.apply(action);
             if should_sync_branch_watchers {
@@ -1855,8 +1854,13 @@ impl Engine {
             if let Some((wid, tid)) = conversation_key {
                 self.publish_conversation_snapshot(wid, tid);
             }
-            if let Some((wid, threads)) = threads_event {
+            if let Some((wid, mut threads)) = threads_event {
                 self.publish_threads_event(wid, &threads);
+                dedup_thread_metas_in_place(&mut threads);
+                self.workspace_threads_cache.insert(wid, threads);
+            }
+            if let Some(wid) = task_summaries_workspace_id {
+                self.publish_task_summaries_event(wid);
             }
             if let Some((wid, tid)) = queue_state_key {
                 self.persist_queue_state(wid, tid).await;
@@ -3446,6 +3450,75 @@ impl Engine {
         });
     }
 
+    fn publish_task_summaries_event(&self, workspace_id: WorkspaceId) {
+        let Some((project_id, workspace)) = self.state.projects.iter().find_map(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|w| w.id == workspace_id)
+                .map(|workspace| {
+                    (
+                        luban_api::ProjectId(project.path.to_string_lossy().to_string()),
+                        workspace,
+                    )
+                })
+        }) else {
+            return;
+        };
+
+        let Some(threads) = self.workspace_threads_cache.get(&workspace_id) else {
+            return;
+        };
+
+        let active_thread_id = self
+            .state
+            .workspace_tabs
+            .get(&workspace_id)
+            .map(|tabs| tabs.active_tab)
+            .unwrap_or(WorkspaceThreadId::from_u64(1));
+
+        let workspace_has_running_turn = self.state.workspace_has_running_turn(workspace_id);
+        let workspace_has_unread_completion =
+            self.state.workspace_has_unread_completion(workspace_id);
+
+        let tasks = threads
+            .iter()
+            .map(|t| luban_api::TaskSummarySnapshot {
+                project_id: project_id.clone(),
+                workspace_id: luban_api::WorkspaceId(workspace_id.as_u64()),
+                thread_id: luban_api::WorkspaceThreadId(t.thread_id.as_u64()),
+                title: t.title.clone(),
+                created_at_unix_seconds: t.created_at_unix_seconds,
+                updated_at_unix_seconds: t.updated_at_unix_seconds,
+                branch_name: workspace.branch_name.clone(),
+                workspace_name: workspace.workspace_name.clone(),
+                agent_run_status: if workspace_has_running_turn && t.thread_id == active_thread_id {
+                    luban_api::OperationStatus::Running
+                } else {
+                    luban_api::OperationStatus::Idle
+                },
+                has_unread_completion: workspace_has_unread_completion
+                    && t.thread_id == active_thread_id,
+                task_status: map_domain_task_status(t.task_status),
+                turn_status: map_domain_turn_status(t.turn_status),
+                last_turn_result: t.last_turn_result.map(map_domain_turn_result),
+                is_starred: self
+                    .state
+                    .starred_tasks
+                    .contains(&(workspace_id, t.thread_id)),
+            })
+            .collect::<Vec<_>>();
+
+        let _ = self.events.send(WsServerMessage::Event {
+            rev: self.rev,
+            event: Box::new(luban_api::ServerEvent::TaskSummariesChanged {
+                project_id,
+                workspace_id: luban_api::WorkspaceId(workspace_id.as_u64()),
+                tasks,
+            }),
+        });
+    }
+
     fn publish_conversation_snapshot(
         &self,
         workspace_id: WorkspaceId,
@@ -4045,6 +4118,56 @@ fn threads_event_for_action(
             threads,
         } => Some((*workspace_id, threads.clone())),
         _ => None,
+    }
+}
+
+fn task_summaries_workspace_id_for_action(action: &Action) -> Option<WorkspaceId> {
+    match action {
+        Action::WorkspaceThreadsLoaded { workspace_id, .. } => Some(*workspace_id),
+        Action::TaskStarSet { workspace_id, .. } => Some(*workspace_id),
+        Action::OpenWorkspace { workspace_id } => Some(*workspace_id),
+        Action::DashboardPreviewOpened { workspace_id } => Some(*workspace_id),
+        Action::CreateWorkspaceThread { workspace_id } => Some(*workspace_id),
+        Action::ActivateWorkspaceThread { workspace_id, .. } => Some(*workspace_id),
+        Action::CloseWorkspaceThreadTab { workspace_id, .. } => Some(*workspace_id),
+        Action::RestoreWorkspaceThreadTab { workspace_id, .. } => Some(*workspace_id),
+        Action::ReorderWorkspaceThreadTab { workspace_id, .. } => Some(*workspace_id),
+        Action::SendAgentMessage { workspace_id, .. } => Some(*workspace_id),
+        Action::QueueAgentMessage { workspace_id, .. } => Some(*workspace_id),
+        Action::AgentTurnFinished { workspace_id, .. } => Some(*workspace_id),
+        _ => None,
+    }
+}
+
+fn dedup_thread_metas_in_place(metas: &mut Vec<ConversationThreadMeta>) {
+    let mut seen = HashSet::<WorkspaceThreadId>::new();
+    metas.retain(|t| seen.insert(t.thread_id));
+}
+
+fn map_domain_task_status(status: luban_domain::TaskStatus) -> luban_api::TaskStatus {
+    match status {
+        luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+        luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+        luban_domain::TaskStatus::Iterating => luban_api::TaskStatus::Iterating,
+        luban_domain::TaskStatus::Validating => luban_api::TaskStatus::Validating,
+        luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+        luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+    }
+}
+
+fn map_domain_turn_status(status: luban_domain::TurnStatus) -> luban_api::TurnStatus {
+    match status {
+        luban_domain::TurnStatus::Idle => luban_api::TurnStatus::Idle,
+        luban_domain::TurnStatus::Running => luban_api::TurnStatus::Running,
+        luban_domain::TurnStatus::Awaiting => luban_api::TurnStatus::Awaiting,
+        luban_domain::TurnStatus::Paused => luban_api::TurnStatus::Paused,
+    }
+}
+
+fn map_domain_turn_result(result: luban_domain::TurnResult) -> luban_api::TurnResult {
+    match result {
+        luban_domain::TurnResult::Completed => luban_api::TurnResult::Completed,
+        luban_domain::TurnResult::Failed => luban_api::TurnResult::Failed,
     }
 }
 
@@ -5157,6 +5280,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine.pull_requests.insert(
@@ -5218,6 +5342,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine.pull_requests.insert(
@@ -5366,6 +5491,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         let api_wid = luban_api::WorkspaceId(workspace_id.as_u64());
@@ -5559,6 +5685,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine.publish_threads_event(workspace_id, &metas);
@@ -5650,6 +5777,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine.publish_threads_event(workspace_id, &metas);
@@ -5666,6 +5794,201 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread_id.0, thread_id.as_u64());
         assert_eq!(threads[0].title, "alpha");
+    }
+
+    #[test]
+    fn task_summaries_changed_marks_running_unread_and_starred() {
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-test"),
+            is_git: true,
+        });
+
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-test"),
+        });
+
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.apply(Action::OpenWorkspace { workspace_id });
+
+        let active_thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("workspace tabs exist after opening workspace")
+            .active_tab;
+        let other_thread_id =
+            WorkspaceThreadId::from_u64(active_thread_id.as_u64().saturating_add(1));
+
+        if let Some(conversation) = state
+            .conversations
+            .get_mut(&(workspace_id, active_thread_id))
+        {
+            conversation.run_status = OperationStatus::Running;
+        }
+        state.workspace_unread_completions.insert(workspace_id);
+        state.starred_tasks.insert((workspace_id, other_thread_id));
+
+        let metas = vec![
+            ConversationThreadMeta {
+                thread_id: active_thread_id,
+                remote_thread_id: None,
+                title: "active".to_owned(),
+                created_at_unix_seconds: 1,
+                updated_at_unix_seconds: 2,
+                task_status: luban_domain::TaskStatus::Todo,
+                turn_status: luban_domain::TurnStatus::Idle,
+                last_turn_result: Some(luban_domain::TurnResult::Completed),
+            },
+            ConversationThreadMeta {
+                thread_id: other_thread_id,
+                remote_thread_id: None,
+                title: "other".to_owned(),
+                created_at_unix_seconds: 3,
+                updated_at_unix_seconds: 4,
+                task_status: luban_domain::TaskStatus::Backlog,
+                turn_status: luban_domain::TurnStatus::Awaiting,
+                last_turn_result: None,
+            },
+        ];
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(4);
+        let mut rx = events.subscribe();
+        let (tx, _rx_cmd) = mpsc::channel::<EngineCommand>(1);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: Arc::new(TestServices),
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+        };
+        engine.workspace_threads_cache.insert(workspace_id, metas);
+
+        engine.publish_task_summaries_event(workspace_id);
+
+        let message = rx.try_recv().expect("expected a task summaries event");
+        let WsServerMessage::Event { event, .. } = message else {
+            panic!("expected WsServerMessage::Event");
+        };
+
+        let luban_api::ServerEvent::TaskSummariesChanged {
+            workspace_id: wid,
+            tasks,
+            ..
+        } = *event
+        else {
+            panic!("expected task_summaries_changed");
+        };
+        assert_eq!(wid.0, workspace_id.as_u64());
+
+        let active = tasks
+            .iter()
+            .find(|t| t.thread_id.0 == active_thread_id.as_u64())
+            .expect("active task should be present");
+        let other = tasks
+            .iter()
+            .find(|t| t.thread_id.0 == other_thread_id.as_u64())
+            .expect("other task should be present");
+
+        assert_eq!(active.agent_run_status, luban_api::OperationStatus::Running);
+        assert!(active.has_unread_completion);
+        assert!(!active.is_starred);
+
+        assert_eq!(other.agent_run_status, luban_api::OperationStatus::Idle);
+        assert!(!other.has_unread_completion);
+        assert!(other.is_starred);
+    }
+
+    #[tokio::test]
+    async fn task_star_set_emits_task_summaries_changed() {
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-test"),
+            is_git: true,
+        });
+
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-test"),
+        });
+
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.apply(Action::OpenWorkspace { workspace_id });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("workspace tabs exist after opening workspace")
+            .active_tab;
+
+        let metas = vec![ConversationThreadMeta {
+            thread_id,
+            remote_thread_id: None,
+            title: "alpha".to_owned(),
+            created_at_unix_seconds: 1,
+            updated_at_unix_seconds: 2,
+            task_status: luban_domain::TaskStatus::Todo,
+            turn_status: luban_domain::TurnStatus::Idle,
+            last_turn_result: None,
+        }];
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let mut rx = events.subscribe();
+        let (tx, _rx_cmd) = mpsc::channel::<EngineCommand>(1);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: Arc::new(IdentityServices),
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+        };
+        engine.workspace_threads_cache.insert(workspace_id, metas);
+
+        engine
+            .process_action_queue(Action::TaskStarSet {
+                workspace_id,
+                thread_id,
+                starred: true,
+            })
+            .await;
+
+        let mut saw = false;
+        for _ in 0..20 {
+            let msg = match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+                Ok(Ok(msg)) => msg,
+                _ => continue,
+            };
+            let WsServerMessage::Event { event, .. } = msg else {
+                continue;
+            };
+            let luban_api::ServerEvent::TaskSummariesChanged { tasks, .. } = *event else {
+                continue;
+            };
+            let Some(task) = tasks.iter().find(|t| t.thread_id.0 == thread_id.as_u64()) else {
+                continue;
+            };
+            if task.is_starred {
+                saw = true;
+                break;
+            }
+        }
+        assert!(
+            saw,
+            "expected a task_summaries_changed event reflecting the star"
+        );
     }
 
     #[tokio::test]
@@ -5952,6 +6275,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine
@@ -6039,6 +6363,7 @@ mod tests {
             )]),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine
@@ -6309,6 +6634,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine
@@ -6355,6 +6681,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine
@@ -6811,6 +7138,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         let rename = tokio::time::timeout(
@@ -6875,6 +7203,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine
@@ -6931,6 +7260,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         let api_attachment = luban_api::AttachmentRef {
@@ -7002,6 +7332,7 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
         };
 
         engine

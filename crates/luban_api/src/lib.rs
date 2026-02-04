@@ -1062,6 +1062,12 @@ pub enum ServerEvent {
         rev: u64,
         snapshot: Box<AppSnapshot>,
     },
+    TaskSummariesChanged {
+        project_id: ProjectId,
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
+        workspace_id: WorkspaceId,
+        tasks: Vec<TaskSummarySnapshot>,
+    },
     #[serde(rename = "workdir_tasks_changed", alias = "workspace_threads_changed")]
     WorkspaceThreadsChanged {
         #[serde(rename = "workdir_id", alias = "workspace_id")]

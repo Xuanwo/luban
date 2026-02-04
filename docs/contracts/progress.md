@@ -57,6 +57,7 @@ Legend:
 - `C-WS-EVENTS`: `ClientAction::TaskPreview` and `ServerEvent::TaskPreviewReady` were removed; task execution is prompt-based.
 - `C-WS-EVENTS`: `ClientAction::TaskStarSet` is implemented in mock + provider and verified in CI via `crates/luban_server/tests/contracts_http.rs` (roundtrip: WS toggle then `GET /api/tasks`).
 - `C-WS-EVENTS`: `ClientAction::TaskStatusSet` updates per-task `TaskStatus` and is implemented in mock + provider.
+- `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).

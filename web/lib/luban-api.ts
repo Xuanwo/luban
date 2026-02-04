@@ -487,6 +487,7 @@ export type ClientAction =
 
 export type ServerEvent =
   | { type: "app_changed"; rev: number; snapshot: AppSnapshot }
+  | { type: "task_summaries_changed"; project_id: ProjectId; workdir_id: WorkspaceId; tasks: TaskSummarySnapshot[] }
   | { type: "workdir_tasks_changed"; workdir_id: WorkspaceId; tabs: WorkspaceTabsSnapshot; tasks: ThreadMeta[] }
   | { type: "conversation_changed"; snapshot: ConversationSnapshot }
   | { type: "toast"; message: string }

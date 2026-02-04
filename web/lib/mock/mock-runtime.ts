@@ -175,6 +175,32 @@ function emitWorkdirTasksChanged(args: { state: RuntimeState; workdirId: Workspa
   args.onEvent({ type: "workdir_tasks_changed", workdir_id: args.workdirId, tabs: clone(snap.tabs), tasks: clone(snap.tasks) })
 }
 
+function emitTaskSummariesChanged(args: { state: RuntimeState; workdirId: WorkspaceId; onEvent: (event: ServerEvent) => void }) {
+  const located = findWorkdir(args.state.app, args.workdirId) ?? null
+  if (!located) return
+  const snap = args.state.threadsByWorkdir.get(args.workdirId) ?? null
+  if (!snap) return
+
+  const tasks: TaskSummarySnapshot[] = snap.tasks.map((t) => ({
+    project_id: located.projectId,
+    workdir_id: args.workdirId,
+    task_id: t.task_id,
+    title: t.title,
+    created_at_unix_seconds: t.created_at_unix_seconds,
+    updated_at_unix_seconds: t.updated_at_unix_seconds,
+    branch_name: located.workdir.branch_name,
+    workdir_name: located.workdir.workdir_name,
+    agent_run_status: located.workdir.agent_run_status,
+    has_unread_completion: located.workdir.has_unread_completion,
+    task_status: t.task_status,
+    turn_status: t.turn_status,
+    last_turn_result: t.last_turn_result,
+    is_starred: args.state.starredTasks.has(workdirTaskKey(args.workdirId, t.task_id)),
+  }))
+
+  args.onEvent({ type: "task_summaries_changed", project_id: located.projectId, workdir_id: args.workdirId, tasks: clone(tasks) })
+}
+
 function emitConversationChanged(args: { state: RuntimeState; workdirId: WorkspaceId; taskId: WorkspaceThreadId; onEvent: (event: ServerEvent) => void }) {
   const snap = args.state.conversationsByWorkdirTask.get(workdirTaskKey(args.workdirId, args.taskId)) ?? null
   if (!snap) return
@@ -468,6 +494,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       workdir.has_unread_completion = false
     }
     emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 
@@ -476,6 +503,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     setActiveWorkdirTask(state, { workdirId: a.workdir_id, taskId })
     emitWorkdirTasksChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 
@@ -500,6 +528,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       snap.tabs.active_tab = snap.tabs.open_tabs[0] ?? snap.tabs.active_tab
     }
     emitWorkdirTasksChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 
@@ -542,6 +571,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     const located = findWorkdir(state.app, a.workdir_id)
     if (located) located.workdir.branch_name = a.branch_name
     emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 
@@ -549,6 +579,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     const located = findWorkdir(state.app, a.workdir_id)
     if (located) located.workdir.branch_name = `ai/rename-${a.task_id}`
     emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 
@@ -583,6 +614,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     state.conversationsByWorkdirTask.set(key, { ...convo, entries: next, entries_total: next.length, rev })
     args.onEvent({ type: "app_changed", rev, snapshot: clone(state.app) })
     emitWorkdirTasksChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     emitConversationChanged({ state, workdirId: a.workdir_id, taskId: a.task_id, onEvent: args.onEvent })
     return
   }
@@ -690,6 +722,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
 
     args.onEvent({ type: "app_changed", rev, snapshot: clone(state.app) })
     emitWorkdirTasksChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     emitConversationChanged({ state, workdirId: a.workdir_id, taskId: a.task_id, onEvent: args.onEvent })
     return
   }
@@ -702,6 +735,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       state.starredTasks.delete(key)
     }
     emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
     return
   }
 

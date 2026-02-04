@@ -25,6 +25,7 @@ import { runSidebarProjectAvatars } from './scenarios/sidebar-project-avatars.mj
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
 import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
+import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
 
 async function canRun(command, args) {
@@ -170,6 +171,7 @@ async function main() {
     await runLatestEventsVisible({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
+    await runTaskSummariesEventsRefresh({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);

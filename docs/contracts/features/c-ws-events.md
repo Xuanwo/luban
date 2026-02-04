@@ -178,6 +178,7 @@ update this section.
 All `ServerEvent` variants are part of this contract surface:
 
 - `AppChanged`
+- `TaskSummariesChanged`
 - `WorkdirTasksChanged`
 - `ConversationChanged`
 - `Toast`
@@ -198,6 +199,17 @@ All `ServerEvent` variants are part of this contract surface:
 - `ClaudeCheckReady`
 - `ClaudeConfigTreeReady`
 - `ClaudeConfigListDirReady`
+
+## `ServerEvent::TaskSummariesChanged`
+
+Purpose: push incremental updates for task-first UI surfaces (inbox, global task lists) without
+requiring polling `GET /api/tasks`.
+
+Payload:
+
+- `project_id`: owning project id
+- `workdir_id`: owning workdir id
+- `tasks`: current `TaskSummarySnapshot[]` for that workdir
 - `ClaudeConfigFileReady`
 - `ClaudeConfigFileSaved`
 

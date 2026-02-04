@@ -383,18 +383,46 @@ async fn set_task_star_via_ws(
         .expect("send task_star_set action");
 
     let mut saw_ack = false;
+    let mut saw_summaries_changed = false;
     for _ in 0..60 {
         let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
-        if matches!(
-            msg,
-            luban_api::WsServerMessage::Ack { ref request_id, .. }
-                if request_id == "req-task-star"
-        ) {
-            saw_ack = true;
+        match msg {
+            luban_api::WsServerMessage::Ack { request_id, .. } => {
+                if request_id == "req-task-star" {
+                    saw_ack = true;
+                }
+            }
+            luban_api::WsServerMessage::Event { event, .. } => {
+                if let luban_api::ServerEvent::TaskSummariesChanged {
+                    workspace_id,
+                    tasks,
+                    ..
+                } = *event
+                {
+                    if workspace_id.0 != workdir_id {
+                        continue;
+                    }
+                    if let Some(task) = tasks.iter().find(|t| t.thread_id.0 == task_id)
+                        && task.is_starred == starred
+                    {
+                        saw_summaries_changed = true;
+                    }
+                }
+            }
+            luban_api::WsServerMessage::Error { message, .. } => {
+                panic!("task_star_set error: {message}");
+            }
+            _ => {}
+        }
+        if saw_ack && saw_summaries_changed {
             break;
         }
     }
     assert!(saw_ack, "expected ack for task_star_set");
+    assert!(
+        saw_summaries_changed,
+        "expected a TaskSummariesChanged event for task_star_set"
+    );
 }
 
 async fn set_task_status_via_ws(
