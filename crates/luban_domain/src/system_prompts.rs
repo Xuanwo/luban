@@ -130,7 +130,8 @@ Rules:
 - Do NOT include rationale, notes, or any extra fields in the output.
 - Always output a result, even if the input is vague: keep the current status.
 - Prefer conservative updates: do not mark as "done" unless the task is clearly finished.
-- If the current task_status is "validating" and the input indicates a related pull request is already merged, you may mark the task as "done" (only when the conversation context suggests the PR is the validation target).
+- If the conversation indicates the work has been submitted as a pull request, you should generally use task_status="validating".
+- When you output task_status="validating", you must try to extract the pull request number (and URL if present) from the conversation context, so the system can auto-complete the task when that PR is merged later.
 
 Allowed task_status values:
 - backlog
@@ -149,20 +150,15 @@ Context (JSON):
 Output JSON schema:
 {
   "task_status": "<one of the allowed values>",
-  "evidence": {
-    "kind": "<one of: none, pr_reference>",
-    "pr_number": "<integer or null>",
-    "text": "<string; empty if kind=none>"
-  }
+  "validation_pr_number": "<integer or null>",
+  "validation_pr_url": "<string; empty if validation_pr_number is null>"
 }
 
-Evidence rules:
-- Always include the evidence object.
-- If you set task_status to "done" because a pull request is already merged, you MUST set:
-  - evidence.kind = "pr_reference"
-  - evidence.pr_number = the referenced PR number
-  - evidence.text = a short excerpt from the conversation that references that PR
-- Otherwise set evidence.kind = "none" and keep pr_number as null and text as an empty string.
+Validation PR rules:
+- Always include validation_pr_number and validation_pr_url.
+- Only set validation_pr_number if task_status="validating" and the conversation clearly references the PR number.
+- If you cannot identify a PR number, set validation_pr_number to null and validation_pr_url to an empty string.
+- If you set validation_pr_number, set validation_pr_url if and only if a URL is present in the conversation.
 "#
             .to_owned()
         }

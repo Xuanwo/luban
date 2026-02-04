@@ -175,6 +175,9 @@ pub enum EngineCommand {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
     },
+    WorkspaceThreadsInvalidated {
+        workspace_id: WorkspaceId,
+    },
     WorkspaceBranchObserved {
         workspace_id: WorkspaceId,
         branch_name: String,
@@ -204,7 +207,6 @@ const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX: Duration = Duration::from_secs(10
 
 const TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT: usize = 20;
 const TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT: u64 = 250;
-const TASK_STATUS_AUTO_UPDATE_PR_MERGED_TAIL_LIMIT: u64 = 500;
 
 fn pull_request_refresh_jitter(workspace_id: WorkspaceId) -> Duration {
     let window = PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS.max(1);
@@ -1814,10 +1816,7 @@ impl Engine {
                         .and_then(|entry| entry.info.as_ref())
                     && pr.state == DomainPullRequestState::Merged
                 {
-                    self.spawn_task_status_auto_update_for_validating_threads_due_to_merged_pr_from_store(
-                        workspace_id,
-                        pr.number,
-                    );
+                    self.spawn_task_status_mark_done_for_merged_pr(workspace_id, pr.number);
                 }
             }
             EngineCommand::TaskStatusAutoUpdateBackfillFinished {
@@ -1826,6 +1825,11 @@ impl Engine {
             } => {
                 self.task_status_auto_update_backfill_in_flight
                     .remove(&(workspace_id, thread_id));
+            }
+            EngineCommand::WorkspaceThreadsInvalidated { workspace_id } => {
+                self.workspace_threads_cache.remove(&workspace_id);
+                self.rev = self.rev.saturating_add(1);
+                self.publish_app_snapshot();
             }
             EngineCommand::WorkspaceBranchObserved {
                 workspace_id,
@@ -1946,19 +1950,32 @@ impl Engine {
                         None
                     };
 
-                    let suggested_task_status = services.task_suggest_task_status(
+                    let suggested = services.task_suggest_task_status_auto_update(
                         input,
                         runner,
                         model_id,
                         thinking_effort,
                         amp_mode,
                     )?;
+                    let suggested_task_status = suggested.task_status;
 
                     let _ = services.save_conversation_task_status_last_analyzed(
                         project_slug.clone(),
                         workspace_name.clone(),
                         thread_local_id,
                     );
+
+                    if suggested_task_status == luban_domain::TaskStatus::Validating
+                        && let Some(pr_number) = suggested.validation_pr_number
+                    {
+                        let _ = services.save_conversation_task_validation_pr(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            thread_local_id,
+                            pr_number,
+                            suggested.validation_pr_url,
+                        );
+                    }
 
                     if suggested_task_status != expected_current_task_status {
                         let _ = services.save_conversation_task_status(
@@ -1989,118 +2006,47 @@ impl Engine {
         }
     }
 
-    fn spawn_task_status_auto_update_for_validating_threads_due_to_merged_pr_from_store(
-        &self,
-        workspace_id: WorkspaceId,
-        pr_number: u64,
-    ) {
+    fn spawn_task_status_mark_done_for_merged_pr(&self, workspace_id: WorkspaceId, pr_number: u64) {
         let Some(scope) = workspace_scope(&self.state, workspace_id) else {
             return;
         };
 
-        let agent_codex_enabled = self.state.agent_codex_enabled();
-        let agent_amp_enabled = self.state.agent_amp_enabled();
-        let agent_claude_enabled = self.state.agent_claude_enabled();
-        if !(agent_codex_enabled || agent_amp_enabled || agent_claude_enabled) {
-            return;
-        }
-
         let services = self.services.clone();
+        let tx = self.tx.clone();
         let project_slug = scope.project_slug;
         let workspace_name = scope.workspace_name;
 
-        let default_runner = self.state.agent_default_runner();
-        let default_model_id = self.state.agent_default_model_id().to_owned();
-        let default_thinking_effort = self.state.agent_default_thinking_effort();
-        let default_amp_mode = self.state.agent_amp_mode().to_owned();
-
         tokio::spawn(async move {
-            let _ = tokio::task::spawn_blocking(move || {
-                let threads = services
-                    .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+            let thread_ids = tokio::task::spawn_blocking(move || {
+                services.mark_conversation_tasks_done_for_merged_pr(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    pr_number,
+                )
+            })
+            .await
+            .ok()
+            .and_then(|res| res.ok())
+            .unwrap_or_default();
 
-                for meta in threads
-                    .into_iter()
-                    .filter(|t| t.task_status == luban_domain::TaskStatus::Validating)
-                    .filter(|t| t.turn_status == luban_domain::TurnStatus::Idle)
-                    .take(TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT)
-                {
-                    let snapshot = services.load_conversation_page(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        meta.thread_id.as_u64(),
-                        None,
-                        TASK_STATUS_AUTO_UPDATE_PR_MERGED_TAIL_LIMIT,
-                    )?;
-
-                    let runner = snapshot.runner.unwrap_or(default_runner);
-                    let runner_enabled = match runner {
-                        luban_domain::AgentRunnerKind::Codex => agent_codex_enabled,
-                        luban_domain::AgentRunnerKind::Amp => agent_amp_enabled,
-                        luban_domain::AgentRunnerKind::Claude => agent_claude_enabled,
-                    };
-                    if !runner_enabled {
-                        continue;
-                    }
-
-                    let mut input = task_status_auto_update_input_from_entries(
-                        luban_domain::TaskStatus::Validating,
-                        &snapshot.entries,
-                        "pr_merged",
-                    );
-                    input.push_str("\nWorkspace pull request state: merged\n");
-                    input.push_str("Workspace pull request number: ");
-                    input.push_str(&pr_number.to_string());
-                    input.push('\n');
-
-                    let model_id = snapshot
-                        .agent_model_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .unwrap_or(default_model_id.as_str())
-                        .to_owned();
-                    let thinking_effort =
-                        snapshot.thinking_effort.unwrap_or(default_thinking_effort);
-                    let amp_mode = if runner == luban_domain::AgentRunnerKind::Amp {
-                        snapshot
-                            .amp_mode
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(ToOwned::to_owned)
-                            .or(Some(default_amp_mode.clone()))
-                    } else {
-                        None
-                    };
-
-                    let suggested = services.task_suggest_task_status(
-                        input,
-                        runner,
-                        model_id,
-                        thinking_effort,
-                        amp_mode,
-                    )?;
-
-                    let _ = services.save_conversation_task_status_last_analyzed(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        meta.thread_id.as_u64(),
-                    );
-
-                    if suggested != luban_domain::TaskStatus::Validating {
-                        let _ = services.save_conversation_task_status(
-                            project_slug.clone(),
-                            workspace_name.clone(),
-                            meta.thread_id.as_u64(),
-                            suggested,
-                        );
-                    }
+            if !thread_ids.is_empty() {
+                for thread_local_id in thread_ids {
+                    let _ = tx
+                        .send(EngineCommand::DispatchAction {
+                            action: Box::new(Action::TaskStatusAutoUpdateSuggested {
+                                workspace_id,
+                                thread_id: WorkspaceThreadId::from_u64(thread_local_id),
+                                expected_current_task_status: luban_domain::TaskStatus::Validating,
+                                suggested_task_status: luban_domain::TaskStatus::Done,
+                            }),
+                        })
+                        .await;
                 }
 
-                Ok::<_, String>(())
-            })
-            .await;
+                let _ = tx
+                    .send(EngineCommand::WorkspaceThreadsInvalidated { workspace_id })
+                    .await;
+            }
         });
     }
 
@@ -2876,7 +2822,7 @@ impl Engine {
                 let tx = self.tx.clone();
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        let suggested = services.task_suggest_task_status(
+                        let suggested = services.task_suggest_task_status_auto_update(
                             input,
                             runner,
                             model_id,
@@ -2885,12 +2831,29 @@ impl Engine {
                         )?;
 
                         let _ = services.save_conversation_task_status_last_analyzed(
-                            project_slug,
-                            workspace_name,
+                            project_slug.clone(),
+                            workspace_name.clone(),
                             thread_local_id,
                         );
 
-                        Ok::<_, String>(suggested)
+                        if suggested.task_status == luban_domain::TaskStatus::Validating
+                            && let Some(pr_number) = suggested.validation_pr_number
+                            && matches!(
+                                expected_current_task_status,
+                                luban_domain::TaskStatus::Iterating
+                                    | luban_domain::TaskStatus::Validating
+                            )
+                        {
+                            let _ = services.save_conversation_task_validation_pr(
+                                project_slug.clone(),
+                                workspace_name.clone(),
+                                thread_local_id,
+                                pr_number,
+                                suggested.validation_pr_url.clone(),
+                            );
+                        }
+
+                        Ok::<_, String>(suggested.task_status)
                     })
                     .await
                     .ok()

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 19;
+const LATEST_SCHEMA_VERSION: u32 = 20;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -171,6 +171,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0019_conversation_task_status_auto_update.sql"
         )),
     ),
+    (
+        20,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0020_conversation_task_validation_pr.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -300,6 +307,20 @@ enum DbCommand {
         workspace_name: String,
         thread_local_id: u64,
         reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    SaveConversationTaskValidationPr {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        pr_number: u64,
+        pr_url: Option<String>,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    MarkConversationTasksDoneForMergedPr {
+        project_slug: String,
+        workspace_name: String,
+        pr_number: u64,
+        reply: mpsc::Sender<anyhow::Result<Vec<u64>>>,
     },
     InsertContextItem {
         project_slug: String,
@@ -568,6 +589,40 @@ impl SqliteStore {
                                 &project_slug,
                                 &workspace_name,
                                 thread_local_id,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::SaveConversationTaskValidationPr {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                pr_number,
+                                pr_url,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.save_conversation_task_validation_pr(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                pr_number,
+                                pr_url.as_deref(),
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::MarkConversationTasksDoneForMergedPr {
+                                project_slug,
+                                workspace_name,
+                                pr_number,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.mark_conversation_tasks_done_for_merged_pr(
+                                &project_slug,
+                                &workspace_name,
+                                pr_number,
                             ));
                         }
                         (
@@ -936,6 +991,46 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn save_conversation_task_validation_pr(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        pr_number: u64,
+        pr_url: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::SaveConversationTaskValidationPr {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                pr_number,
+                pr_url,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn mark_conversation_tasks_done_for_merged_pr(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        pr_number: u64,
+    ) -> anyhow::Result<Vec<u64>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::MarkConversationTasksDoneForMergedPr {
+                project_slug,
+                workspace_name,
+                pr_number,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn insert_context_item(
         &self,
         project_slug: String,
@@ -1043,6 +1138,12 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::SaveConversationTaskStatusLastAnalyzed { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::SaveConversationTaskValidationPr { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::MarkConversationTasksDoneForMergedPr { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -3350,6 +3451,75 @@ impl SqliteDatabase {
         Ok(())
     }
 
+    fn save_conversation_task_validation_pr(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        pr_number: u64,
+        pr_url: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
+
+        self.conn.execute(
+            "UPDATE conversations
+             SET task_validation_pr_number = ?4,
+                 task_validation_pr_url = ?5
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                pr_number as i64,
+                pr_url
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    fn mark_conversation_tasks_done_for_merged_pr(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        pr_number: u64,
+    ) -> anyhow::Result<Vec<u64>> {
+        let thread_ids = {
+            let mut stmt = self.conn.prepare(
+                "SELECT thread_local_id
+                 FROM conversations
+                 WHERE project_slug = ?1
+                   AND workspace_name = ?2
+                   AND task_status = 'validating'
+                   AND task_validation_pr_number = ?3",
+            )?;
+            let rows = stmt.query_map(
+                params![project_slug, workspace_name, pr_number as i64],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let mut out = Vec::new();
+            for row in rows {
+                let id = row?;
+                let Some(id) = u64::try_from(id).ok() else {
+                    continue;
+                };
+                out.push(id);
+            }
+            out
+        };
+
+        for thread_local_id in &thread_ids {
+            self.save_conversation_task_status(
+                project_slug,
+                workspace_name,
+                *thread_local_id,
+                luban_domain::TaskStatus::Done,
+            )?;
+        }
+
+        Ok(thread_ids)
+    }
+
     fn insert_context_item(
         &mut self,
         project_slug: &str,
@@ -3815,6 +3985,38 @@ mod tests {
 
         let threads = db.list_conversation_threads("p", "w").unwrap();
         assert_eq!(threads[0].task_status_last_analyzed_message_seq, 3);
+    }
+
+    #[test]
+    fn task_validation_pr_can_be_marked_done_on_merge() {
+        let path = temp_db_path("task_validation_pr_can_be_marked_done_on_merge");
+        let mut db = open_db(&path);
+
+        db.ensure_conversation("p", "w", 1).unwrap();
+        db.save_conversation_task_status("p", "w", 1, luban_domain::TaskStatus::Validating)
+            .unwrap();
+        db.save_conversation_task_validation_pr(
+            "p",
+            "w",
+            1,
+            123,
+            Some("https://github.com/acme/repo/pull/123"),
+        )
+        .unwrap();
+
+        let updated = db
+            .mark_conversation_tasks_done_for_merged_pr("p", "w", 124)
+            .unwrap();
+        assert!(updated.is_empty());
+
+        let updated = db
+            .mark_conversation_tasks_done_for_merged_pr("p", "w", 123)
+            .unwrap();
+        assert_eq!(updated, vec![1]);
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Done);
     }
 
     #[test]

@@ -815,6 +815,36 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
+    fn save_conversation_task_validation_pr(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+        pr_number: u64,
+        pr_url: Option<String>,
+    ) -> Result<(), String> {
+        self.sqlite
+            .save_conversation_task_validation_pr(
+                project_slug,
+                workspace_name,
+                thread_id,
+                pr_number,
+                pr_url,
+            )
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn mark_conversation_tasks_done_for_merged_pr(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        pr_number: u64,
+    ) -> Result<Vec<u64>, String> {
+        self.sqlite
+            .mark_conversation_tasks_done_for_merged_pr(project_slug, workspace_name, pr_number)
+            .map_err(anyhow_error_to_string)
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,
@@ -2150,6 +2180,25 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     ) -> Result<luban_domain::TaskStatus, String> {
         task::task_suggest_task_status(self, input, runner, model_id, thinking_effort, amp_mode)
             .map_err(anyhow_error_to_string)
+    }
+
+    fn task_suggest_task_status_auto_update(
+        &self,
+        input: String,
+        runner: luban_domain::AgentRunnerKind,
+        model_id: String,
+        thinking_effort: luban_domain::ThinkingEffort,
+        amp_mode: Option<String>,
+    ) -> Result<luban_domain::TaskStatusAutoUpdateSuggestion, String> {
+        task::task_suggest_task_status_auto_update(
+            self,
+            input,
+            runner,
+            model_id,
+            thinking_effort,
+            amp_mode,
+        )
+        .map_err(anyhow_error_to_string)
     }
 
     fn conversation_update_title_if_matches(

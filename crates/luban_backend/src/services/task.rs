@@ -2,8 +2,8 @@ use crate::services::GitWorkspaceService;
 use anyhow::anyhow;
 use luban_domain::{
     AgentRunnerKind, ProjectWorkspaceService, SystemTaskKind, THREAD_TITLE_MAX_CHARS,
-    TaskIntentKind, TaskStatus, ThinkingEffort, default_system_prompt_template,
-    derive_thread_title, parse_task_status,
+    TaskIntentKind, TaskStatus, TaskStatusAutoUpdateSuggestion, ThinkingEffort,
+    default_system_prompt_template, derive_thread_title, parse_task_status,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -353,6 +353,25 @@ pub(super) fn task_suggest_task_status(
     thinking_effort: ThinkingEffort,
     amp_mode: Option<String>,
 ) -> anyhow::Result<TaskStatus> {
+    let suggested = task_suggest_task_status_auto_update(
+        service,
+        input,
+        runner,
+        model_id,
+        thinking_effort,
+        amp_mode,
+    )?;
+    Ok(suggested.task_status)
+}
+
+pub(super) fn task_suggest_task_status_auto_update(
+    service: &GitWorkspaceService,
+    input: String,
+    runner: AgentRunnerKind,
+    model_id: String,
+    thinking_effort: ThinkingEffort,
+    amp_mode: Option<String>,
+) -> anyhow::Result<TaskStatusAutoUpdateSuggestion> {
     let input_trimmed = input.trim();
     let context_json = serde_json::json!({
         "allowed_task_status": [
@@ -382,58 +401,28 @@ pub(super) fn task_suggest_task_status(
         prompt,
     )?;
 
-    parse_task_status_auto_update_output(input_trimmed, &raw)
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct TaskStatusAutoUpdateEvidence {
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    pr_number: Option<u64>,
-    #[serde(default)]
-    text: String,
+    parse_task_status_auto_update_output(&raw)
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct TaskStatusAutoUpdateOutput {
     task_status: String,
     #[serde(default)]
-    evidence: Option<TaskStatusAutoUpdateEvidence>,
+    validation_pr_number: Option<u64>,
+    #[serde(default)]
+    validation_pr_url: String,
 }
 
-fn parse_current_task_status_from_input(input: &str) -> Option<TaskStatus> {
-    for line in input.lines() {
-        if let Some(rest) = line.strip_prefix("Current task_status:") {
-            return parse_task_status(rest.trim());
-        }
-    }
-    None
-}
-
-fn parse_merged_pull_request_number_from_input(input: &str) -> Option<u64> {
-    let mut merged = false;
-    let mut number: Option<u64> = None;
-    for line in input.lines() {
-        if line
-            .trim()
-            .eq_ignore_ascii_case("Workspace pull request state: merged")
-        {
-            merged = true;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("Workspace pull request number:") {
-            number = rest.trim().parse::<u64>().ok();
-        }
-    }
-    if merged { number } else { None }
-}
-
-fn parse_task_status_auto_update_output(input: &str, raw: &str) -> anyhow::Result<TaskStatus> {
-    let input_trimmed = input.trim();
+fn parse_task_status_auto_update_output(
+    raw: &str,
+) -> anyhow::Result<TaskStatusAutoUpdateSuggestion> {
     let raw = strip_json_fences(raw);
     if let Some(status) = parse_task_status(raw) {
-        return Ok(status);
+        return Ok(TaskStatusAutoUpdateSuggestion {
+            task_status: status,
+            validation_pr_number: None,
+            validation_pr_url: None,
+        });
     }
 
     let Some(obj) = extract_json_object(raw) else {
@@ -441,31 +430,27 @@ fn parse_task_status_auto_update_output(input: &str, raw: &str) -> anyhow::Resul
     };
 
     let output: TaskStatusAutoUpdateOutput = serde_json::from_str(obj)?;
-    let Some(mut suggested) = parse_task_status(output.task_status.as_str()) else {
+    let Some(suggested) = parse_task_status(output.task_status.as_str()) else {
         return Err(anyhow!("missing or invalid task_status in json output"));
     };
 
-    let current = parse_current_task_status_from_input(input_trimmed);
-    let pr_number = parse_merged_pull_request_number_from_input(input_trimmed);
+    let mut validation_pr_number = output.validation_pr_number;
+    let validation_pr_url = output.validation_pr_url.trim().to_owned();
 
-    if let Some(pr_number) = pr_number
-        && current == Some(TaskStatus::Validating)
-        && suggested == TaskStatus::Done
-    {
-        let evidence = output.evidence.as_ref();
-        let valid = evidence.is_some_and(|e| {
-            e.kind == "pr_reference"
-                && e.pr_number == Some(pr_number)
-                && !e.text.trim().is_empty()
-                && e.text.contains(&pr_number.to_string())
-        });
-
-        if !valid {
-            suggested = current.unwrap_or(TaskStatus::Validating);
-        }
+    if suggested != TaskStatus::Validating {
+        validation_pr_number = None;
     }
+    let validation_pr_url = if validation_pr_number.is_some() && !validation_pr_url.is_empty() {
+        Some(validation_pr_url)
+    } else {
+        None
+    };
 
-    Ok(suggested)
+    Ok(TaskStatusAutoUpdateSuggestion {
+        task_status: suggested,
+        validation_pr_number,
+        validation_pr_url,
+    })
 }
 
 #[cfg(test)]
@@ -489,30 +474,20 @@ mod tests {
     }
 
     #[test]
-    fn auto_update_task_status_requires_pr_evidence_when_pr_is_merged() {
-        let input = r#"
-Current task_status: validating
-Turn outcome: pr_merged
+    fn auto_update_task_status_parses_validation_pr_fields() {
+        let raw = r#"{"task_status":"validating","validation_pr_number":123,"validation_pr_url":"https://github.com/acme/repo/pull/123"}"#;
+        let suggested = parse_task_status_auto_update_output(raw).unwrap();
+        assert_eq!(suggested.task_status, TaskStatus::Validating);
+        assert_eq!(suggested.validation_pr_number, Some(123));
+        assert_eq!(
+            suggested.validation_pr_url.as_deref(),
+            Some("https://github.com/acme/repo/pull/123")
+        );
 
-Recent user messages (newest first):
-1.
-Please validate PR #123
-
-Workspace pull request state: merged
-Workspace pull request number: 123
-"#;
-
-        let raw_missing =
-            r#"{"task_status":"done","evidence":{"kind":"none","pr_number":null,"text":""}}"#;
-        let status = parse_task_status_auto_update_output(input, raw_missing).unwrap();
-        assert_eq!(status, TaskStatus::Validating);
-
-        let raw_wrong = r#"{"task_status":"done","evidence":{"kind":"pr_reference","pr_number":124,"text":"PR #124 is merged"}}"#;
-        let status = parse_task_status_auto_update_output(input, raw_wrong).unwrap();
-        assert_eq!(status, TaskStatus::Validating);
-
-        let raw_ok = r#"{"task_status":"done","evidence":{"kind":"pr_reference","pr_number":123,"text":"Please validate PR #123 (merged)"}}"#;
-        let status = parse_task_status_auto_update_output(input, raw_ok).unwrap();
-        assert_eq!(status, TaskStatus::Done);
+        let raw = r#"{"task_status":"iterating","validation_pr_number":123,"validation_pr_url":"https://github.com/acme/repo/pull/123"}"#;
+        let suggested = parse_task_status_auto_update_output(raw).unwrap();
+        assert_eq!(suggested.task_status, TaskStatus::Iterating);
+        assert_eq!(suggested.validation_pr_number, None);
+        assert_eq!(suggested.validation_pr_url, None);
     }
 }

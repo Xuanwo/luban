@@ -165,6 +165,13 @@ pub struct TaskIssueInfo {
 }
 
 #[derive(Clone, Debug)]
+pub struct TaskStatusAutoUpdateSuggestion {
+    pub task_status: TaskStatus,
+    pub validation_pr_number: Option<u64>,
+    pub validation_pr_url: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct ProjectIdentity {
     pub root_path: PathBuf,
     pub github_repo: Option<String>,
@@ -332,6 +339,26 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
+    fn save_conversation_task_validation_pr(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+        _pr_number: u64,
+        _pr_url: Option<String>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn mark_conversation_tasks_done_for_merged_pr(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _pr_number: u64,
+    ) -> Result<Vec<u64>, String> {
+        Ok(Vec::new())
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,
@@ -487,6 +514,23 @@ pub trait ProjectWorkspaceService: Send + Sync {
         _amp_mode: Option<String>,
     ) -> Result<TaskStatus, String> {
         Err("unimplemented".to_owned())
+    }
+
+    fn task_suggest_task_status_auto_update(
+        &self,
+        input: String,
+        runner: AgentRunnerKind,
+        model_id: String,
+        thinking_effort: ThinkingEffort,
+        amp_mode: Option<String>,
+    ) -> Result<TaskStatusAutoUpdateSuggestion, String> {
+        let task_status =
+            self.task_suggest_task_status(input, runner, model_id, thinking_effort, amp_mode)?;
+        Ok(TaskStatusAutoUpdateSuggestion {
+            task_status,
+            validation_pr_number: None,
+            validation_pr_url: None,
+        })
     }
 
     fn conversation_update_title_if_matches(
