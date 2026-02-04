@@ -18,8 +18,9 @@ export async function runNewTaskProjectAvatars({ page }) {
     throw new Error(`expected mock avatar data URL, got: ${src.slice(0, 64)}`);
   }
 
-  await page.keyboard.press('Escape');
-  await page.keyboard.press('Escape');
+  // Close the dropdown before clicking the modal close button (Radix captures pointer events while open).
+  await gitProject.click();
+
+  await page.getByTestId('new-task-close-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 }
-

@@ -17,6 +17,13 @@ import { draftKey } from "@/lib/ui-prefs"
 import { focusChatInput } from "@/lib/focus-chat-input"
 import { uploadAttachment } from "@/lib/luban-http"
 import { isMockMode } from "@/lib/luban-mode"
+import type { NewTaskDraft } from "@/lib/new-task-drafts"
+import {
+  clearNewTaskStash,
+  loadNewTaskStash,
+  saveNewTaskStash,
+  upsertNewTaskDraft,
+} from "@/lib/new-task-drafts"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -50,6 +57,7 @@ interface NewTaskModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   activeProjectId?: string | null
+  initialDraft?: NewTaskDraft | null
 }
 
 type PendingAttachment = {
@@ -60,7 +68,11 @@ type PendingAttachment = {
   url?: string
 }
 
-export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskModalProps) {
+function normalizePathLike(raw: string): string {
+  return raw.trim().replace(/\/+$/, "")
+}
+
+export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft }: NewTaskModalProps) {
   const {
     app,
     executeTask,
@@ -76,6 +88,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
   const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null)
   const [projectSearch, setProjectSearch] = useState("")
   const [workdirSearch, setWorkdirSearch] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -83,12 +96,11 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
   const appRef = useRef<AppSnapshot | null>(null)
   const submitInFlightRef = useRef(false)
   const prevOpenRef = useRef(false)
+  const hasUserEditedRef = useRef(false)
 
   useEffect(() => {
     appRef.current = app
   }, [app])
-
-  const normalizePathLike = (raw: string) => raw.trim().replace(/\/+$/, "")
 
   const projectOptions = useMemo(() => {
     return (app?.projects ?? []).map((p) => {
@@ -122,8 +134,49 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
       if (opt) return opt.id
     }
     if (projectOptions.length === 1) return projectOptions[0]?.id ?? ""
-    return ""
+    return projectOptions[0]?.id ?? ""
   }, [activeProjectId, activeWorkdirId, projectOptions])
+
+  const effectiveProjectId = selectedProjectId || defaultProjectId || ""
+
+  const pickDefaultWorkdirIdForProjectId = useCallback(
+    (projectId: string): number | null => {
+      const project = projectOptions.find((p) => p.id === projectId) ?? null
+      if (!project) return null
+      if (!project.isGit) return null
+      if (project.workdirs.length === 0) return null
+
+      if (activeWorkdirId != null && project.workdirs.some((w) => w.id === activeWorkdirId)) {
+        return activeWorkdirId
+      }
+
+      const main =
+        project.workdirs.find(
+          (w) =>
+            w.workdir_name === "main" &&
+            normalizePathLike(w.workdir_path) === normalizePathLike(project.path),
+        ) ?? null
+      if (main) return main.id
+
+      return project.workdirs[0]?.id ?? null
+    },
+    [activeWorkdirId, projectOptions],
+  )
+
+  const stashNow = useCallback(() => {
+    const trimmed = input.trim()
+    if (!trimmed) {
+      void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
+      return
+    }
+    void saveNewTaskStash({
+      text: input,
+      projectId: effectiveProjectId || null,
+      workdirId: selectedWorkdirId,
+      editingDraftId,
+      updatedAtUnixMs: Date.now(),
+    }).catch((err) => console.warn("saveNewTaskStash failed", err))
+  }, [editingDraftId, effectiveProjectId, input, selectedWorkdirId])
 
   useEffect(() => {
     const prev = prevOpenRef.current
@@ -132,9 +185,53 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 
     setProjectSearch("")
     setWorkdirSearch("")
-    setSelectedWorkdirId(null)
+    hasUserEditedRef.current = false
+    setInput("")
+    setEditingDraftId(null)
     setSelectedProjectId(defaultProjectId || "")
-  }, [defaultProjectId, open])
+    setSelectedWorkdirId(defaultProjectId ? pickDefaultWorkdirIdForProjectId(defaultProjectId) : null)
+
+    if (initialDraft) {
+      void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
+      setInput(initialDraft.text)
+      setSelectedProjectId(initialDraft.projectId ?? defaultProjectId ?? "")
+      setSelectedWorkdirId(initialDraft.workdirId)
+      setEditingDraftId(initialDraft.id)
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const stash = await loadNewTaskStash()
+        if (cancelled) return
+        if (hasUserEditedRef.current) return
+        if (stash) {
+          setInput(stash.text)
+          setSelectedProjectId(stash.projectId ?? defaultProjectId ?? "")
+          setSelectedWorkdirId(
+            stash.workdirId ??
+              (stash.projectId ? pickDefaultWorkdirIdForProjectId(stash.projectId) : null) ??
+              (defaultProjectId ? pickDefaultWorkdirIdForProjectId(defaultProjectId) : null),
+          )
+          setEditingDraftId(stash.editingDraftId)
+          return
+        }
+      } catch (err) {
+        console.warn("loadNewTaskStash failed", err)
+      }
+      if (cancelled) return
+      if (hasUserEditedRef.current) return
+      setInput("")
+      setEditingDraftId(null)
+      setSelectedWorkdirId(null)
+      setSelectedProjectId(defaultProjectId || "")
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [defaultProjectId, initialDraft, open, pickDefaultWorkdirIdForProjectId])
 
   useEffect(() => {
     if (!open) return
@@ -144,9 +241,9 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
   }, [defaultProjectId, open, selectedProjectId])
 
   const selectedProject = useMemo(() => {
-    if (!selectedProjectId) return null
-    return projectOptions.find((p) => p.id === selectedProjectId) ?? null
-  }, [projectOptions, selectedProjectId])
+    if (!effectiveProjectId) return null
+    return projectOptions.find((p) => p.id === effectiveProjectId) ?? null
+  }, [effectiveProjectId, projectOptions])
 
   const workdirOptions = useMemo(() => selectedProject?.workdirs ?? [], [selectedProject?.workdirs])
 
@@ -177,7 +274,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 
   useEffect(() => {
     if (!open) return
-    if (!selectedProjectId) {
+    if (!effectiveProjectId) {
       setSelectedWorkdirId(null)
       return
     }
@@ -218,7 +315,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 
     const first = workdirOptions[0] ?? null
     setSelectedWorkdirId(first ? first.id : null)
-  }, [activeWorkdirId, isGitProject, open, selectedProject, selectedProjectId, selectedWorkdirId, workdirOptions])
+  }, [activeWorkdirId, effectiveProjectId, isGitProject, open, selectedProject, selectedWorkdirId, workdirOptions])
 
   // Check if we can execute the task
   const canExecute = useMemo(() => {
@@ -226,11 +323,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
     if (selectedProject == null) return false
     // Non-git project does not require explicit workdir selection.
     if (!isGitProject) return true
-    // Git project - need workdir selected (either existing or -1 for create new).
-    // Allow the initial "no workdirs yet" state so submit can call ensureMainWorkdir().
-    if (selectedWorkdirId != null) return true
-    return workdirOptions.length === 0
-  }, [input, isGitProject, selectedProject, selectedWorkdirId, workdirOptions.length])
+    return true
+  }, [input, isGitProject, selectedProject])
 
   // Focus input when modal opens
   useEffect(() => {
@@ -368,6 +462,16 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
           return createNewWorkdirId(selectedProject.id, existing)
         }
         if (selectedWorkdirId != null) return selectedWorkdirId
+        if (activeWorkdirId != null && selectedProject.workdirs.some((w) => w.id === activeWorkdirId)) {
+          return activeWorkdirId
+        }
+        const main = selectedProject.workdirs.find(
+          (w) =>
+            w.workdir_name === "main" && normalizePathLike(w.workdir_path) === normalizePathLike(selectedProject.path),
+        )
+        if (main) return main.id
+        const first = selectedProject.workdirs[0]
+        if (first) return first.id
         return ensureMainWorkdirId(selectedProject.id, selectedProject.path)
       })()
 
@@ -409,6 +513,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
       setInput("")
       revokeAttachmentUrls(attachments)
       setAttachments([])
+      setEditingDraftId(null)
+      void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
       onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -424,6 +530,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
     setAttachments([])
     setSelectedProjectId("")
     setSelectedWorkdirId(null)
+    setEditingDraftId(null)
     onOpenChange(false)
   }, [attachments, onOpenChange])
 
@@ -434,18 +541,28 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
       if (e.key !== "Escape") return
       e.preventDefault()
       e.stopPropagation()
-      handleClose()
+      stashNow()
+      onOpenChange(false)
     }
 
     window.addEventListener("keydown", handler, { capture: true })
     return () => window.removeEventListener("keydown", handler, { capture: true } as AddEventListenerOptions)
-  }, [handleClose, open])
+  }, [onOpenChange, open, stashNow])
+
+  useEffect(() => {
+    if (!open) return
+
+    const handler = () => stashNow()
+    window.addEventListener("blur", handler)
+    return () => window.removeEventListener("blur", handler)
+  }, [open, stashNow])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault()
       e.stopPropagation()
-      handleClose()
+      stashNow()
+      onOpenChange(false)
       return
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -472,11 +589,18 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 
   if (!open) return null
 
+  const canSaveDraft = input.trim().length > 0
+
+  const handleDismiss = () => {
+    stashNow()
+    onOpenChange(false)
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
       style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}
-      onClick={handleClose}
+      onClick={handleDismiss}
       onKeyDown={handleKeyDown}
     >
       <div
@@ -492,14 +616,14 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
         {/* Header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-1">
           {/* Left: Project Selector + Template */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
             {/* Project Selector */}
 	            <DropdownMenu>
 	              <DropdownMenuTrigger asChild>
 	                <button
 	                  data-testid="new-task-project-selector"
 	                  data-selected-project-id={selectedProject?.id ?? ""}
-	                  className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative"
+	                  className="h-6 pl-6 pr-2 text-[12px] flex items-center gap-1 hover:bg-[#f7f7f7] transition-colors relative min-w-0 max-w-[280px]"
 	                  style={{
 	                    backgroundColor: "#fff",
 	                    color: "#2d2d2d",
@@ -528,7 +652,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 	                      style={{ backgroundColor: "#26b5ce" }}
 	                    />
 	                  )}
-		                  <span>
+		                  <span className="truncate">
 		                    {selectedProject?.name || selectedProject?.slug || "Project"}
 		                  </span>
 		                </button>
@@ -594,9 +718,9 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
 	                        )}
 		                        <span className="text-[13px]" style={{ color: "#2d2d2d" }}>{p.name || p.slug}</span>
 			                      </div>
-			                      {selectedProjectId === p.id && (
-			                        <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
-			                      )}
+                      {effectiveProjectId === p.id && (
+                        <Check className="w-4 h-4" style={{ color: "#2d2d2d" }} />
+                      )}
 		                    </DropdownMenuItem>
 		                  ))}
 
@@ -722,8 +846,46 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
           </div>
 
           {/* Right: Expand + Close */}
-          <div className="flex items-center">
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {canSaveDraft && (
+              <button
+                type="button"
+                data-testid="new-task-save-draft-button"
+                className="h-7 px-2.5 text-[12px] transition-colors hover:bg-[#f5f5f5] disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ color: "#666", borderRadius: "5px", fontWeight: 500 }}
+                onClick={() => {
+                  void (async () => {
+                    const trimmed = input.trim()
+                    if (!trimmed) return
+                    try {
+                      await upsertNewTaskDraft({
+                        id: editingDraftId,
+                        text: input,
+                        projectId: effectiveProjectId || null,
+                        workdirId: selectedWorkdirId,
+                      })
+                      await clearNewTaskStash()
+                      setInput("")
+                      revokeAttachmentUrls(attachments)
+                      setAttachments([])
+                      setSelectedProjectId("")
+                      setSelectedWorkdirId(null)
+                      setEditingDraftId(null)
+                      onOpenChange(false)
+                      toast("Saved to Drafts")
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : String(err))
+                    }
+                  })()
+                }}
+                disabled={executingMode != null}
+                title="Save as draft"
+              >
+                Save as draft
+              </button>
+            )}
             <button
+              data-testid="new-task-expand-button"
               className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
               style={{ color: "#666", borderRadius: "5px" }}
               title="Expand"
@@ -731,7 +893,11 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
               <Maximize2 className="w-4 h-4" />
             </button>
             <button
-              onClick={handleClose}
+              data-testid="new-task-close-button"
+              onClick={() => {
+                void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
+                handleClose()
+              }}
               className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
               style={{ color: "#666", borderRadius: "5px" }}
               title="Close"
@@ -748,7 +914,10 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId }: NewTaskMod
             ref={inputRef}
             data-testid="new-task-input"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              hasUserEditedRef.current = true
+              setInput(e.target.value)
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="Add task description..."

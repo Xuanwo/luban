@@ -4,6 +4,7 @@ use luban_domain::{
     ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt, ThinkingEffort,
     WorkspaceStatus, WorkspaceThreadId,
 };
+use rand::{RngCore as _, rngs::OsRng};
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ impl std::fmt::Display for SqliteStoreError {
 
 impl std::error::Error for SqliteStoreError {}
 
-const LATEST_SCHEMA_VERSION: u32 = 21;
+const LATEST_SCHEMA_VERSION: u32 = 22;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -205,6 +206,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0021_cleanup_autocreated_thread1.sql"
         )),
     ),
+    (
+        22,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0022_new_task_drafts.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -365,6 +373,36 @@ enum DbCommand {
         project_slug: String,
         workspace_name: String,
         context_id: u64,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    ListNewTaskDrafts {
+        reply: mpsc::Sender<anyhow::Result<Vec<luban_domain::NewTaskDraft>>>,
+    },
+    CreateNewTaskDraft {
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+        reply: mpsc::Sender<anyhow::Result<luban_domain::NewTaskDraft>>,
+    },
+    UpdateNewTaskDraft {
+        draft_id: String,
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+        reply: mpsc::Sender<anyhow::Result<luban_domain::NewTaskDraft>>,
+    },
+    DeleteNewTaskDraft {
+        draft_id: String,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    LoadNewTaskStash {
+        reply: mpsc::Sender<anyhow::Result<Option<luban_domain::NewTaskStash>>>,
+    },
+    SaveNewTaskStash {
+        stash: luban_domain::NewTaskStash,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    ClearNewTaskStash {
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
 }
@@ -694,6 +732,53 @@ impl SqliteStore {
                                 &workspace_name,
                                 context_id,
                             ));
+                        }
+                        (Ok(db), DbCommand::ListNewTaskDrafts { reply }) => {
+                            let _ = reply.send(db.list_new_task_drafts());
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::CreateNewTaskDraft {
+                                text,
+                                project_id,
+                                workspace_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.create_new_task_draft(
+                                &text,
+                                project_id.as_deref(),
+                                workspace_id,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::UpdateNewTaskDraft {
+                                draft_id,
+                                text,
+                                project_id,
+                                workspace_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.update_new_task_draft(
+                                &draft_id,
+                                &text,
+                                project_id.as_deref(),
+                                workspace_id,
+                            ));
+                        }
+                        (Ok(db), DbCommand::DeleteNewTaskDraft { draft_id, reply }) => {
+                            let _ = reply.send(db.delete_new_task_draft(&draft_id));
+                        }
+                        (Ok(db), DbCommand::LoadNewTaskStash { reply }) => {
+                            let _ = reply.send(db.load_new_task_stash());
+                        }
+                        (Ok(db), DbCommand::SaveNewTaskStash { stash, reply }) => {
+                            let _ = reply.send(db.save_new_task_stash(&stash));
+                        }
+                        (Ok(db), DbCommand::ClearNewTaskStash { reply }) => {
+                            let _ = reply.send(db.clear_new_task_stash());
                         }
                         (Err(err), cmd) => {
                             respond_db_open_error(err, cmd);
@@ -1111,6 +1196,90 @@ impl SqliteStore {
             .context("sqlite worker is not running")?;
         reply_rx.recv().context("sqlite worker terminated")?
     }
+
+    pub fn list_new_task_drafts(&self) -> anyhow::Result<Vec<luban_domain::NewTaskDraft>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::ListNewTaskDrafts { reply: reply_tx })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn create_new_task_draft(
+        &self,
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+    ) -> anyhow::Result<luban_domain::NewTaskDraft> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::CreateNewTaskDraft {
+                text,
+                project_id,
+                workspace_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn update_new_task_draft(
+        &self,
+        draft_id: String,
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+    ) -> anyhow::Result<luban_domain::NewTaskDraft> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::UpdateNewTaskDraft {
+                draft_id,
+                text,
+                project_id,
+                workspace_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn delete_new_task_draft(&self, draft_id: String) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::DeleteNewTaskDraft {
+                draft_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn load_new_task_stash(&self) -> anyhow::Result<Option<luban_domain::NewTaskStash>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::LoadNewTaskStash { reply: reply_tx })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn save_new_task_stash(&self, stash: luban_domain::NewTaskStash) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::SaveNewTaskStash {
+                stash,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn clear_new_task_stash(&self) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::ClearNewTaskStash { reply: reply_tx })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
 }
 
 fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
@@ -1180,6 +1349,27 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::DeleteContextItem { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::ListNewTaskDrafts { reply } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::CreateNewTaskDraft { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::UpdateNewTaskDraft { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::DeleteNewTaskDraft { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::LoadNewTaskStash { reply } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::SaveNewTaskStash { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::ClearNewTaskStash { reply } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
     }
@@ -3720,6 +3910,196 @@ impl SqliteDatabase {
         )?;
         Ok(())
     }
+
+    fn list_new_task_drafts(&mut self) -> anyhow::Result<Vec<luban_domain::NewTaskDraft>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, project_id, workspace_id, created_at_ms, updated_at_ms
+             FROM new_task_drafts
+             ORDER BY updated_at_ms DESC, created_at_ms DESC, id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id = row.get::<_, String>(0)?;
+            let text = row.get::<_, String>(1)?;
+            let project_id = row.get::<_, Option<String>>(2)?;
+            let workspace_id = row
+                .get::<_, Option<i64>>(3)?
+                .and_then(|v| u64::try_from(v).ok());
+            let created_at_unix_ms = row.get::<_, i64>(4)? as u64;
+            let updated_at_unix_ms = row.get::<_, i64>(5)? as u64;
+            Ok(luban_domain::NewTaskDraft {
+                id,
+                text,
+                project_id,
+                workspace_id,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn create_new_task_draft(
+        &mut self,
+        text: &str,
+        project_id: Option<&str>,
+        workspace_id: Option<u64>,
+    ) -> anyhow::Result<luban_domain::NewTaskDraft> {
+        let now = now_unix_millis();
+        let mut bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut bytes);
+        let id = hex_lower(&bytes);
+
+        self.conn.execute(
+            "INSERT INTO new_task_drafts
+             (id, text, project_id, workspace_id, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                text,
+                project_id,
+                workspace_id.map(|v| v as i64),
+                now as i64,
+                now as i64
+            ],
+        )?;
+
+        Ok(luban_domain::NewTaskDraft {
+            id,
+            text: text.to_owned(),
+            project_id: project_id.map(str::to_owned),
+            workspace_id,
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        })
+    }
+
+    fn update_new_task_draft(
+        &mut self,
+        draft_id: &str,
+        text: &str,
+        project_id: Option<&str>,
+        workspace_id: Option<u64>,
+    ) -> anyhow::Result<luban_domain::NewTaskDraft> {
+        let (created_at_unix_ms,): (i64,) = self
+            .conn
+            .query_row(
+                "SELECT created_at_ms FROM new_task_drafts WHERE id = ?1",
+                params![draft_id],
+                |row| Ok((row.get::<_, i64>(0)?,)),
+            )
+            .optional()
+            .context("failed to load new task draft")?
+            .ok_or_else(|| anyhow!("draft not found"))?;
+
+        let now = now_unix_millis();
+        let updated = self.conn.execute(
+            "UPDATE new_task_drafts
+             SET text = ?2,
+                 project_id = ?3,
+                 workspace_id = ?4,
+                 updated_at_ms = ?5
+             WHERE id = ?1",
+            params![
+                draft_id,
+                text,
+                project_id,
+                workspace_id.map(|v| v as i64),
+                now as i64
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("draft not found"));
+        }
+
+        Ok(luban_domain::NewTaskDraft {
+            id: draft_id.to_owned(),
+            text: text.to_owned(),
+            project_id: project_id.map(str::to_owned),
+            workspace_id,
+            created_at_unix_ms: created_at_unix_ms as u64,
+            updated_at_unix_ms: now,
+        })
+    }
+
+    fn delete_new_task_draft(&mut self, draft_id: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM new_task_drafts WHERE id = ?1",
+            params![draft_id],
+        )?;
+        Ok(())
+    }
+
+    fn load_new_task_stash(&mut self) -> anyhow::Result<Option<luban_domain::NewTaskStash>> {
+        self.conn
+            .query_row(
+                "SELECT text, project_id, workspace_id, editing_draft_id, updated_at_ms
+                 FROM new_task_stash
+                 WHERE id = 1",
+                [],
+                |row| {
+                    let text = row.get::<_, String>(0)?;
+                    let project_id = row.get::<_, Option<String>>(1)?;
+                    let workspace_id = row
+                        .get::<_, Option<i64>>(2)?
+                        .and_then(|v| u64::try_from(v).ok());
+                    let editing_draft_id = row.get::<_, Option<String>>(3)?;
+                    let updated_at_unix_ms = row.get::<_, i64>(4)? as u64;
+                    Ok(luban_domain::NewTaskStash {
+                        text,
+                        project_id,
+                        workspace_id,
+                        editing_draft_id,
+                        updated_at_unix_ms,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to load new task stash")
+    }
+
+    fn save_new_task_stash(&mut self, stash: &luban_domain::NewTaskStash) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO new_task_stash
+             (id, text, project_id, workspace_id, editing_draft_id, updated_at_ms)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                text = excluded.text,
+                project_id = excluded.project_id,
+                workspace_id = excluded.workspace_id,
+                editing_draft_id = excluded.editing_draft_id,
+                updated_at_ms = excluded.updated_at_ms",
+            params![
+                stash.text,
+                stash.project_id,
+                stash.workspace_id.map(|v| v as i64),
+                stash.editing_draft_id,
+                stash.updated_at_unix_ms as i64
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn clear_new_task_stash(&mut self) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM new_task_stash WHERE id = 1", [])?;
+        Ok(())
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn configure_connection(conn: &mut Connection) -> anyhow::Result<()> {

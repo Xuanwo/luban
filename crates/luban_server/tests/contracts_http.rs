@@ -733,6 +733,172 @@ async fn http_contracts_smoke() {
         );
     }
 
+    // C-HTTP-NEW-TASK-DRAFTS / C-HTTP-NEW-TASK-DRAFT
+    {
+        let snap: luban_api::NewTaskDraftsSnapshot = client
+            .get(format!("{base}/api/new_task/drafts"))
+            .send()
+            .await
+            .expect("GET /api/new_task/drafts")
+            .error_for_status()
+            .expect("drafts status")
+            .json()
+            .await
+            .expect("drafts json");
+        assert!(snap.drafts.is_empty(), "expected drafts to start empty");
+
+        #[derive(serde::Serialize)]
+        struct UpsertDraft<'a> {
+            text: &'a str,
+            project_id: &'a str,
+            workdir_id: u64,
+        }
+
+        let created: luban_api::NewTaskDraftSnapshot = client
+            .post(format!("{base}/api/new_task/drafts"))
+            .json(&UpsertDraft {
+                text: "draft-1",
+                project_id: &project_id,
+                workdir_id,
+            })
+            .send()
+            .await
+            .expect("POST /api/new_task/drafts")
+            .error_for_status()
+            .expect("create draft status")
+            .json()
+            .await
+            .expect("create draft json");
+
+        assert_eq!(created.text, "draft-1");
+        assert_eq!(
+            created.project_id,
+            Some(luban_api::ProjectId(project_id.clone()))
+        );
+        assert_eq!(
+            created.workspace_id,
+            Some(luban_api::WorkspaceId(workdir_id))
+        );
+        assert!(created.created_at_unix_ms > 0);
+        assert!(created.updated_at_unix_ms >= created.created_at_unix_ms);
+
+        let updated: luban_api::NewTaskDraftSnapshot = client
+            .put(format!("{base}/api/new_task/drafts/{}", created.id))
+            .json(&UpsertDraft {
+                text: "draft-2",
+                project_id: &project_id,
+                workdir_id,
+            })
+            .send()
+            .await
+            .expect("PUT /api/new_task/drafts/{id}")
+            .error_for_status()
+            .expect("update draft status")
+            .json()
+            .await
+            .expect("update draft json");
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.text, "draft-2");
+        assert!(updated.updated_at_unix_ms >= created.updated_at_unix_ms);
+
+        let res = client
+            .delete(format!("{base}/api/new_task/drafts/{}", created.id))
+            .send()
+            .await
+            .expect("DELETE /api/new_task/drafts/{id}");
+        assert_eq!(res.status(), reqwest::StatusCode::NO_CONTENT);
+
+        let snap: luban_api::NewTaskDraftsSnapshot = client
+            .get(format!("{base}/api/new_task/drafts"))
+            .send()
+            .await
+            .expect("GET /api/new_task/drafts (after delete)")
+            .error_for_status()
+            .expect("drafts status")
+            .json()
+            .await
+            .expect("drafts json");
+        assert!(
+            snap.drafts.iter().all(|d| d.id != updated.id),
+            "expected deleted draft to be removed"
+        );
+    }
+
+    // C-HTTP-NEW-TASK-STASH
+    {
+        let initial: luban_api::NewTaskStashResponse = client
+            .get(format!("{base}/api/new_task/stash"))
+            .send()
+            .await
+            .expect("GET /api/new_task/stash")
+            .error_for_status()
+            .expect("stash status")
+            .json()
+            .await
+            .expect("stash json");
+        assert!(initial.stash.is_none(), "expected stash to start empty");
+
+        #[derive(serde::Serialize)]
+        struct PutStash<'a> {
+            text: &'a str,
+            project_id: &'a str,
+            workdir_id: u64,
+            editing_draft_id: &'a str,
+        }
+
+        let res = client
+            .put(format!("{base}/api/new_task/stash"))
+            .json(&PutStash {
+                text: "stash-1",
+                project_id: &project_id,
+                workdir_id,
+                editing_draft_id: "draft-id",
+            })
+            .send()
+            .await
+            .expect("PUT /api/new_task/stash");
+        assert_eq!(res.status(), reqwest::StatusCode::NO_CONTENT);
+
+        let loaded: luban_api::NewTaskStashResponse = client
+            .get(format!("{base}/api/new_task/stash"))
+            .send()
+            .await
+            .expect("GET /api/new_task/stash (after put)")
+            .error_for_status()
+            .expect("stash status")
+            .json()
+            .await
+            .expect("stash json");
+        let stash = loaded.stash.expect("stash should exist");
+        assert_eq!(stash.text, "stash-1");
+        assert_eq!(
+            stash.project_id,
+            Some(luban_api::ProjectId(project_id.clone()))
+        );
+        assert_eq!(stash.workspace_id, Some(luban_api::WorkspaceId(workdir_id)));
+        assert_eq!(stash.editing_draft_id.as_deref(), Some("draft-id"));
+        assert!(stash.updated_at_unix_ms > 0);
+
+        let res = client
+            .delete(format!("{base}/api/new_task/stash"))
+            .send()
+            .await
+            .expect("DELETE /api/new_task/stash");
+        assert_eq!(res.status(), reqwest::StatusCode::NO_CONTENT);
+
+        let cleared: luban_api::NewTaskStashResponse = client
+            .get(format!("{base}/api/new_task/stash"))
+            .send()
+            .await
+            .expect("GET /api/new_task/stash (after delete)")
+            .error_for_status()
+            .expect("stash status")
+            .json()
+            .await
+            .expect("stash json");
+        assert!(cleared.stash.is_none(), "expected stash to be cleared");
+    }
+
     set_task_star_via_ws(server.addr, workdir_id, task_id, true).await;
 
     // C-HTTP-TASKS (starred)

@@ -1042,6 +1042,59 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
+    fn list_new_task_drafts(&self) -> Result<Vec<luban_domain::NewTaskDraft>, String> {
+        self.sqlite
+            .list_new_task_drafts()
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn create_new_task_draft(
+        &self,
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+    ) -> Result<luban_domain::NewTaskDraft, String> {
+        self.sqlite
+            .create_new_task_draft(text, project_id, workspace_id)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn update_new_task_draft(
+        &self,
+        draft_id: String,
+        text: String,
+        project_id: Option<String>,
+        workspace_id: Option<u64>,
+    ) -> Result<luban_domain::NewTaskDraft, String> {
+        self.sqlite
+            .update_new_task_draft(draft_id, text, project_id, workspace_id)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn delete_new_task_draft(&self, draft_id: String) -> Result<(), String> {
+        self.sqlite
+            .delete_new_task_draft(draft_id)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn load_new_task_stash(&self) -> Result<Option<luban_domain::NewTaskStash>, String> {
+        self.sqlite
+            .load_new_task_stash()
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn save_new_task_stash(&self, stash: luban_domain::NewTaskStash) -> Result<(), String> {
+        self.sqlite
+            .save_new_task_stash(stash)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn clear_new_task_stash(&self) -> Result<(), String> {
+        self.sqlite
+            .clear_new_task_stash()
+            .map_err(anyhow_error_to_string)
+    }
+
     fn run_agent_turn_streamed(
         &self,
         request: RunAgentTurnRequest,

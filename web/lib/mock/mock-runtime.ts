@@ -13,6 +13,10 @@ import type {
   ConversationSnapshot,
   FeedbackSubmitResult,
   MentionItemSnapshot,
+  NewTaskDraftSnapshot,
+  NewTaskDraftsSnapshot,
+  NewTaskStashResponse,
+  NewTaskStashSnapshot,
   ProjectId,
   ServerEvent,
   TaskExecuteMode,
@@ -45,6 +49,8 @@ type RuntimeState = {
   claudeConfig: { tree: ClaudeConfigEntrySnapshot[]; files: Map<string, string> }
   nextWorkdirId: number
   nextTaskId: number
+  newTaskDrafts: NewTaskDraftSnapshot[]
+  newTaskStash: NewTaskStashSnapshot | null
 }
 
 let runtime: RuntimeState | null = null
@@ -124,6 +130,8 @@ function initRuntime(): RuntimeState {
     claudeConfig: { tree: clone(fixtures.claudeConfig.tree), files: claudeFiles },
     nextWorkdirId,
     nextTaskId,
+    newTaskDrafts: [],
+    newTaskStash: null,
   }
 }
 
@@ -228,6 +236,82 @@ export async function mockFetchTasks(args: { projectId?: string } = {}): Promise
     }
   }
   return { rev: state.rev, tasks: clone(tasks) }
+}
+
+export async function mockFetchNewTaskDrafts(): Promise<NewTaskDraftsSnapshot> {
+  const state = getRuntime()
+  return { drafts: clone(state.newTaskDrafts) }
+}
+
+export async function mockCreateNewTaskDraft(args: {
+  text: string
+  project_id: string | null
+  workdir_id: number | null
+}): Promise<NewTaskDraftSnapshot> {
+  const state = getRuntime()
+  const now = Date.now()
+  const draft: NewTaskDraftSnapshot = {
+    id: `draft_${Math.random().toString(16).slice(2)}_${now.toString(16)}`,
+    text: args.text,
+    project_id: args.project_id,
+    workdir_id: args.workdir_id,
+    created_at_unix_ms: now,
+    updated_at_unix_ms: now,
+  }
+  state.newTaskDrafts.unshift(draft)
+  return clone(draft)
+}
+
+export async function mockUpdateNewTaskDraft(
+  draftId: string,
+  args: { text: string; project_id: string | null; workdir_id: number | null },
+): Promise<NewTaskDraftSnapshot> {
+  const state = getRuntime()
+  const idx = state.newTaskDrafts.findIndex((d) => d.id === draftId)
+  if (idx < 0) throw new Error(`mock: unknown draft id: ${draftId}`)
+  const prev = state.newTaskDrafts[idx]!
+  const now = Date.now()
+  const next: NewTaskDraftSnapshot = {
+    ...prev,
+    text: args.text,
+    project_id: args.project_id,
+    workdir_id: args.workdir_id,
+    updated_at_unix_ms: now,
+  }
+  state.newTaskDrafts[idx] = next
+  state.newTaskDrafts.sort((a, b) => b.updated_at_unix_ms - a.updated_at_unix_ms)
+  return clone(next)
+}
+
+export async function mockDeleteNewTaskDraft(draftId: string): Promise<void> {
+  const state = getRuntime()
+  state.newTaskDrafts = state.newTaskDrafts.filter((d) => d.id !== draftId)
+}
+
+export async function mockFetchNewTaskStash(): Promise<NewTaskStashResponse> {
+  const state = getRuntime()
+  return { stash: state.newTaskStash ? clone(state.newTaskStash) : null }
+}
+
+export async function mockSaveNewTaskStash(args: {
+  text: string
+  project_id: string | null
+  workdir_id: number | null
+  editing_draft_id: string | null
+}): Promise<void> {
+  const state = getRuntime()
+  state.newTaskStash = {
+    text: args.text,
+    project_id: args.project_id,
+    workdir_id: args.workdir_id,
+    editing_draft_id: args.editing_draft_id,
+    updated_at_unix_ms: Date.now(),
+  }
+}
+
+export async function mockClearNewTaskStash(): Promise<void> {
+  const state = getRuntime()
+  state.newTaskStash = null
 }
 
 export async function mockFetchThreads(workdirId: WorkspaceId): Promise<ThreadsSnapshot> {

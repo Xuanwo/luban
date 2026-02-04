@@ -12,6 +12,7 @@ import { useLuban } from "@/lib/luban-context"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
+import type { NewTaskDraft } from "@/lib/new-task-drafts"
 
 /**
  * Luban IDE main layout
@@ -31,6 +32,7 @@ export function LubanIDE() {
   const [showDetail, setShowDetail] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newTaskOpen, setNewTaskOpen] = useState(false)
+  const [newTaskInitialDraft, setNewTaskInitialDraft] = useState<NewTaskDraft | null>(null)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
 
   const handleViewChange = (view: NavView) => {
@@ -99,7 +101,15 @@ export function LubanIDE() {
 
   const renderContent = () => {
     if (activeView === "inbox") {
-      return <InboxView onOpenFullView={handleOpenFullViewFromInbox} />
+      return (
+        <InboxView
+          onOpenFullView={handleOpenFullViewFromInbox}
+          onOpenDraft={(draft) => {
+            setNewTaskInitialDraft(draft)
+            setNewTaskOpen(true)
+          }}
+        />
+      )
     }
 
     if (showDetail) {
@@ -142,7 +152,10 @@ export function LubanIDE() {
             onViewChange={handleViewChange}
             activeProjectId={activeProjectId}
             onProjectSelected={(projectId) => setActiveProjectId(projectId)}
-            onNewTask={() => setNewTaskOpen(true)}
+            onNewTask={() => {
+              setNewTaskInitialDraft(null)
+              setNewTaskOpen(true)
+            }}
             onFavoriteTaskSelected={(task) => {
               void (async () => {
                 await openWorkspace(task.workdir_id)
@@ -164,8 +177,10 @@ export function LubanIDE() {
       <NewTaskModal
         open={newTaskOpen}
         activeProjectId={activeProjectId}
+        initialDraft={newTaskInitialDraft}
         onOpenChange={(open) => {
           setNewTaskOpen(open)
+          if (!open) setNewTaskInitialDraft(null)
           if (!open) setShowDetail(true)
         }}
       />

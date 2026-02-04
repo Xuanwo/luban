@@ -32,7 +32,7 @@ export async function runNewTaskDefaultProjectFollowsContext({ page }) {
   await projectSelector.waitFor({ state: 'visible' });
   await waitForDataAttribute(projectSelector, 'data-selected-project-id', 'mock-project-1', 10_000);
 
-  await page.keyboard.press('Escape');
+  await page.getByTestId('new-task-close-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 
   await page.getByTestId('nav-inbox-button').click();

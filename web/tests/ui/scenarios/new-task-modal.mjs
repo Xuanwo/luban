@@ -51,6 +51,13 @@ export async function runNewTaskModal({ page }) {
     fs.rmSync(pngPath, { force: true });
   }
   await sleep(500);
-  await page.keyboard.press('Escape');
+  const closeButton = page.getByTestId('new-task-close-button');
+  await closeButton.waitFor({ state: 'attached', timeout: 10_000 });
+  const closeVisible = await closeButton.isVisible();
+  if (!closeVisible) {
+    const modalVisible = await page.getByTestId('new-task-modal').isVisible().catch(() => false);
+    throw new Error(`new-task-close-button not visible (modalVisible=${modalVisible})`);
+  }
+  await closeButton.click({ timeout: 10_000 });
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 }

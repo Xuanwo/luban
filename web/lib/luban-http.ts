@@ -5,6 +5,9 @@ import type {
   CodexCustomPromptSnapshot,
   ConversationSnapshot,
   MentionItemSnapshot,
+  NewTaskDraftSnapshot,
+  NewTaskDraftsSnapshot,
+  NewTaskStashResponse,
   TasksSnapshot,
   ThreadsSnapshot,
   WorkspaceChangesSnapshot,
@@ -20,6 +23,13 @@ import {
   mockFetchThreads,
   mockFetchWorkspaceChanges,
   mockFetchWorkspaceDiff,
+  mockCreateNewTaskDraft,
+  mockDeleteNewTaskDraft,
+  mockFetchNewTaskDrafts,
+  mockFetchNewTaskStash,
+  mockSaveNewTaskStash,
+  mockUpdateNewTaskDraft,
+  mockClearNewTaskStash,
   mockUploadAttachment,
 } from "./mock/mock-runtime"
 
@@ -144,4 +154,74 @@ export async function fetchTasks(args: { projectId?: string } = {}): Promise<Tas
   const res = await fetch(`/api/tasks${suffix}`)
   if (!res.ok) throw new Error(`GET /api/tasks failed: ${res.status}`)
   return (await res.json()) as TasksSnapshot
+}
+
+export async function fetchNewTaskDrafts(): Promise<NewTaskDraftsSnapshot> {
+  if (isMockMode()) return await mockFetchNewTaskDrafts()
+  const res = await fetch("/api/new_task/drafts")
+  if (!res.ok) throw new Error(`GET /api/new_task/drafts failed: ${res.status}`)
+  return (await res.json()) as NewTaskDraftsSnapshot
+}
+
+export async function createNewTaskDraft(args: {
+  text: string
+  project_id: string | null
+  workdir_id: number | null
+}): Promise<NewTaskDraftSnapshot> {
+  if (isMockMode()) return await mockCreateNewTaskDraft(args)
+  const res = await fetch("/api/new_task/drafts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  })
+  if (!res.ok) throw new Error(`POST /api/new_task/drafts failed: ${res.status}`)
+  return (await res.json()) as NewTaskDraftSnapshot
+}
+
+export async function updateNewTaskDraft(
+  draftId: string,
+  args: { text: string; project_id: string | null; workdir_id: number | null },
+): Promise<NewTaskDraftSnapshot> {
+  if (isMockMode()) return await mockUpdateNewTaskDraft(draftId, args)
+  const res = await fetch(`/api/new_task/drafts/${encodeURIComponent(draftId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  })
+  if (!res.ok) throw new Error(`PUT /api/new_task/drafts/${draftId} failed: ${res.status}`)
+  return (await res.json()) as NewTaskDraftSnapshot
+}
+
+export async function deleteNewTaskDraft(draftId: string): Promise<void> {
+  if (isMockMode()) return await mockDeleteNewTaskDraft(draftId)
+  const res = await fetch(`/api/new_task/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" })
+  if (!res.ok) throw new Error(`DELETE /api/new_task/drafts/${draftId} failed: ${res.status}`)
+}
+
+export async function fetchNewTaskStash(): Promise<NewTaskStashResponse> {
+  if (isMockMode()) return await mockFetchNewTaskStash()
+  const res = await fetch("/api/new_task/stash")
+  if (!res.ok) throw new Error(`GET /api/new_task/stash failed: ${res.status}`)
+  return (await res.json()) as NewTaskStashResponse
+}
+
+export async function saveNewTaskStash(args: {
+  text: string
+  project_id: string | null
+  workdir_id: number | null
+  editing_draft_id: string | null
+}): Promise<void> {
+  if (isMockMode()) return await mockSaveNewTaskStash(args)
+  const res = await fetch("/api/new_task/stash", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  })
+  if (!res.ok) throw new Error(`PUT /api/new_task/stash failed: ${res.status}`)
+}
+
+export async function clearNewTaskStash(): Promise<void> {
+  if (isMockMode()) return await mockClearNewTaskStash()
+  const res = await fetch("/api/new_task/stash", { method: "DELETE" })
+  if (!res.ok) throw new Error(`DELETE /api/new_task/stash failed: ${res.status}`)
 }

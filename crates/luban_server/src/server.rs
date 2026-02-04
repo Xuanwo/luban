@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State, ws::WebSocketUpgrade},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use luban_api::AppSnapshot;
 use luban_api::{
@@ -57,6 +57,20 @@ pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
         .route("/projects/avatar", get(get_project_avatar))
         .route("/codex/prompts", get(get_codex_prompts))
         .route("/tasks", get(get_tasks))
+        .route(
+            "/new_task/drafts",
+            get(list_new_task_drafts).post(create_new_task_draft),
+        )
+        .route(
+            "/new_task/drafts/{draft_id}",
+            put(update_new_task_draft).delete(delete_new_task_draft),
+        )
+        .route(
+            "/new_task/stash",
+            get(get_new_task_stash)
+                .put(save_new_task_stash)
+                .delete(clear_new_task_stash),
+        )
         .route("/workdirs/{workdir_id}/tasks", get(get_threads))
         .route(
             "/workdirs/{workdir_id}/conversations/{task_id}",
@@ -890,6 +904,184 @@ async fn delete_context_item(
         .services
         .delete_context_item(project_slug, workspace_name, context_id)
     {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+fn now_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn is_safe_new_task_draft_id(id: &str) -> bool {
+    let id = id.trim();
+    if id.is_empty() || id.len() > 128 {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn map_new_task_draft_snapshot(
+    draft: luban_domain::NewTaskDraft,
+) -> luban_api::NewTaskDraftSnapshot {
+    luban_api::NewTaskDraftSnapshot {
+        id: draft.id,
+        text: draft.text,
+        project_id: draft.project_id.map(luban_api::ProjectId),
+        workspace_id: draft.workspace_id.map(luban_api::WorkspaceId),
+        created_at_unix_ms: draft.created_at_unix_ms,
+        updated_at_unix_ms: draft.updated_at_unix_ms,
+    }
+}
+
+fn map_new_task_stash_snapshot(
+    stash: luban_domain::NewTaskStash,
+) -> luban_api::NewTaskStashSnapshot {
+    luban_api::NewTaskStashSnapshot {
+        text: stash.text,
+        project_id: stash.project_id.map(luban_api::ProjectId),
+        workspace_id: stash.workspace_id.map(luban_api::WorkspaceId),
+        editing_draft_id: stash.editing_draft_id,
+        updated_at_unix_ms: stash.updated_at_unix_ms,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct NewTaskDraftUpsertRequest {
+    text: String,
+    project_id: Option<String>,
+    #[serde(default)]
+    workdir_id: Option<u64>,
+}
+
+async fn list_new_task_drafts(State(state): State<AppStateHolder>) -> impl IntoResponse {
+    match state.services.list_new_task_drafts() {
+        Ok(drafts) => Json(luban_api::NewTaskDraftsSnapshot {
+            drafts: drafts
+                .into_iter()
+                .map(map_new_task_draft_snapshot)
+                .collect(),
+        })
+        .into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn create_new_task_draft(
+    State(state): State<AppStateHolder>,
+    Json(req): Json<NewTaskDraftUpsertRequest>,
+) -> impl IntoResponse {
+    let text = req.text.trim();
+    if text.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, "text is required").into_response();
+    }
+    if req.text.len() > 100_000 {
+        return (axum::http::StatusCode::BAD_REQUEST, "text too large").into_response();
+    }
+
+    match state
+        .services
+        .create_new_task_draft(req.text, req.project_id, req.workdir_id)
+    {
+        Ok(draft) => Json(map_new_task_draft_snapshot(draft)).into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn update_new_task_draft(
+    State(state): State<AppStateHolder>,
+    Path(draft_id): Path<String>,
+    Json(req): Json<NewTaskDraftUpsertRequest>,
+) -> impl IntoResponse {
+    if !is_safe_new_task_draft_id(&draft_id) {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid draft id").into_response();
+    }
+    let text = req.text.trim();
+    if text.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, "text is required").into_response();
+    }
+    if req.text.len() > 100_000 {
+        return (axum::http::StatusCode::BAD_REQUEST, "text too large").into_response();
+    }
+
+    match state
+        .services
+        .update_new_task_draft(draft_id, req.text, req.project_id, req.workdir_id)
+    {
+        Ok(draft) => Json(map_new_task_draft_snapshot(draft)).into_response(),
+        Err(message) if message.contains("not found") => {
+            (axum::http::StatusCode::NOT_FOUND, message).into_response()
+        }
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn delete_new_task_draft(
+    State(state): State<AppStateHolder>,
+    Path(draft_id): Path<String>,
+) -> impl IntoResponse {
+    if !is_safe_new_task_draft_id(&draft_id) {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid draft id").into_response();
+    }
+
+    match state.services.delete_new_task_draft(draft_id) {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn get_new_task_stash(State(state): State<AppStateHolder>) -> impl IntoResponse {
+    match state.services.load_new_task_stash() {
+        Ok(stash) => Json(luban_api::NewTaskStashResponse {
+            stash: stash.map(map_new_task_stash_snapshot),
+        })
+        .into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct NewTaskStashUpsertRequest {
+    text: String,
+    project_id: Option<String>,
+    #[serde(default)]
+    workdir_id: Option<u64>,
+    #[serde(default)]
+    editing_draft_id: Option<String>,
+}
+
+async fn save_new_task_stash(
+    State(state): State<AppStateHolder>,
+    Json(req): Json<NewTaskStashUpsertRequest>,
+) -> impl IntoResponse {
+    let text = req.text.trim();
+    if text.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, "text is required").into_response();
+    }
+    if req.text.len() > 100_000 {
+        return (axum::http::StatusCode::BAD_REQUEST, "text too large").into_response();
+    }
+
+    let stash = luban_domain::NewTaskStash {
+        text: req.text,
+        project_id: req.project_id,
+        workspace_id: req.workdir_id,
+        editing_draft_id: req.editing_draft_id,
+        updated_at_unix_ms: now_unix_millis(),
+    };
+
+    match state.services.save_new_task_stash(stash) {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn clear_new_task_stash(State(state): State<AppStateHolder>) -> impl IntoResponse {
+    match state.services.clear_new_task_stash() {
         Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
         Err(message) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
     }

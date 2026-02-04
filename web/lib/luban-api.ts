@@ -311,6 +311,31 @@ export type TaskExecuteResult = {
   mode: TaskExecuteMode
 }
 
+export type NewTaskDraftSnapshot = {
+  id: string
+  text: string
+  project_id: ProjectId | null
+  workdir_id: WorkspaceId | null
+  created_at_unix_ms: number
+  updated_at_unix_ms: number
+}
+
+export type NewTaskDraftsSnapshot = {
+  drafts: NewTaskDraftSnapshot[]
+}
+
+export type NewTaskStashSnapshot = {
+  text: string
+  project_id: ProjectId | null
+  workdir_id: WorkspaceId | null
+  editing_draft_id: string | null
+  updated_at_unix_ms: number
+}
+
+export type NewTaskStashResponse = {
+  stash: NewTaskStashSnapshot | null
+}
+
 export type CodexConfigEntryKind = "file" | "folder"
 
 export type CodexConfigEntrySnapshot = {

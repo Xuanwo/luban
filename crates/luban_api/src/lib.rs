@@ -687,6 +687,37 @@ pub struct ContextSnapshot {
     pub items: Vec<ContextItemSnapshot>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NewTaskDraftSnapshot {
+    pub id: String,
+    pub text: String,
+    pub project_id: Option<ProjectId>,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
+    pub workspace_id: Option<WorkspaceId>,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NewTaskDraftsSnapshot {
+    pub drafts: Vec<NewTaskDraftSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NewTaskStashSnapshot {
+    pub text: String,
+    pub project_id: Option<ProjectId>,
+    #[serde(rename = "workdir_id", alias = "workspace_id")]
+    pub workspace_id: Option<WorkspaceId>,
+    pub editing_draft_id: Option<String>,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NewTaskStashResponse {
+    pub stash: Option<NewTaskStashSnapshot>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MentionItemKind {

@@ -229,6 +229,25 @@ pub struct ClaudeConfigEntry {
     pub children: Vec<ClaudeConfigEntry>,
 }
 
+#[derive(Clone, Debug)]
+pub struct NewTaskDraft {
+    pub id: String,
+    pub text: String,
+    pub project_id: Option<String>,
+    pub workspace_id: Option<u64>,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewTaskStash {
+    pub text: String,
+    pub project_id: Option<String>,
+    pub workspace_id: Option<u64>,
+    pub editing_draft_id: Option<String>,
+    pub updated_at_unix_ms: u64,
+}
+
 pub trait ProjectWorkspaceService: Send + Sync {
     fn load_app_state(&self) -> Result<PersistedAppState, String>;
 
@@ -401,6 +420,45 @@ pub trait ProjectWorkspaceService: Send + Sync {
         workspace_name: String,
         context_id: u64,
     ) -> Result<(), String>;
+
+    fn list_new_task_drafts(&self) -> Result<Vec<NewTaskDraft>, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn create_new_task_draft(
+        &self,
+        _text: String,
+        _project_id: Option<String>,
+        _workspace_id: Option<u64>,
+    ) -> Result<NewTaskDraft, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn update_new_task_draft(
+        &self,
+        _draft_id: String,
+        _text: String,
+        _project_id: Option<String>,
+        _workspace_id: Option<u64>,
+    ) -> Result<NewTaskDraft, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn delete_new_task_draft(&self, _draft_id: String) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn load_new_task_stash(&self) -> Result<Option<NewTaskStash>, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn save_new_task_stash(&self, _stash: NewTaskStash) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn clear_new_task_stash(&self) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
 
     fn run_agent_turn_streamed(
         &self,
