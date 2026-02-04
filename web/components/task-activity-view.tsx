@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useCallback, useRef } from "react"
+import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import Image from "next/image"
 import {
   Brain,
@@ -30,6 +30,7 @@ import { AnsiOutput } from "@/components/shared/ansi-output"
 import { UnifiedProviderLogo } from "@/components/shared/unified-provider-logo"
 import { extractTurnDurationLabel, useActivityTiming } from "@/lib/activity-timing"
 import { attachmentHref } from "@/lib/attachment-href"
+import { WindowedList, type WindowedListItem } from "@/components/windowed-list"
 
 const AMP_MARK_URL = "/logos/amp.svg"
 
@@ -632,13 +633,24 @@ function AgentActivityEvent({ message }: AgentActivityEventProps) {
 function AgentTurnCardEvent({
   message,
   onCancel,
+  isExpanded: controlledExpanded,
+  onExpandedChange,
+  expandedEvents: controlledExpandedEvents,
+  onToggleEvent,
 }: {
   message: Message
   onCancel?: () => void
+  isExpanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+  expandedEvents?: Set<string>
+  onToggleEvent?: (eventId: string) => void
 }) {
   const activities = message.activities ?? []
-  const [isExpanded, setIsExpanded] = useState(false)
-  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set())
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(false)
+  const [uncontrolledExpandedEvents, setUncontrolledExpandedEvents] = useState<Set<string>>(new Set())
+  const isExpanded = controlledExpanded ?? uncontrolledExpanded
+  const expandedEvents = controlledExpandedEvents ?? uncontrolledExpandedEvents
+  const setExpanded = onExpandedChange ?? setUncontrolledExpanded
   const { durationLabel } = useActivityTiming(activities)
 
   const isRunning = message.turnStatus === "running"
@@ -649,17 +661,19 @@ function AgentTurnCardEvent({
   const completedCount = activities.filter((a) => a.status === "done" && a.title !== "Turn canceled").length
   const turnDurationLabel = extractTurnDurationLabel(activities)
 
-  const toggleEvent = (eventId: string) => {
-    setExpandedEvents((prev) => {
-      const next = new Set(prev)
-      if (next.has(eventId)) {
-        next.delete(eventId)
-      } else {
-        next.add(eventId)
-      }
-      return next
+  const toggleEvent =
+    onToggleEvent ??
+    ((eventId: string) => {
+      setUncontrolledExpandedEvents((prev) => {
+        const next = new Set(prev)
+        if (next.has(eventId)) {
+          next.delete(eventId)
+        } else {
+          next.add(eventId)
+        }
+        return next
+      })
     })
-  }
 
   const summary = (() => {
     if (isRunning) return latestActivity?.title ?? "Processing"
@@ -689,7 +703,7 @@ function AgentTurnCardEvent({
         <button
           data-testid="agent-turn-toggle"
           type="button"
-          onClick={() => setIsExpanded((v) => !v)}
+          onClick={() => setExpanded(!isExpanded)}
           className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
           style={{ color: COLORS.textMuted }}
         >
@@ -826,6 +840,8 @@ function TaskHeaderSection({
 }
 
 interface ActivityStreamSectionProps {
+  listKey: string
+  scrollElement: HTMLElement | null
   messages: Message[]
   isLoading?: boolean
 }
@@ -863,16 +879,26 @@ function groupMessages(messages: Message[]): ActivityGroup[] {
 }
 
 function ActivityStreamSection({
+  listKey,
+  scrollElement,
   messages,
   isLoading,
   onCancelAgentTurn,
   workspaceId,
 }: ActivityStreamSectionProps & { onCancelAgentTurn?: () => void; workspaceId?: number }) {
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set())
-  const groups = groupMessages(messages)
+  const [agentTurnUiStateById, setAgentTurnUiStateById] = useState<
+    Map<string, { isExpanded: boolean; expandedEvents: Set<string> }>
+  >(new Map())
+  const groups = useMemo(() => groupMessages(messages), [messages])
 
-  const toggleGroup = (startIndex: number) => {
-    setExpandedGroups(prev => {
+  useEffect(() => {
+    setExpandedGroups(new Set())
+    setAgentTurnUiStateById(new Map())
+  }, [listKey])
+
+  const toggleGroup = useCallback((startIndex: number) => {
+    setExpandedGroups((prev) => {
       const next = new Set(prev)
       if (next.has(startIndex)) {
         next.delete(startIndex)
@@ -881,7 +907,121 @@ function ActivityStreamSection({
       }
       return next
     })
-  }
+  }, [])
+
+  const items = useMemo<WindowedListItem[]>(() => {
+    return groups.map((group) => {
+      if (group.type === "message") {
+        const msg = group.message
+        if (msg.type === "user") {
+          return {
+            key: msg.id,
+            node: (
+              <div className="relative">
+                <UserActivityEvent message={msg} workspaceId={workspaceId} />
+              </div>
+            ),
+          }
+        }
+
+        if (msg.type === "assistant") {
+          return {
+            key: msg.id,
+            node: (
+              <div className="relative">
+                <AgentActivityEvent message={msg} />
+              </div>
+            ),
+          }
+        }
+
+        if (msg.type === "agent_turn") {
+          const state = agentTurnUiStateById.get(msg.id) ?? {
+            isExpanded: false,
+            expandedEvents: new Set<string>(),
+          }
+          return {
+            key: msg.id,
+            node: (
+              <div className="relative">
+                <AgentTurnCardEvent
+                  message={msg}
+                  onCancel={msg.turnStatus === "running" ? onCancelAgentTurn : undefined}
+                  isExpanded={state.isExpanded}
+                  expandedEvents={state.expandedEvents}
+                  onExpandedChange={(nextExpanded) => {
+                    setAgentTurnUiStateById((prev) => {
+                      const next = new Map(prev)
+                      const prevState = next.get(msg.id) ?? { isExpanded: false, expandedEvents: new Set<string>() }
+                      next.set(msg.id, { ...prevState, isExpanded: nextExpanded })
+                      return next
+                    })
+                  }}
+                  onToggleEvent={(eventId) => {
+                    setAgentTurnUiStateById((prev) => {
+                      const next = new Map(prev)
+                      const prevState = next.get(msg.id) ?? { isExpanded: false, expandedEvents: new Set<string>() }
+                      const nextEvents = new Set(prevState.expandedEvents)
+                      if (nextEvents.has(eventId)) nextEvents.delete(eventId)
+                      else nextEvents.add(eventId)
+                      next.set(msg.id, { ...prevState, expandedEvents: nextEvents })
+                      return next
+                    })
+                  }}
+                />
+              </div>
+            ),
+          }
+        }
+
+        return { key: msg.id, node: null }
+      }
+
+      const isExpanded = expandedGroups.has(group.startIndex)
+      const shouldCollapse = group.messages.length > 3 && !isExpanded
+
+      if (shouldCollapse) {
+        return {
+          key: `event-group:${group.startIndex}`,
+          node: (
+            <div className="relative">
+              <CollapsedEventsGroup events={group.messages} onExpand={() => toggleGroup(group.startIndex)} />
+            </div>
+          ),
+        }
+      }
+
+      return {
+        key: `event-group:${group.startIndex}:expanded:${isExpanded ? "1" : "0"}`,
+        node: (
+          <div className="flex flex-col gap-2">
+            {group.messages.map((message, index) => {
+              const hasNextEvent = index < group.messages.length - 1
+              return (
+                <div key={message.id} className="relative">
+                  {hasNextEvent && (
+                    <div
+                      className="absolute"
+                      style={{
+                        left: `${ACTIVITY_TIMELINE_LEFT_PX}px`,
+                        top: "20px",
+                        bottom: "-8px",
+                        width: "1px",
+                        backgroundColor: COLORS.timeline,
+                      }}
+                    />
+                  )}
+                  <SystemEventItem message={message} />
+                </div>
+              )
+            })}
+          </div>
+        ),
+      }
+    })
+  }, [agentTurnUiStateById, expandedGroups, groups, onCancelAgentTurn, toggleGroup, workspaceId])
+
+  const shouldWindow = items.length > 200
 
   return (
     <div>
@@ -915,68 +1055,22 @@ function ActivityStreamSection({
           </div>
         )}
 
-        {/* Activity items - 8px gap between simple events */}
-        <div className="flex flex-col gap-2">
-          {groups.map((group, groupIndex) => {
-            if (group.type === "message") {
-              return (
-                <div key={group.message.id} className="relative">
-                  {group.message.type === "user" ? (
-                    <UserActivityEvent message={group.message} workspaceId={workspaceId} />
-                  ) : group.message.type === "assistant" ? (
-                    <AgentActivityEvent message={group.message} />
-                  ) : group.message.type === "agent_turn" ? (
-                    <AgentTurnCardEvent
-                      message={group.message}
-                      onCancel={group.message.turnStatus === "running" ? onCancelAgentTurn : undefined}
-                    />
-                  ) : null}
-                </div>
-              )
-            }
-
-            // Event group
-            const isExpanded = expandedGroups.has(group.startIndex)
-            const shouldCollapse = group.messages.length > 3 && !isExpanded
-
-            if (shouldCollapse) {
-              return (
-                <div key={`event-group-${group.startIndex}`} className="relative">
-                  <CollapsedEventsGroup 
-                    events={group.messages} 
-                    onExpand={() => toggleGroup(group.startIndex)} 
-                  />
-                </div>
-              )
-            }
-
-            return (
-              <div key={`event-group-${group.startIndex}`} className="flex flex-col gap-2">
-                {group.messages.map((message, index) => {
-                  const hasNextEvent = index < group.messages.length - 1
-                  return (
-                    <div key={message.id} className="relative">
-                      {/* Timeline connector - only between adjacent events */}
-                      {hasNextEvent && (
-                        <div 
-                          className="absolute"
-                          style={{
-                            left: `${ACTIVITY_TIMELINE_LEFT_PX}px`,
-                            top: '20px',
-                            bottom: '-8px',
-                            width: '1px',
-                            backgroundColor: COLORS.timeline
-                          }}
-                        />
-                      )}
-                      <SystemEventItem message={message} />
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </div>
+        {shouldWindow ? (
+          <WindowedList
+            items={items}
+            listKey={listKey}
+            scrollElement={scrollElement}
+            itemClassName="pb-2"
+            estimatedItemHeightPx={160}
+            overscanPx={1000}
+          />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {items.map((it) => (
+              <div key={it.key}>{it.node}</div>
+            ))}
+          </div>
+        )}
 
 
       </div>
@@ -985,6 +1079,7 @@ function ActivityStreamSection({
 }
 
 export interface TaskActivityViewProps {
+  listKey: string
   title: string
   description?: string
   workspaceId?: number
@@ -998,6 +1093,7 @@ export interface TaskActivityViewProps {
 }
 
 export function TaskActivityView({
+  listKey,
   title,
   description,
   workspaceId,
@@ -1009,7 +1105,12 @@ export function TaskActivityView({
   onCancelAgentTurn,
   className,
 }: TaskActivityViewProps) {
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null)
+  const setScrollContainer = useCallback((el: HTMLDivElement | null) => {
+    scrollContainerRef.current = el
+    setScrollContainerEl(el)
+  }, [])
 
   return (
     <div 
@@ -1018,7 +1119,7 @@ export function TaskActivityView({
     >
       {/* Scrollable content */}
       <div
-        ref={scrollContainerRef}
+        ref={setScrollContainer}
         className="flex-1 overflow-y-auto"
         data-testid="chat-scroll-container"
         style={{ padding: "0 60px" }}
@@ -1038,6 +1139,8 @@ export function TaskActivityView({
             isLoading={isLoading}
             onCancelAgentTurn={onCancelAgentTurn}
             workspaceId={workspaceId}
+            listKey={listKey}
+            scrollElement={scrollContainerEl}
           />
           
           {/* Input at bottom of activity - aligned with cards */}

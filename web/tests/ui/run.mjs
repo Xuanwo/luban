@@ -14,6 +14,7 @@ import { runInboxPreviewLine } from './scenarios/inbox-preview-line.mjs';
 import { runInboxSortStability } from './scenarios/inbox-sort-stability.mjs';
 import { runInboxStatusChange } from './scenarios/inbox-status-change.mjs';
 import { runLatestEventsVisible } from './scenarios/latest-events-visible.mjs';
+import { runActivityWindowing } from './scenarios/activity-windowing.mjs';
 import { runAgentRunnerIcons } from './scenarios/agent-runner-icons.mjs';
 import { runNewTaskModal } from './scenarios/new-task-modal.mjs';
 import { runNewTaskDoubleSubmitNoDuplicate } from './scenarios/new-task-double-submit-no-duplicate.mjs';
@@ -168,6 +169,7 @@ async function main() {
     await runTaskStatusChange({ page, baseUrl });
     await runQueuedPrompts({ page, baseUrl });
     await runLatestEventsVisible({ page, baseUrl });
+    await runActivityWindowing({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
   } catch (err) {

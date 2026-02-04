@@ -495,11 +495,12 @@ export function TaskActivityPanel({
           />
         </div>
       ) : (
-        <TaskActivityView
-          title={taskTitle}
-          description={taskDescription}
-          workspaceId={activeWorkspaceId ?? undefined}
-          messages={messages}
+	        <TaskActivityView
+	          listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
+	          title={taskTitle}
+	          description={taskDescription}
+	          workspaceId={activeWorkspaceId ?? undefined}
+	          messages={messages}
           isLoading={isAgentRunning}
           onCancelAgentTurn={isAgentRunning ? () => cancelAgentTurn() : undefined}
           inputComponent={inputComponent}

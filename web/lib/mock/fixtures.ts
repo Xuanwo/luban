@@ -177,6 +177,23 @@ function systemEvent(args: {
   }
 }
 
+function longConversationEntries(args: { pairs: number }): ConversationEntry[] {
+  const out: ConversationEntry[] = [
+    systemEvent({
+      id: "sys_long_1",
+      createdAtUnixMs: unixMs(-3 * 60 * 60 * 1000),
+      event: { event_type: "task_created" },
+    }),
+  ]
+
+  for (let i = 0; i < args.pairs; i += 1) {
+    out.push(userMessage(`User message ${i}`))
+    out.push(agentMessage(`Assistant message ${i}`))
+  }
+
+  return out
+}
+
 function conversationBase(args: {
   workdirId: WorkspaceId
   taskId: WorkspaceThreadId
@@ -247,6 +264,7 @@ export function defaultMockFixtures(): MockFixtures {
   const task8: WorkspaceThreadId = 8
   const task9: WorkspaceThreadId = 9
   const task10: WorkspaceThreadId = 10
+  const task11: WorkspaceThreadId = 11
 
   const project1: ProjectId = "mock-project-1"
   const project2: ProjectId = "mock-project-2"
@@ -388,6 +406,7 @@ export function defaultMockFixtures(): MockFixtures {
       tasks: [
         { task_id: task1, remote_thread_id: null, title: "Mock task 1", created_at_unix_seconds: unixSeconds(-30), updated_at_unix_seconds: unixSeconds(-30), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task2, remote_thread_id: null, title: "Mock task 2", created_at_unix_seconds: unixSeconds(-10), updated_at_unix_seconds: unixSeconds(-10), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
+        { task_id: task11, remote_thread_id: null, title: "Mock: Long conversation", created_at_unix_seconds: unixSeconds(-2), updated_at_unix_seconds: unixSeconds(-2), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task4, remote_thread_id: null, title: "Validating: awaiting feedback", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task5, remote_thread_id: null, title: "Done: completed successfully", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task6, remote_thread_id: null, title: "Canceled: aborted by user", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
@@ -522,6 +541,14 @@ export function defaultMockFixtures(): MockFixtures {
           },
         },
       ],
+    }),
+    [key(workdir1, task11)]: conversationBase({
+      workdirId: workdir1,
+      taskId: task11,
+      title: "Mock: Long conversation",
+      taskStatus: "todo",
+      runStatus: "idle",
+      entries: longConversationEntries({ pairs: 320 }),
     }),
     [key(workdir1, task2)]: conversationBase({
       workdirId: workdir1,
