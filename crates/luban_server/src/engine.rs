@@ -6241,12 +6241,32 @@ mod tests {
         let other_thread_id =
             WorkspaceThreadId::from_u64(active_thread_id.as_u64().saturating_add(1));
 
-        if let Some(conversation) = state
+        state.apply(Action::ConversationLoaded {
+            workspace_id,
+            thread_id: active_thread_id,
+            snapshot: luban_domain::ConversationSnapshot {
+                title: Some("active".to_owned()),
+                thread_id: None,
+                task_status: luban_domain::TaskStatus::Todo,
+                runner: None,
+                agent_model_id: None,
+                thinking_effort: None,
+                amp_mode: None,
+                entries: Vec::new(),
+                entries_total: 0,
+                entries_start: 0,
+                pending_prompts: Vec::new(),
+                queue_paused: false,
+                run_started_at_unix_ms: None,
+                run_finished_at_unix_ms: None,
+            },
+        });
+
+        state
             .conversations
             .get_mut(&(workspace_id, active_thread_id))
-        {
-            conversation.run_status = OperationStatus::Running;
-        }
+            .expect("expected conversation to exist after ConversationLoaded")
+            .run_status = OperationStatus::Running;
         state.workspace_unread_completions.insert(workspace_id);
         state.starred_tasks.insert((workspace_id, other_thread_id));
 

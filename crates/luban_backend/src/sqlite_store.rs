@@ -3980,7 +3980,10 @@ mod tests {
         let mut db = open_db(&path);
 
         let threads = db.list_conversation_threads("p", "w").unwrap();
-        assert!(threads.is_empty(), "expected no threads for a new workspace");
+        assert!(
+            threads.is_empty(),
+            "expected no threads for a new workspace"
+        );
 
         let err = db
             .load_conversation_page("p", "w", 1, None, 10)
