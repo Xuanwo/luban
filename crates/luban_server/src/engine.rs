@@ -2368,19 +2368,29 @@ impl Engine {
             self.rev = self.rev.saturating_add(1);
 
             let should_sync_branch_watchers = should_sync_branch_watchers(&action);
-            let conversation_key = conversation_key_for_action(&action);
+            let mut conversation_keys = Vec::<(WorkspaceId, WorkspaceThreadId)>::new();
+            if let Some(key) = conversation_key_for_action(&action) {
+                conversation_keys.push(key);
+            }
             let queue_state_key = queue_state_key_for_action(&action);
             let threads_event = threads_event_for_action(&action);
             let task_summaries_workspace_id = task_summaries_workspace_id_for_action(&action);
 
             let new_effects = self.state.apply(action);
+            conversation_keys.extend(conversation_keys_for_effects(&new_effects));
             if should_sync_branch_watchers {
                 self.sync_branch_watchers();
             }
             self.publish_app_snapshot();
 
-            if let Some((wid, tid)) = conversation_key {
-                self.publish_conversation_snapshot(wid, tid);
+            if !conversation_keys.is_empty() {
+                let mut seen = HashSet::<(u64, u64)>::new();
+                for (wid, tid) in conversation_keys {
+                    if !seen.insert((wid.as_u64(), tid.as_u64())) {
+                        continue;
+                    }
+                    self.publish_conversation_snapshot(wid, tid);
+                }
             }
             if let Some((wid, mut threads)) = threads_event {
                 self.publish_threads_event(wid, &threads);
@@ -4554,6 +4564,16 @@ fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspac
             thread_id,
             ..
         } => Some((*workspace_id, *thread_id)),
+        Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
+        Action::TaskStatusAutoUpdateSuggested {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
         Action::QueueAgentMessage {
             workspace_id,
             thread_id,
@@ -4638,6 +4658,62 @@ fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspac
         } => Some((*workspace_id, *thread_id)),
         _ => None,
     }
+}
+
+fn conversation_keys_for_effects(effects: &[Effect]) -> Vec<(WorkspaceId, WorkspaceThreadId)> {
+    let mut out = Vec::new();
+    for effect in effects {
+        let key = match effect {
+            Effect::EnsureConversation {
+                workspace_id,
+                thread_id,
+            }
+            | Effect::StoreConversationRunConfig {
+                workspace_id,
+                thread_id,
+                ..
+            }
+            | Effect::StoreConversationTaskStatus {
+                workspace_id,
+                thread_id,
+                ..
+            }
+            | Effect::LoadConversation {
+                workspace_id,
+                thread_id,
+            }
+            | Effect::RunAgentTurn {
+                workspace_id,
+                thread_id,
+                ..
+            }
+            | Effect::CancelAgentTurn {
+                workspace_id,
+                thread_id,
+                ..
+            }
+            | Effect::CleanupClaudeProcess {
+                workspace_id,
+                thread_id,
+            }
+            | Effect::AiAutoTitleThread {
+                workspace_id,
+                thread_id,
+                ..
+            }
+            | Effect::AiAutoUpdateTaskStatus {
+                workspace_id,
+                thread_id,
+                ..
+            } => Some((*workspace_id, *thread_id)),
+            _ => None,
+        };
+
+        if let Some(key) = key {
+            out.push(key);
+        }
+    }
+    out
 }
 
 fn queue_state_key_for_action(action: &Action) -> Option<(WorkspaceId, WorkspaceThreadId)> {
@@ -6643,6 +6719,193 @@ mod tests {
         assert!(
             saw,
             "expected a task_summaries_changed event reflecting the star"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_set_emits_conversation_changed() {
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-test"),
+            is_git: true,
+        });
+
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-test"),
+        });
+
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.apply(Action::OpenWorkspace { workspace_id });
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("workspace tabs exist after creating thread")
+            .active_tab;
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let mut rx = events.subscribe();
+        let (tx, _rx_cmd) = mpsc::channel::<EngineCommand>(1);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: Arc::new(IdentityServices),
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            task_status_auto_update_backfill_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
+        };
+
+        engine
+            .process_action_queue(Action::TaskStatusSet {
+                workspace_id,
+                thread_id,
+                task_status: luban_domain::TaskStatus::Done,
+            })
+            .await;
+
+        let mut saw = false;
+        for _ in 0..40 {
+            let msg = match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+                Ok(Ok(msg)) => msg,
+                _ => continue,
+            };
+            let WsServerMessage::Event { event, .. } = msg else {
+                continue;
+            };
+            let luban_api::ServerEvent::ConversationChanged { snapshot } = *event else {
+                continue;
+            };
+            if snapshot.workspace_id.0 != workspace_id.as_u64()
+                || snapshot.thread_id.0 != thread_id.as_u64()
+            {
+                continue;
+            }
+            if snapshot.task_status != luban_api::TaskStatus::Done {
+                continue;
+            }
+            let has_status_event = snapshot.entries.iter().any(|e| {
+                matches!(
+                    e,
+                    luban_api::ConversationEntry::SystemEvent(
+                        luban_api::ConversationSystemEventEntry {
+                            event: luban_api::ConversationSystemEvent::TaskStatusChanged { .. },
+                            ..
+                        }
+                    )
+                )
+            });
+            if has_status_event {
+                saw = true;
+                break;
+            }
+        }
+
+        assert!(
+            saw,
+            "expected a conversation_changed event reflecting the status change"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_auto_update_suggested_emits_conversation_changed() {
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-test"),
+            is_git: true,
+        });
+
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-test"),
+        });
+
+        let workspace_id = state.projects[0].workspaces[0].id;
+        state.apply(Action::OpenWorkspace { workspace_id });
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("workspace tabs exist after creating thread")
+            .active_tab;
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let mut rx = events.subscribe();
+        let (tx, _rx_cmd) = mpsc::channel::<EngineCommand>(1);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: Arc::new(IdentityServices),
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            task_status_auto_update_backfill_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
+        };
+
+        engine
+            .process_action_queue(Action::TaskStatusAutoUpdateSuggested {
+                workspace_id,
+                thread_id,
+                expected_current_task_status: luban_domain::TaskStatus::Backlog,
+                suggested_task_status: luban_domain::TaskStatus::Done,
+            })
+            .await;
+
+        let mut saw = false;
+        for _ in 0..40 {
+            let msg = match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+                Ok(Ok(msg)) => msg,
+                _ => continue,
+            };
+            let WsServerMessage::Event { event, .. } = msg else {
+                continue;
+            };
+            let luban_api::ServerEvent::ConversationChanged { snapshot } = *event else {
+                continue;
+            };
+            if snapshot.workspace_id.0 != workspace_id.as_u64()
+                || snapshot.thread_id.0 != thread_id.as_u64()
+            {
+                continue;
+            }
+            if snapshot.task_status != luban_api::TaskStatus::Done {
+                continue;
+            }
+            let has_status_event = snapshot.entries.iter().any(|e| {
+                matches!(
+                    e,
+                    luban_api::ConversationEntry::SystemEvent(
+                        luban_api::ConversationSystemEventEntry {
+                            event: luban_api::ConversationSystemEvent::TaskStatusChanged { .. },
+                            ..
+                        }
+                    )
+                )
+            });
+            if has_status_event {
+                saw = true;
+                break;
+            }
+        }
+
+        assert!(
+            saw,
+            "expected a conversation_changed event reflecting the auto-updated status"
         );
     }
 
