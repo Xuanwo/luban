@@ -392,6 +392,55 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
   const state = getRuntime()
   const a = args.action
 
+  if (a.type === "telegram_bot_token_set") {
+    const prev = state.app.integrations?.telegram ?? { enabled: false, has_token: false, config_rev: 0 }
+    state.app.integrations = {
+      ...(state.app.integrations ?? { telegram: prev }),
+      telegram: {
+        ...prev,
+        enabled: true,
+        has_token: true,
+        bot_username: "mock_bot",
+        config_rev: (prev.config_rev ?? 0) + 1,
+        last_error: undefined,
+      },
+    }
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
+  if (a.type === "telegram_bot_token_clear") {
+    const prev = state.app.integrations?.telegram ?? { enabled: false, has_token: false, config_rev: 0 }
+    state.app.integrations = {
+      ...(state.app.integrations ?? { telegram: prev }),
+      telegram: {
+        ...prev,
+        enabled: false,
+        has_token: false,
+        bot_username: undefined,
+        paired_chat_id: undefined,
+        config_rev: (prev.config_rev ?? 0) + 1,
+        last_error: undefined,
+      },
+    }
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
+  if (a.type === "telegram_unpair") {
+    const prev = state.app.integrations?.telegram ?? { enabled: false, has_token: false, config_rev: 0 }
+    state.app.integrations = {
+      ...(state.app.integrations ?? { telegram: prev }),
+      telegram: {
+        ...prev,
+        paired_chat_id: undefined,
+        config_rev: (prev.config_rev ?? 0) + 1,
+      },
+    }
+    emitAppChanged({ state, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "add_project") {
     const projectId: ProjectId = `mock_project_${Math.random().toString(16).slice(2)}`
     state.app.projects.push({
@@ -830,6 +879,11 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
     }
 
     return clone(result) as unknown as T
+  }
+
+  if (action.type === "telegram_pair_start") {
+    const username = state.app.integrations?.telegram?.bot_username ?? "mock_bot"
+    return `https://t.me/${username}?start=mock_pairing_code` as unknown as T
   }
 
   if (action.type === "feedback_submit") {

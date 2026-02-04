@@ -116,5 +116,22 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
             .map(|(workspace_id, thread_id)| ((workspace_id.0, thread_id.0), true))
             .collect(),
         task_prompt_templates: HashMap::new(),
+        telegram_enabled: Some(state.telegram_enabled),
+        telegram_bot_token: state.telegram_bot_token.clone(),
+        telegram_bot_username: state.telegram_bot_username.clone(),
+        telegram_paired_chat_id: state.telegram_paired_chat_id,
+        telegram_topic_bindings: serialize_telegram_topic_bindings(&state.telegram_topic_bindings),
     }
+}
+
+fn serialize_telegram_topic_bindings(
+    bindings: &HashMap<i64, crate::TelegramTopicBinding>,
+) -> Option<String> {
+    if bindings.is_empty() {
+        return None;
+    }
+
+    let mut list = bindings.values().cloned().collect::<Vec<_>>();
+    list.sort_by_key(|b| b.message_thread_id);
+    serde_json::to_string(&list).ok()
 }

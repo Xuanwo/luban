@@ -11,6 +11,8 @@ use luban_domain::{
     ProjectWorkspaceService, PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
     PullRequestState as DomainPullRequestState, ThinkingEffort, WorkspaceId, WorkspaceThreadId,
 };
+use rand::RngCore as _;
+use rand::rngs::OsRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
@@ -108,6 +110,47 @@ impl EngineHandle {
         rx.await.context("engine stopped")?
     }
 
+    pub async fn telegram_runtime_config(&self) -> anyhow::Result<TelegramRuntimeConfig> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::GetTelegramRuntimeConfig { reply: tx })
+            .await
+            .context("engine unavailable")?;
+        rx.await.context("engine stopped")?
+    }
+
+    pub async fn consume_telegram_pairing_code(
+        &self,
+        code: String,
+        chat_id: i64,
+    ) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(EngineCommand::ConsumeTelegramPairingCode {
+                code,
+                chat_id,
+                reply: tx,
+            })
+            .await
+            .is_err()
+        {
+            return Err("engine unavailable".to_owned());
+        }
+        rx.await
+            .unwrap_or_else(|_| Err("engine stopped".to_owned()))
+    }
+
+    pub async fn dispatch_domain_action(&self, action: Action) -> anyhow::Result<()> {
+        self.tx
+            .send(EngineCommand::DispatchAction {
+                action: Box::new(action),
+            })
+            .await
+            .context("engine unavailable")?;
+        Ok(())
+    }
+
     pub async fn apply_client_action(
         &self,
         request_id: String,
@@ -155,6 +198,14 @@ pub enum EngineCommand {
     },
     GetStarredTasks {
         reply: oneshot::Sender<anyhow::Result<std::collections::HashSet<(u64, u64)>>>,
+    },
+    GetTelegramRuntimeConfig {
+        reply: oneshot::Sender<anyhow::Result<TelegramRuntimeConfig>>,
+    },
+    ConsumeTelegramPairingCode {
+        code: String,
+        chat_id: i64,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     ApplyClientAction {
         request_id: String,
@@ -377,6 +428,29 @@ pub struct Engine {
     pull_requests_in_flight: HashSet<WorkspaceId>,
     task_status_auto_update_backfill_in_flight: HashSet<(WorkspaceId, WorkspaceThreadId)>,
     workspace_threads_cache: HashMap<WorkspaceId, Vec<ConversationThreadMeta>>,
+    telegram_pairing: Option<TelegramPairingState>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TelegramRuntimeConfig {
+    pub enabled: bool,
+    pub bot_token: Option<String>,
+    pub paired_chat_id: Option<i64>,
+    pub topic_bindings: Vec<TelegramTopicBindingRoute>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TelegramTopicBindingRoute {
+    pub message_thread_id: i64,
+    pub workspace_id: u64,
+    pub thread_id: u64,
+    pub replayed_up_to: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct TelegramPairingState {
+    code: String,
+    expires_at: Instant,
 }
 
 #[derive(Clone)]
@@ -405,6 +479,7 @@ impl Engine {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         let refresh_tx = tx.clone();
@@ -431,6 +506,40 @@ impl Engine {
 
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
+    }
+
+    async fn telegram_pair_start(&mut self, request_id: String) -> Result<(), String> {
+        if crate::telegram::telegram_disabled() {
+            return Err("telegram integration is disabled".to_owned());
+        }
+
+        if !self.state.telegram_enabled() {
+            return Err("telegram is not enabled".to_owned());
+        }
+        let Some(token) = self.state.telegram_bot_token() else {
+            return Err("telegram bot token is not configured".to_owned());
+        };
+
+        let username = crate::telegram::telegram_get_me_username(token).await?;
+        self.process_action_queue(Action::TelegramBotUsernameSet {
+            username: Some(username.clone()),
+        })
+        .await;
+
+        let mut bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut bytes);
+        let code = hex_lower(&bytes);
+        self.telegram_pairing = Some(TelegramPairingState {
+            code: code.clone(),
+            expires_at: Instant::now() + Duration::from_secs(10 * 60),
+        });
+
+        let url = format!("https://t.me/{username}?start={code}");
+        let _ = self.events.send(WsServerMessage::Event {
+            rev: self.rev,
+            event: Box::new(luban_api::ServerEvent::TelegramPairReady { request_id, url }),
+        });
+        Ok(())
     }
 
     async fn execute_task_prompt(
@@ -645,6 +754,56 @@ impl Engine {
                     .collect::<std::collections::HashSet<_>>();
                 let _ = reply.send(Ok(starred));
             }
+            EngineCommand::GetTelegramRuntimeConfig { reply } => {
+                let cfg = TelegramRuntimeConfig {
+                    enabled: self.state.telegram_enabled(),
+                    bot_token: self.state.telegram_bot_token().map(ToOwned::to_owned),
+                    paired_chat_id: self.state.telegram_paired_chat_id(),
+                    topic_bindings: self
+                        .state
+                        .telegram_topic_bindings()
+                        .values()
+                        .map(|b| TelegramTopicBindingRoute {
+                            message_thread_id: b.message_thread_id,
+                            workspace_id: b.workspace_id,
+                            thread_id: b.thread_id,
+                            replayed_up_to: b.replayed_up_to,
+                        })
+                        .collect(),
+                };
+                let _ = reply.send(Ok(cfg));
+            }
+            EngineCommand::ConsumeTelegramPairingCode {
+                code,
+                chat_id,
+                reply,
+            } => {
+                let now = Instant::now();
+                let Some(pairing) = self.telegram_pairing.as_ref() else {
+                    let _ = reply.send(Err("pairing is not active".to_owned()));
+                    return;
+                };
+                if now >= pairing.expires_at {
+                    self.telegram_pairing = None;
+                    let _ = reply.send(Err("pairing code expired".to_owned()));
+                    return;
+                }
+                if pairing.code != code.trim() {
+                    let _ = reply.send(Err("invalid pairing code".to_owned()));
+                    return;
+                }
+                if let Some(existing) = self.state.telegram_paired_chat_id()
+                    && existing != chat_id
+                {
+                    let _ = reply.send(Err("telegram is already paired".to_owned()));
+                    return;
+                }
+
+                self.telegram_pairing = None;
+                self.process_action_queue(Action::TelegramChatPaired { chat_id })
+                    .await;
+                let _ = reply.send(Ok(()));
+            }
             EngineCommand::ApplyClientAction {
                 request_id,
                 action,
@@ -835,6 +994,12 @@ impl Engine {
                     });
 
                     let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
+                if matches!(action, luban_api::ClientAction::TelegramPairStart) {
+                    let res = self.telegram_pair_start(request_id.clone()).await;
+                    let _ = reply.send(res.map(|_| self.rev));
                     return;
                 }
 
@@ -4113,6 +4278,16 @@ impl Engine {
                         .collect(),
                 }
             },
+            integrations: luban_api::IntegrationsSnapshot {
+                telegram: luban_api::TelegramIntegrationSnapshot {
+                    enabled: self.state.telegram_enabled(),
+                    has_token: self.state.telegram_bot_token().is_some(),
+                    bot_username: self.state.telegram_bot_username().map(ToOwned::to_owned),
+                    paired_chat_id: self.state.telegram_paired_chat_id(),
+                    config_rev: self.state.telegram_config_rev(),
+                    last_error: self.state.telegram_last_error().map(ToOwned::to_owned),
+                },
+            },
         }
     }
 
@@ -4241,6 +4416,16 @@ impl Engine {
             title: conversation.title.clone(),
         })
     }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn normalize_project_path(path: &std::path::Path) -> PathBuf {
@@ -4896,6 +5081,12 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         }),
         luban_api::ClientAction::AddProjectAndOpen { .. } => None,
         luban_api::ClientAction::TaskExecute { .. } => None,
+        luban_api::ClientAction::TelegramBotTokenSet { token } => {
+            Some(Action::TelegramBotTokenSet { token })
+        }
+        luban_api::ClientAction::TelegramBotTokenClear => Some(Action::TelegramBotTokenCleared),
+        luban_api::ClientAction::TelegramPairStart => None,
+        luban_api::ClientAction::TelegramUnpair => Some(Action::TelegramUnpaired),
         luban_api::ClientAction::TaskStarSet {
             workspace_id,
             thread_id,
@@ -5490,6 +5681,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             })
         }
 
@@ -5690,6 +5886,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine.pull_requests.insert(
@@ -5753,6 +5950,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine.pull_requests.insert(
@@ -5903,6 +6101,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         let api_wid = luban_api::WorkspaceId(workspace_id.as_u64());
@@ -6016,6 +6215,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         services
@@ -6100,6 +6304,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine.publish_threads_event(workspace_id, &metas);
@@ -6197,6 +6402,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine.publish_threads_event(workspace_id, &metas);
@@ -6312,6 +6518,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
 
@@ -6401,6 +6608,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
 
@@ -6502,6 +6710,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             })
         }
 
@@ -6724,6 +6937,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine
@@ -6812,6 +7026,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine
@@ -6863,6 +7078,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             })
         }
 
@@ -7084,6 +7304,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine
@@ -7132,6 +7353,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine
@@ -7184,6 +7406,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             })
         }
 
@@ -7388,6 +7615,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             })
         }
 
@@ -7590,6 +7822,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         let rename = tokio::time::timeout(
@@ -7656,6 +7889,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine
@@ -7714,6 +7948,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         let api_attachment = luban_api::AttachmentRef {
@@ -7787,6 +8022,7 @@ mod tests {
             pull_requests_in_flight: HashSet::new(),
             task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
         };
 
         engine

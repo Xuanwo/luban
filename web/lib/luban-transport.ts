@@ -194,6 +194,7 @@ export function useLubanTransport(args: {
             event.type === "add_project_and_open_ready" ||
             event.type === "task_executed" ||
             event.type === "feedback_submitted" ||
+            event.type === "telegram_pair_ready" ||
             event.type === "codex_check_ready" ||
             event.type === "codex_config_tree_ready" ||
             event.type === "codex_config_list_dir_ready" ||
@@ -218,6 +219,7 @@ export function useLubanTransport(args: {
                 pending.resolve({ projectId: event.project_id, workdirId: event.workdir_id })
               if (event.type === "task_executed") pending.resolve(event.result)
               if (event.type === "feedback_submitted") pending.resolve(event.result)
+              if (event.type === "telegram_pair_ready") pending.resolve(event.url)
               if (event.type === "codex_check_ready") pending.resolve({ ok: event.ok, message: event.message })
               if (event.type === "codex_config_tree_ready") pending.resolve(event.tree)
               if (event.type === "codex_config_list_dir_ready")

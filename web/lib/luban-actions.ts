@@ -49,6 +49,10 @@ export type LubanActions = {
   setClaudeEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
+  setTelegramBotToken: (token: string) => void
+  clearTelegramBotToken: () => void
+  startTelegramPairing: () => Promise<string>
+  unpairTelegram: () => void
   setTaskPromptTemplate: (intentKind: TaskIntentKind, template: string) => void
   setSystemPromptTemplate: (kind: SystemTaskKind, template: string) => void
   checkCodex: () => Promise<{ ok: boolean; message: string | null }>
@@ -225,6 +229,24 @@ export function createLubanActions(args: {
 
   function setAgentAmpMode(mode: string) {
     args.sendAction({ type: "agent_amp_mode_changed", mode })
+  }
+
+  function setTelegramBotToken(token: string) {
+    const trimmed = token.trim()
+    if (!trimmed) return
+    args.sendAction({ type: "telegram_bot_token_set", token: trimmed })
+  }
+
+  function clearTelegramBotToken() {
+    args.sendAction({ type: "telegram_bot_token_clear" })
+  }
+
+  function startTelegramPairing(): Promise<string> {
+    return args.request<string>({ type: "telegram_pair_start" })
+  }
+
+  function unpairTelegram() {
+    args.sendAction({ type: "telegram_unpair" })
   }
 
   function setTaskPromptTemplate(intentKind: TaskIntentKind, template: string) {
@@ -849,6 +871,10 @@ export function createLubanActions(args: {
     setClaudeEnabled,
     setAgentRunner,
     setAgentAmpMode,
+    setTelegramBotToken,
+    clearTelegramBotToken,
+    startTelegramPairing,
+    unpairTelegram,
     setTaskPromptTemplate,
     setSystemPromptTemplate,
     checkCodex,

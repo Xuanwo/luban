@@ -43,6 +43,11 @@ pub struct PersistedAppState {
         HashMap<(u64, u64), PersistedWorkspaceThreadRunConfigOverride>,
     pub starred_tasks: HashMap<(u64, u64), bool>,
     pub task_prompt_templates: HashMap<String, String>,
+    pub telegram_enabled: Option<bool>,
+    pub telegram_bot_token: Option<String>,
+    pub telegram_bot_username: Option<String>,
+    pub telegram_paired_chat_id: Option<i64>,
+    pub telegram_topic_bindings: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

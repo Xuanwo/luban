@@ -54,6 +54,19 @@ export type TaskSettingsSnapshot = {
   default_system_prompt_templates: SystemPromptTemplateSnapshot[]
 }
 
+export type TelegramIntegrationSnapshot = {
+  enabled: boolean
+  has_token: boolean
+  bot_username?: string
+  paired_chat_id?: number
+  config_rev: number
+  last_error?: string
+}
+
+export type IntegrationsSnapshot = {
+  telegram: TelegramIntegrationSnapshot
+}
+
 export type AppSnapshot = {
   rev: number
   projects: ProjectSnapshot[]
@@ -61,6 +74,7 @@ export type AppSnapshot = {
   agent: AgentSettingsSnapshot
   task: TaskSettingsSnapshot
   ui: UiSnapshot
+  integrations: IntegrationsSnapshot
 }
 
 export type UiSnapshot = {
@@ -376,6 +390,10 @@ export type ClientAction =
       workdir_id: WorkspaceId
       attachments?: AttachmentRef[]
     }
+  | { type: "telegram_bot_token_set"; token: string }
+  | { type: "telegram_bot_token_clear" }
+  | { type: "telegram_pair_start" }
+  | { type: "telegram_unpair" }
   | { type: "task_star_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; starred: boolean }
   | { type: "task_status_set"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; task_status: TaskStatus }
   | {
@@ -487,6 +505,7 @@ export type ClientAction =
 
 export type ServerEvent =
   | { type: "app_changed"; rev: number; snapshot: AppSnapshot }
+  | { type: "telegram_pair_ready"; request_id: string; url: string }
   | { type: "task_summaries_changed"; project_id: ProjectId; workdir_id: WorkspaceId; tasks: TaskSummarySnapshot[] }
   | { type: "workdir_tasks_changed"; workdir_id: WorkspaceId; tabs: WorkspaceTabsSnapshot; tasks: ThreadMeta[] }
   | { type: "conversation_changed"; snapshot: ConversationSnapshot }

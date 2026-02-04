@@ -150,6 +150,10 @@ type LubanContextValue = {
   setClaudeEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
+  setTelegramBotToken: (token: string) => void
+  clearTelegramBotToken: () => void
+  startTelegramPairing: () => Promise<string>
+  unpairTelegram: () => void
   setTaskPromptTemplate: (intentKind: TaskIntentKind, template: string) => void
   setSystemPromptTemplate: (kind: SystemTaskKind, template: string) => void
   checkCodex: () => Promise<{ ok: boolean; message: string | null }>
@@ -434,6 +438,10 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     setClaudeEnabled: actions.setClaudeEnabled,
     setAgentRunner: actions.setAgentRunner,
     setAgentAmpMode: actions.setAgentAmpMode,
+    setTelegramBotToken: actions.setTelegramBotToken,
+    clearTelegramBotToken: actions.clearTelegramBotToken,
+    startTelegramPairing: actions.startTelegramPairing,
+    unpairTelegram: actions.unpairTelegram,
     setTaskPromptTemplate: actions.setTaskPromptTemplate,
     setSystemPromptTemplate: actions.setSystemPromptTemplate,
     checkCodex: actions.checkCodex,

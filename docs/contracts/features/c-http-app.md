@@ -35,6 +35,12 @@ This includes Agent settings:
 - `agent.default_runner` / `agent.amp_mode`
 - `agent.default_model_id` / `agent.default_thinking_effort`
 
+This includes integration status:
+
+- `integrations.telegram.enabled` / `integrations.telegram.has_token`
+- `integrations.telegram.bot_username` / `integrations.telegram.paired_chat_id`
+- `integrations.telegram.config_rev` / `integrations.telegram.last_error`
+
 ## Response
 
 - `200 OK`
@@ -44,6 +50,7 @@ This includes Agent settings:
 
 - The response must be valid JSON and deserializable into `AppSnapshot`.
 - `rev` must be monotonically increasing over time (within a single server instance).
+- The provider must not include Telegram bot tokens in `AppSnapshot`.
 
 ## Web usage
 

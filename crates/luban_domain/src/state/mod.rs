@@ -24,7 +24,7 @@ pub use persisted::{
 };
 pub use tabs::WorkspaceTabs;
 pub use task::{TaskStatus, TurnResult, TurnStatus, parse_task_status};
-pub use workspace::{AppState, Project, Workspace};
+pub use workspace::{AppState, Project, TelegramTopicBinding, Workspace};
 
 pub(crate) const MAX_CONVERSATION_ENTRIES_IN_MEMORY: usize = 5000;
 

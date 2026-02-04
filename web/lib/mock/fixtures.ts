@@ -392,6 +392,13 @@ export function defaultMockFixtures(): MockFixtures {
       active_task_id: task1,
       open_button_selection: "vscode",
     },
+    integrations: {
+      telegram: {
+        enabled: false,
+        has_token: false,
+        config_rev: 0,
+      },
+    },
   }
 
   const tabs1: WorkspaceTabsSnapshot = { open_tabs: [task1, task9, task7, task4, task2, task8, task5, task6], archived_tabs: [], active_tab: task1 }

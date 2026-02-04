@@ -97,6 +97,10 @@ update this section.
 - `AddProject`
 - `AddProjectAndOpen`
 - `TaskExecute`
+- `TelegramBotTokenSet`
+- `TelegramBotTokenClear`
+- `TelegramPairStart`
+- `TelegramUnpair`
 - `TaskStarSet`
 - `TaskStatusSet`
 - `FeedbackSubmit`
@@ -178,6 +182,7 @@ update this section.
 All `ServerEvent` variants are part of this contract surface:
 
 - `AppChanged`
+- `TelegramPairReady`
 - `TaskSummariesChanged`
 - `WorkdirTasksChanged`
 - `ConversationChanged`

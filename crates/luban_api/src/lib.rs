@@ -25,6 +25,30 @@ pub struct AppSnapshot {
     pub task: TaskSettingsSnapshot,
     #[serde(default)]
     pub ui: UiSnapshot,
+    #[serde(default)]
+    pub integrations: IntegrationsSnapshot,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct IntegrationsSnapshot {
+    #[serde(default)]
+    pub telegram: TelegramIntegrationSnapshot,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TelegramIntegrationSnapshot {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub has_token: bool,
+    #[serde(default)]
+    pub bot_username: Option<String>,
+    #[serde(default)]
+    pub paired_chat_id: Option<i64>,
+    #[serde(default)]
+    pub config_rev: u64,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -759,6 +783,12 @@ pub enum ClientAction {
         #[serde(default)]
         attachments: Vec<AttachmentRef>,
     },
+    TelegramBotTokenSet {
+        token: String,
+    },
+    TelegramBotTokenClear,
+    TelegramPairStart,
+    TelegramUnpair,
     TaskStarSet {
         #[serde(rename = "workdir_id", alias = "workspace_id")]
         workspace_id: WorkspaceId,
@@ -1061,6 +1091,10 @@ pub enum ServerEvent {
     AppChanged {
         rev: u64,
         snapshot: Box<AppSnapshot>,
+    },
+    TelegramPairReady {
+        request_id: String,
+        url: String,
     },
     TaskSummariesChanged {
         project_id: ProjectId,

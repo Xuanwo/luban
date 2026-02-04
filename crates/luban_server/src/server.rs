@@ -27,6 +27,7 @@ use tower_http::services::{ServeDir, ServeFile};
 pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
     let services = new_default_services()?;
     let (engine, events) = Engine::start(services.clone());
+    crate::telegram::start_gateway(engine.clone(), events.clone());
 
     let avatar_http = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))

@@ -2268,6 +2268,7 @@ dependencies = [
  "luban_domain",
  "notify",
  "portable-pty",
+ "rand 0.8.5",
  "reqwest 0.13.1",
  "rfd",
  "serde",

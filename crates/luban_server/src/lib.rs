@@ -11,6 +11,7 @@ mod mentions;
 mod project_avatars;
 pub mod pty;
 pub mod server;
+mod telegram;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthMode {

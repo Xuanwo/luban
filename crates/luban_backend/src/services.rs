@@ -3706,6 +3706,11 @@ mod tests {
             workspace_thread_run_config_overrides: std::collections::HashMap::new(),
             starred_tasks: std::collections::HashMap::new(),
             task_prompt_templates: std::collections::HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         service

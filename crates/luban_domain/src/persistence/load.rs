@@ -82,6 +82,31 @@ pub(crate) fn apply_persisted_app_state(
     state.agent_amp_enabled = persisted.agent_amp_enabled.unwrap_or(true);
     state.agent_claude_enabled = persisted.agent_claude_enabled.unwrap_or(true);
 
+    let telegram_bot_token =
+        normalize_optional_string(persisted.telegram_bot_token.as_deref(), 256);
+    let telegram_enabled = persisted
+        .telegram_enabled
+        .unwrap_or(telegram_bot_token.is_some())
+        && telegram_bot_token.is_some();
+    state.telegram_enabled = telegram_enabled;
+    state.telegram_bot_token = telegram_bot_token;
+    state.telegram_bot_username =
+        normalize_optional_string(persisted.telegram_bot_username.as_deref(), 64);
+    state.telegram_paired_chat_id = persisted.telegram_paired_chat_id;
+    state.telegram_config_rev = if state.telegram_enabled
+        || state.telegram_bot_token.is_some()
+        || state.telegram_paired_chat_id.is_some()
+    {
+        1
+    } else {
+        0
+    };
+    state.telegram_last_error = None;
+    state.telegram_topic_bindings = load_telegram_topic_bindings(
+        state.telegram_paired_chat_id.is_some(),
+        persisted.telegram_topic_bindings.as_deref(),
+    );
+
     state.task_prompt_templates = default_task_prompt_templates();
     state.system_prompt_templates = default_system_prompt_templates();
 
@@ -395,6 +420,34 @@ pub(crate) fn apply_persisted_app_state(
     }
 
     effects
+}
+
+fn load_telegram_topic_bindings(
+    has_paired_chat: bool,
+    raw: Option<&str>,
+) -> HashMap<i64, crate::TelegramTopicBinding> {
+    const MAX_BINDINGS: usize = 64;
+
+    if !has_paired_chat {
+        return HashMap::new();
+    }
+
+    let Some(raw) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return HashMap::new();
+    };
+
+    let Ok(bindings) = serde_json::from_str::<Vec<crate::TelegramTopicBinding>>(raw) else {
+        return HashMap::new();
+    };
+
+    let mut out = HashMap::new();
+    for b in bindings.into_iter().take(MAX_BINDINGS) {
+        if b.message_thread_id <= 0 || b.workspace_id == 0 || b.thread_id == 0 {
+            continue;
+        }
+        out.insert(b.message_thread_id, b);
+    }
+    out
 }
 
 fn load_projects(projects: Vec<PersistedProject>) -> (Vec<Project>, bool) {
@@ -734,6 +787,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         let mut state = AppState::new();

@@ -182,6 +182,13 @@ impl AppState {
             workspace_thread_run_config_overrides: HashMap::new(),
             task_prompt_templates: default_task_prompt_templates(),
             system_prompt_templates: default_system_prompt_templates(),
+            telegram_enabled: false,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_config_rev: 0,
+            telegram_last_error: None,
+            telegram_topic_bindings: HashMap::new(),
         }
     }
 
@@ -1923,6 +1930,129 @@ impl AppState {
                 self.agent_amp_mode = next;
                 vec![Effect::SaveAppState]
             }
+            Action::TelegramBotTokenSet { token } => {
+                let trimmed = token.trim();
+                if trimmed.is_empty() || trimmed.len() > 256 {
+                    return Vec::new();
+                }
+                if trimmed.chars().any(|c| c.is_control()) {
+                    return Vec::new();
+                }
+
+                let next = Some(trimmed.to_owned());
+                if self.telegram_bot_token == next && self.telegram_enabled {
+                    return Vec::new();
+                }
+                self.telegram_bot_token = next;
+                self.telegram_enabled = true;
+                self.telegram_last_error = None;
+                self.telegram_config_rev = self.telegram_config_rev.saturating_add(1);
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramBotTokenCleared => {
+                if self.telegram_bot_token.is_none()
+                    && !self.telegram_enabled
+                    && self.telegram_bot_username.is_none()
+                    && self.telegram_paired_chat_id.is_none()
+                    && self.telegram_topic_bindings.is_empty()
+                    && self.telegram_last_error.is_none()
+                {
+                    return Vec::new();
+                }
+                self.telegram_enabled = false;
+                self.telegram_bot_token = None;
+                self.telegram_bot_username = None;
+                self.telegram_paired_chat_id = None;
+                self.telegram_last_error = None;
+                self.telegram_topic_bindings.clear();
+                self.telegram_config_rev = self.telegram_config_rev.saturating_add(1);
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramBotUsernameSet { username } => {
+                let next = username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .filter(|v| v.len() <= 64)
+                    .map(ToOwned::to_owned);
+                if self.telegram_bot_username == next {
+                    return Vec::new();
+                }
+                self.telegram_bot_username = next;
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramChatPaired { chat_id } => {
+                if self.telegram_paired_chat_id == Some(chat_id)
+                    && self.telegram_topic_bindings.is_empty()
+                {
+                    return Vec::new();
+                }
+                self.telegram_paired_chat_id = Some(chat_id);
+                self.telegram_last_error = None;
+                self.telegram_topic_bindings.clear();
+                self.telegram_config_rev = self.telegram_config_rev.saturating_add(1);
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramUnpaired => {
+                if self.telegram_paired_chat_id.is_none() && self.telegram_topic_bindings.is_empty()
+                {
+                    return Vec::new();
+                }
+                self.telegram_paired_chat_id = None;
+                self.telegram_topic_bindings.clear();
+                self.telegram_config_rev = self.telegram_config_rev.saturating_add(1);
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramLastErrorSet { message } => {
+                let next = message
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .filter(|v| v.len() <= 1024)
+                    .map(ToOwned::to_owned);
+                if self.telegram_last_error == next {
+                    return Vec::new();
+                }
+                self.telegram_last_error = next;
+                Vec::new()
+            }
+            Action::TelegramTopicBound {
+                message_thread_id,
+                workspace_id,
+                thread_id,
+                replayed_up_to,
+            } => {
+                let next = crate::TelegramTopicBinding {
+                    message_thread_id,
+                    workspace_id,
+                    thread_id,
+                    replayed_up_to,
+                };
+                if let Some(existing) = self.telegram_topic_bindings.get(&message_thread_id)
+                    && *existing == next
+                {
+                    return Vec::new();
+                }
+                self.telegram_topic_bindings.insert(message_thread_id, next);
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramTopicUnbound { message_thread_id } => {
+                if self
+                    .telegram_topic_bindings
+                    .remove(&message_thread_id)
+                    .is_none()
+                {
+                    return Vec::new();
+                }
+                vec![Effect::SaveAppState]
+            }
+            Action::TelegramTopicBindingsCleared => {
+                if self.telegram_topic_bindings.is_empty() {
+                    return Vec::new();
+                }
+                self.telegram_topic_bindings.clear();
+                vec![Effect::SaveAppState]
+            }
             Action::CodexDefaultsLoaded {
                 model_id,
                 thinking_effort,
@@ -3640,6 +3770,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             }),
         });
         assert_eq!(state.terminal_pane_width, Some(480));
@@ -3688,6 +3823,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             }),
         });
         assert_eq!(restored.global_zoom_percent, 135);
@@ -3736,6 +3876,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             }),
         });
         assert_eq!(state.sidebar_width, Some(360));
@@ -3827,6 +3972,11 @@ mod tests {
                 workspace_thread_run_config_overrides: HashMap::new(),
                 starred_tasks: HashMap::new(),
                 task_prompt_templates: HashMap::new(),
+                telegram_enabled: None,
+                telegram_bot_token: None,
+                telegram_bot_username: None,
+                telegram_paired_chat_id: None,
+                telegram_topic_bindings: None,
             }),
         });
         assert_eq!(restored.appearance_theme, crate::AppearanceTheme::Light);

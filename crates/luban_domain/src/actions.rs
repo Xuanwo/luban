@@ -303,6 +303,30 @@ pub enum Action {
     AgentAmpModeChanged {
         mode: String,
     },
+    TelegramBotTokenSet {
+        token: String,
+    },
+    TelegramBotTokenCleared,
+    TelegramBotUsernameSet {
+        username: Option<String>,
+    },
+    TelegramChatPaired {
+        chat_id: i64,
+    },
+    TelegramUnpaired,
+    TelegramLastErrorSet {
+        message: Option<String>,
+    },
+    TelegramTopicBound {
+        message_thread_id: i64,
+        workspace_id: u64,
+        thread_id: u64,
+        replayed_up_to: Option<u64>,
+    },
+    TelegramTopicUnbound {
+        message_thread_id: i64,
+    },
+    TelegramTopicBindingsCleared,
     CodexDefaultsLoaded {
         model_id: Option<String>,
         thinking_effort: Option<ThinkingEffort>,

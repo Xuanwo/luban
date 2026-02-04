@@ -51,6 +51,11 @@ const APPEARANCE_UI_FONT_KEY: &str = "appearance_ui_font";
 const APPEARANCE_CHAT_FONT_KEY: &str = "appearance_chat_font";
 const APPEARANCE_CODE_FONT_KEY: &str = "appearance_code_font";
 const APPEARANCE_TERMINAL_FONT_KEY: &str = "appearance_terminal_font";
+const TELEGRAM_ENABLED_KEY: &str = "telegram_enabled";
+const TELEGRAM_BOT_TOKEN_KEY: &str = "telegram_bot_token";
+const TELEGRAM_BOT_USERNAME_KEY: &str = "telegram_bot_username";
+const TELEGRAM_PAIRED_CHAT_ID_KEY: &str = "telegram_paired_chat_id";
+const TELEGRAM_TOPIC_BINDINGS_KEY: &str = "telegram_topic_bindings";
 
 const MIGRATIONS: &[(u32, &str)] = &[
     (
@@ -1342,6 +1347,57 @@ impl SqliteDatabase {
             .context("failed to load agent claude enabled flag")?
             .map(|value| value != 0);
 
+        let telegram_enabled = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![TELEGRAM_ENABLED_KEY],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .context("failed to load telegram enabled flag")?
+            .map(|value| value != 0);
+
+        let telegram_bot_token = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_BOT_TOKEN_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load telegram bot token")?;
+
+        let telegram_bot_username = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_BOT_USERNAME_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load telegram bot username")?;
+
+        let telegram_paired_chat_id = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![TELEGRAM_PAIRED_CHAT_ID_KEY],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .context("failed to load telegram paired chat id")?;
+
+        let telegram_topic_bindings = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_TOPIC_BINDINGS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load telegram topic bindings")?;
+
         let mut task_prompt_templates = HashMap::new();
         let mut stmt = self.conn.prepare(
             "SELECT key, value FROM app_settings_text WHERE key LIKE 'task_prompt_template_%'",
@@ -1429,6 +1485,11 @@ impl SqliteDatabase {
                 workspace_thread_run_config_overrides,
                 starred_tasks: HashMap::new(),
                 task_prompt_templates,
+                telegram_enabled,
+                telegram_bot_token,
+                telegram_bot_username,
+                telegram_paired_chat_id,
+                telegram_topic_bindings,
             });
         }
 
@@ -1837,6 +1898,11 @@ impl SqliteDatabase {
             workspace_thread_run_config_overrides,
             starred_tasks,
             task_prompt_templates,
+            telegram_enabled,
+            telegram_bot_token,
+            telegram_bot_username,
+            telegram_paired_chat_id,
+            telegram_topic_bindings,
         })
     }
 
@@ -2243,6 +2309,90 @@ impl SqliteDatabase {
             tx.execute(
                 "DELETE FROM app_settings WHERE key = ?1",
                 params![AGENT_CLAUDE_ENABLED_KEY],
+            )?;
+        }
+
+        if let Some(enabled) = snapshot.telegram_enabled {
+            tx.execute(
+                "INSERT INTO app_settings (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![
+                    TELEGRAM_ENABLED_KEY,
+                    if enabled { 1i64 } else { 0i64 },
+                    now
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings WHERE key = ?1",
+                params![TELEGRAM_ENABLED_KEY],
+            )?;
+        }
+
+        if let Some(value) = snapshot.telegram_bot_token.as_deref() {
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![TELEGRAM_BOT_TOKEN_KEY, value, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_BOT_TOKEN_KEY],
+            )?;
+        }
+
+        if let Some(value) = snapshot.telegram_bot_username.as_deref() {
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![TELEGRAM_BOT_USERNAME_KEY, value, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_BOT_USERNAME_KEY],
+            )?;
+        }
+
+        if let Some(chat_id) = snapshot.telegram_paired_chat_id {
+            tx.execute(
+                "INSERT INTO app_settings (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![TELEGRAM_PAIRED_CHAT_ID_KEY, chat_id, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings WHERE key = ?1",
+                params![TELEGRAM_PAIRED_CHAT_ID_KEY],
+            )?;
+        }
+
+        if let Some(value) = snapshot.telegram_topic_bindings.as_deref() {
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![TELEGRAM_TOPIC_BINDINGS_KEY, value, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![TELEGRAM_TOPIC_BINDINGS_KEY],
             )?;
         }
 
@@ -4116,6 +4266,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         db.save_app_state(&snapshot).unwrap();
@@ -4247,6 +4402,11 @@ mod tests {
                 "fix".to_owned(),
                 "Fix issue template override".to_owned(),
             )]),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         db.save_app_state(&snapshot).unwrap();
@@ -4304,6 +4464,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
         db.save_app_state(&snapshot).unwrap();
 
@@ -4553,6 +4718,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
         db.save_app_state(&snapshot).unwrap();
 
@@ -4664,6 +4834,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         db.save_app_state(&snapshot_before).unwrap();
@@ -4734,6 +4909,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         db.save_app_state(&snapshot_after).unwrap();
@@ -4800,6 +4980,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
 
         db.save_app_state(&snapshot).unwrap();
@@ -4854,6 +5039,11 @@ mod tests {
             workspace_thread_run_config_overrides: HashMap::new(),
             starred_tasks: HashMap::new(),
             task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
         };
         db.save_app_state(&empty).unwrap();
 

@@ -60,7 +60,7 @@ import { addProjectAndOpen } from "@/lib/add-project-and-open"
 interface SettingsPanelProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  initialSectionId?: "theme" | "fonts" | "agent" | "task"
+  initialSectionId?: "theme" | "fonts" | "agent" | "task" | "telegram"
   initialAgentId?: string
   initialAgentFilePath?: string
 }
@@ -91,6 +91,12 @@ const tocItems: TocItem[] = [
     id: "task",
     label: "Task",
     icon: ListTodo,
+  },
+  {
+    id: "integrations",
+    label: "Integrations",
+    icon: MessageSquare,
+    children: [{ id: "telegram", label: "Telegram", icon: MessageSquare }],
   },
 ]
 
@@ -1545,6 +1551,186 @@ function AllSettings({
           setSystemPromptTemplate={setSystemPromptTemplate}
         />
       </section>
+
+      <section id="telegram" className="scroll-mt-8">
+        <h3 className="text-sm font-medium mb-4 flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-muted-foreground" />
+          Telegram
+        </h3>
+        <TelegramIntegrationPanel />
+      </section>
+    </div>
+  )
+}
+
+function TelegramIntegrationPanel() {
+  const {
+    app,
+    setTelegramBotToken,
+    clearTelegramBotToken,
+    startTelegramPairing,
+    unpairTelegram,
+  } = useLuban()
+
+  const telegram = app?.integrations?.telegram ?? null
+  const [token, setToken] = useState("")
+  const [pairUrl, setPairUrl] = useState<string | null>(null)
+  const [pairing, setPairing] = useState(false)
+
+  const enabled = telegram?.enabled ?? false
+  const hasToken = telegram?.has_token ?? false
+  const pairedChatId = telegram?.paired_chat_id ?? null
+  const botUsername = telegram?.bot_username ?? null
+  const lastError = telegram?.last_error ?? null
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded border p-3" style={{ borderColor: "#ebebeb" }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
+              Status
+            </div>
+            <div className="text-[12px] mt-1" style={{ color: "#6b6b6b" }}>
+              {enabled ? "Enabled" : "Disabled"} · {hasToken ? "Token set" : "No token"} ·{" "}
+              {pairedChatId != null ? `Paired (${pairedChatId})` : "Not paired"}
+              {botUsername ? ` · @${botUsername}` : ""}
+            </div>
+          </div>
+          {lastError ? (
+            <div className="flex items-center gap-1 text-[12px]" style={{ color: "#b45309" }}>
+              <AlertTriangle className="w-4 h-4" />
+              <span className="max-w-[360px] truncate">{lastError}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-[12px]" style={{ color: "#16a34a" }}>
+              <CheckCircle2 className="w-4 h-4" />
+              <span>OK</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded border p-3 space-y-3" style={{ borderColor: "#ebebeb" }}>
+        <div>
+          <div className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
+            Bot Token
+          </div>
+          <div className="text-[12px] mt-1" style={{ color: "#6b6b6b" }}>
+            Stored locally on this machine.
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            data-testid="telegram-bot-token-input"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="123456:ABCDEF..."
+            className="flex-1 px-3 py-2 rounded text-[13px] border outline-none"
+            style={{ borderColor: "#ebebeb", backgroundColor: "#ffffff", color: "#1b1b1b" }}
+          />
+          <button
+            data-testid="telegram-bot-token-save"
+            onClick={() => {
+              setTelegramBotToken(token)
+              setToken("")
+              setPairUrl(null)
+            }}
+            disabled={!token.trim()}
+            className="px-3 py-2 rounded text-[13px] transition-colors disabled:opacity-50"
+            style={{ backgroundColor: "#5e6ad2", color: "#ffffff" }}
+          >
+            Save
+          </button>
+          <button
+            data-testid="telegram-bot-token-clear"
+            onClick={() => {
+              clearTelegramBotToken()
+              setToken("")
+              setPairUrl(null)
+            }}
+            className="px-3 py-2 rounded text-[13px] transition-colors"
+            style={{ backgroundColor: "#eeeeee", color: "#1b1b1b" }}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded border p-3 space-y-3" style={{ borderColor: "#ebebeb" }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
+              Pairing
+            </div>
+            <div className="text-[12px] mt-1" style={{ color: "#6b6b6b" }}>
+              Generate a deep link and open it on the target Telegram device.
+            </div>
+          </div>
+          <button
+            data-testid="telegram-pair-generate"
+            onClick={async () => {
+              setPairing(true)
+              setPairUrl(null)
+              try {
+                const url = await startTelegramPairing()
+                setPairUrl(url)
+              } finally {
+                setPairing(false)
+              }
+            }}
+            disabled={!hasToken || pairing}
+            className="px-3 py-2 rounded text-[13px] transition-colors disabled:opacity-50 flex items-center gap-2"
+            style={{ backgroundColor: "#eeeeee", color: "#1b1b1b" }}
+          >
+            {pairing ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Generate Link
+          </button>
+        </div>
+
+        {pairUrl ? (
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              data-testid="telegram-pair-url"
+              value={pairUrl}
+              className="flex-1 px-3 py-2 rounded text-[13px] border"
+              style={{ borderColor: "#ebebeb", backgroundColor: "#ffffff", color: "#1b1b1b" }}
+            />
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(pairUrl)
+                } catch {}
+              }}
+              className="px-3 py-2 rounded text-[13px] transition-colors"
+              style={{ backgroundColor: "#eeeeee", color: "#1b1b1b" }}
+            >
+              Copy
+            </button>
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between">
+          <div className="text-[12px]" style={{ color: "#6b6b6b" }}>
+            {pairedChatId != null ? `Paired chat_id: ${pairedChatId}` : "Not paired"}
+          </div>
+          <button
+            data-testid="telegram-unpair"
+            onClick={() => {
+              unpairTelegram()
+              setPairUrl(null)
+            }}
+            disabled={pairedChatId == null}
+            className="px-3 py-2 rounded text-[13px] transition-colors disabled:opacity-50"
+            style={{ backgroundColor: "#eeeeee", color: "#1b1b1b" }}
+          >
+            Unpair
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1559,6 +1745,7 @@ export function SettingsPanel({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(() => {
     const next = new Set<string>(["appearance"])
     if (initialSectionId === "theme" || initialSectionId === "fonts") next.add("appearance")
+    if (initialSectionId === "telegram") next.add("integrations")
     return next
   })
   const [activeItem, setActiveItem] = useState<string>(initialSectionId ?? "theme")
@@ -1568,6 +1755,9 @@ export function SettingsPanel({
     if (!initialSectionId) return
     if (initialSectionId === "theme" || initialSectionId === "fonts") {
       setExpandedItems((prev) => new Set(prev).add("appearance"))
+    }
+    if (initialSectionId === "telegram") {
+      setExpandedItems((prev) => new Set(prev).add("integrations"))
     }
     setActiveItem(initialSectionId)
     window.requestAnimationFrame(() => {
