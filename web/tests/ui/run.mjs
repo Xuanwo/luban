@@ -29,6 +29,7 @@ import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
 import { runRightSidebarNoContextTab } from './scenarios/right-sidebar-no-context-tab.mjs';
+import { runProjectArchiveMenu } from './scenarios/project-archive-menu.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -156,6 +157,7 @@ async function main() {
 	    await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 	
 	    await runSidebarProjectAvatars({ page, baseUrl });
+      await runProjectArchiveMenu({ page, baseUrl });
 	    await runNewTaskModal({ page, baseUrl });
 	    await runNewTaskProjectAvatars({ page, baseUrl });
 	    await runNewTaskGitProjectWithoutWorkdirs({ page, baseUrl });

@@ -118,9 +118,14 @@ export function LubanIDE() {
       )
     }
 
+    const taskListMode = activeView === "archive" ? "archive" : "active"
     return (
       <TaskListView
         activeProjectId={activeProjectId}
+        mode={taskListMode}
+        onModeChange={(mode) => {
+          setActiveView(mode === "archive" ? "archive" : "tasks")
+        }}
         onTaskClick={(task) => {
           void (async () => {
             await openWorkspace(task.workspaceId)

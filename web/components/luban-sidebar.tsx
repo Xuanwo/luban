@@ -11,6 +11,7 @@ import {
   Star,
   Settings,
   SquarePen,
+  MoreHorizontal,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
@@ -108,45 +109,100 @@ interface ProjectItemProps {
   active?: boolean
   testId?: string
   onClick?: () => void
+  onOpenArchive?: () => void
 }
 
-function ProjectItem({ name, color = "bg-[#5e6ad2]", avatarUrl, active, testId, onClick }: ProjectItemProps) {
+function ProjectItem({
+  name,
+  color = "bg-[#5e6ad2]",
+  avatarUrl,
+  active,
+  testId,
+  onClick,
+  onOpenArchive,
+}: ProjectItemProps) {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     setAvatarLoadFailed(false)
   }, [avatarUrl])
 
   return (
-    <button
-      data-testid={testId}
-      onClick={onClick}
+    <div
       className={cn(
-        "w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors",
-        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]"
+        "group w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors",
+        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]",
       )}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setMenuOpen(true)
+      }}
     >
-      {avatarUrl && !avatarLoadFailed ? (
-        <img
-          src={avatarUrl}
-          alt=""
-          width={18}
-          height={18}
-          className="w-[18px] h-[18px] rounded overflow-hidden flex-shrink-0"
-          onError={() => setAvatarLoadFailed(true)}
-        />
-      ) : (
-        <span
-          className={cn(
-            "w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0",
-            color
-          )}
-        >
-          {name.charAt(0).toUpperCase()}
+      <button
+        type="button"
+        data-testid={testId}
+        onClick={onClick}
+        className="flex-1 min-w-0 flex items-center gap-2 outline-none"
+      >
+        {avatarUrl && !avatarLoadFailed ? (
+          <img
+            src={avatarUrl}
+            alt=""
+            width={18}
+            height={18}
+            className="w-[18px] h-[18px] rounded overflow-hidden flex-shrink-0"
+            onError={() => setAvatarLoadFailed(true)}
+          />
+        ) : (
+          <span
+            className={cn(
+              "w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0",
+              color,
+            )}
+          >
+            {name.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <span className="text-[13px] truncate" style={{ color: "#1b1b1b" }}>
+          {name}
         </span>
-      )}
-      <span className="text-[13px] truncate" style={{ color: '#1b1b1b' }}>{name}</span>
-    </button>
+      </button>
+
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="p-1 rounded hover:bg-[#e8e8e8] transition-colors opacity-60 hover:opacity-100"
+            style={{ color: "#9b9b9b" }}
+            title="Project menu"
+            data-testid={testId ? `${testId}-menu` : undefined}
+            onClick={(e) => {
+              e.stopPropagation()
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+            }}
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          sideOffset={6}
+          className="w-[200px] rounded-lg border-[#e5e5e5] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5"
+        >
+          <DropdownMenuItem
+            onClick={() => onOpenArchive?.()}
+            className="flex items-center gap-2.5 px-2.5 py-2 text-[13px] rounded-md cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5]"
+            style={{ color: "#1b1b1b" }}
+            data-testid={testId ? `${testId}-open-archive` : undefined}
+          >
+            Open Archive
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 
@@ -324,6 +380,10 @@ export function LubanSidebar({
                   onClick={() => {
                     onProjectSelected?.(p.id)
                     onViewChange?.("tasks")
+                  }}
+                  onOpenArchive={() => {
+                    onProjectSelected?.(p.id)
+                    onViewChange?.("archive")
                   }}
                 />
               </div>

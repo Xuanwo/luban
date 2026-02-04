@@ -101,6 +101,21 @@ impl WorkspaceTabs {
         self.open_tabs.insert(target, tab);
         true
     }
+
+    pub fn remove_thread(&mut self, thread_id: WorkspaceThreadId) {
+        let was_active = self.active_tab == thread_id;
+        self.remove_open(thread_id);
+        self.remove_archived(thread_id);
+
+        if was_active {
+            if let Some(next) = self.open_tabs.first().copied() {
+                self.active_tab = next;
+            } else if let Some(next) = self.archived_tabs.first().copied() {
+                self.active_tab = next;
+                self.restore_tab(next, true);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -226,6 +226,7 @@ pub enum EngineCommand {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
     },
+    PruneArchivedTasks,
     WorkspaceThreadsInvalidated {
         workspace_id: WorkspaceId,
     },
@@ -258,6 +259,11 @@ const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX: Duration = Duration::from_secs(10
 
 const TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT: usize = 20;
 const TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT: u64 = 250;
+
+const TASK_ARCHIVE_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
+const TASK_PURGE_AFTER_SECONDS: u64 = 2 * TASK_ARCHIVE_AFTER_SECONDS;
+const TASK_PURGE_TICK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const TASK_PURGE_STARTUP_DELAY: Duration = Duration::from_secs(60);
 
 fn pull_request_refresh_jitter(workspace_id: WorkspaceId) -> Duration {
     let window = PULL_REQUEST_REFRESH_JITTER_WINDOW_SECS.max(1);
@@ -494,6 +500,17 @@ impl Engine {
             }
         });
 
+        let purge_tx = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(TASK_PURGE_STARTUP_DELAY).await;
+            let mut interval = tokio::time::interval(TASK_PURGE_TICK_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let _ = purge_tx.send(EngineCommand::PruneArchivedTasks).await;
+            }
+        });
+
         tokio::spawn(async move {
             engine.bootstrap().await;
             while let Some(cmd) = rx.recv().await {
@@ -506,6 +523,108 @@ impl Engine {
 
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
+    }
+
+    async fn prune_archived_tasks(&mut self) {
+        let now = now_unix_seconds();
+        let purge_cutoff = now.saturating_sub(TASK_PURGE_AFTER_SECONDS);
+
+        let mut workspaces = Vec::new();
+        for project in &self.state.projects {
+            for workspace in &project.workspaces {
+                let is_main = workspace.workspace_name == "main";
+                workspaces.push((
+                    project.is_git,
+                    is_main,
+                    workspace.status,
+                    workspace.id,
+                    WorkspaceScope {
+                        project_slug: project.slug.clone(),
+                        workspace_name: workspace.workspace_name.clone(),
+                    },
+                ));
+            }
+        }
+
+        for (project_is_git, workspace_is_main, workspace_status, workspace_id, scope) in workspaces
+        {
+            let services = self.services.clone();
+            let project_slug = scope.project_slug.clone();
+            let workspace_name = scope.workspace_name.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let threads = services
+                    .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                let purge_candidates = threads
+                    .iter()
+                    .filter(|t| {
+                        matches!(
+                            t.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) && t.updated_at_unix_seconds <= purge_cutoff
+                            && t.turn_status == luban_domain::TurnStatus::Idle
+                    })
+                    .map(|t| t.thread_id)
+                    .collect::<Vec<_>>();
+
+                if purge_candidates.is_empty() {
+                    return Ok((Vec::new(), threads));
+                }
+
+                let mut deleted = Vec::new();
+                for thread_id in purge_candidates {
+                    if services
+                        .delete_conversation_thread(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            thread_id.as_u64(),
+                        )
+                        .is_ok()
+                    {
+                        deleted.push(thread_id);
+                    }
+                }
+
+                let remaining = services.list_conversation_threads(project_slug, workspace_name)?;
+                Ok((deleted, remaining))
+            })
+            .await
+            .ok()
+            .unwrap_or_else(|| Err("failed to join archived task prune task".to_owned()));
+
+            let Ok((deleted_thread_ids, remaining_threads)) = result else {
+                continue;
+            };
+            if deleted_thread_ids.is_empty() {
+                continue;
+            }
+
+            tracing::info!(
+                workspace_id = workspace_id.as_u64(),
+                deleted = deleted_thread_ids.len(),
+                "pruned archived tasks"
+            );
+
+            self.process_action_queue(Action::WorkspaceThreadsPurged {
+                workspace_id,
+                thread_ids: deleted_thread_ids,
+            })
+            .await;
+            let workspace_empty = remaining_threads.is_empty();
+            self.process_action_queue(Action::WorkspaceThreadsLoaded {
+                workspace_id,
+                threads: remaining_threads,
+            })
+            .await;
+
+            if workspace_empty
+                && project_is_git
+                && !workspace_is_main
+                && workspace_status == luban_domain::WorkspaceStatus::Active
+            {
+                self.process_action_queue(Action::ArchiveWorkspace { workspace_id })
+                    .await;
+            }
+        }
     }
 
     async fn telegram_pair_start(&mut self, request_id: String) -> Result<(), String> {
@@ -1990,6 +2109,9 @@ impl Engine {
             } => {
                 self.task_status_auto_update_backfill_in_flight
                     .remove(&(workspace_id, thread_id));
+            }
+            EngineCommand::PruneArchivedTasks => {
+                self.prune_archived_tasks().await;
             }
             EngineCommand::WorkspaceThreadsInvalidated { workspace_id } => {
                 self.workspace_threads_cache.remove(&workspace_id);
@@ -4905,6 +5027,13 @@ fn to_base36(mut n: u64) -> String {
     }
     out.reverse();
     String::from_utf8(out).unwrap_or_else(|_| "0".to_owned())
+}
+
+fn now_unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn map_workspace_tabs_snapshot(tabs: &luban_domain::WorkspaceTabs) -> WorkspaceTabsSnapshot {

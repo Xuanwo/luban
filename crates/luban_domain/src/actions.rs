@@ -268,6 +268,15 @@ pub enum Action {
         workspace_id: WorkspaceId,
         message: String,
     },
+    /// Internal maintenance action: remove local UI state for deleted threads.
+    ///
+    /// This does not delete persisted conversation data by itself; callers are expected to
+    /// delete the thread from persistence first, then dispatch this to drop any in-memory and
+    /// UI references.
+    WorkspaceThreadsPurged {
+        workspace_id: WorkspaceId,
+        thread_ids: Vec<WorkspaceThreadId>,
+    },
 
     ToggleTerminalPane,
     TerminalPaneWidthChanged {

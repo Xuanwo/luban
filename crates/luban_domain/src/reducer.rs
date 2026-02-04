@@ -1805,6 +1805,49 @@ impl AppState {
                 self.last_error = Some(message);
                 Vec::new()
             }
+            Action::WorkspaceThreadsPurged {
+                workspace_id,
+                thread_ids,
+            } => {
+                let mut effects = Vec::new();
+                let mut changed = false;
+
+                if let Some(tabs) = self.workspace_tabs.get_mut(&workspace_id) {
+                    for thread_id in &thread_ids {
+                        let before_open = tabs.open_tabs.len();
+                        let before_archived = tabs.archived_tabs.len();
+                        let before_active = tabs.active_tab;
+                        tabs.remove_thread(*thread_id);
+                        if tabs.open_tabs.len() != before_open
+                            || tabs.archived_tabs.len() != before_archived
+                            || tabs.active_tab != before_active
+                        {
+                            changed = true;
+                        }
+                    }
+                }
+
+                for thread_id in &thread_ids {
+                    let key = (workspace_id, *thread_id);
+                    changed |= self.conversations.remove(&key).is_some();
+                    changed |= self.workspace_chat_scroll_y10.remove(&key).is_some();
+                    changed |= self.workspace_chat_scroll_anchor.remove(&key).is_some();
+                    changed |= self
+                        .workspace_thread_run_config_overrides
+                        .remove(&key)
+                        .is_some();
+                    changed |= self.starred_tasks.remove(&key);
+                    effects.push(Effect::CleanupClaudeProcess {
+                        workspace_id,
+                        thread_id: *thread_id,
+                    });
+                }
+
+                if changed {
+                    effects.insert(0, Effect::SaveAppState);
+                }
+                effects
+            }
             Action::ToggleTerminalPane => {
                 let can_show_terminal = match self.main_pane {
                     MainPane::Workspace(workspace_id) => self.workspace(workspace_id).is_some(),
@@ -2958,6 +3001,67 @@ mod tests {
                 Some(format!("remote-{}", thread_id.0))
             );
         }
+    }
+
+    #[test]
+    fn workspace_threads_purged_removes_tabs_and_thread_state() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::OpenWorkspace { workspace_id });
+
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        let thread2 = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        assert_eq!(thread2, WorkspaceThreadId(2));
+
+        state.apply(Action::TaskStarSet {
+            workspace_id,
+            thread_id: thread2,
+            starred: true,
+        });
+        assert!(state.starred_tasks.contains(&(workspace_id, thread2)));
+        assert!(state.conversations.contains_key(&(workspace_id, thread2)));
+
+        let effects = state.apply(Action::WorkspaceThreadsPurged {
+            workspace_id,
+            thread_ids: vec![thread2],
+        });
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SaveAppState))
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::CleanupClaudeProcess {
+                workspace_id: wid,
+                thread_id: tid
+            } if *wid == workspace_id && *tid == thread2
+        )));
+
+        let tabs = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs");
+        assert!(!tabs.open_tabs.contains(&thread2));
+        assert!(!tabs.archived_tabs.contains(&thread2));
+        assert_eq!(tabs.active_tab, WorkspaceThreadId(1));
+        assert!(!state.starred_tasks.contains(&(workspace_id, thread2)));
+        assert!(!state.conversations.contains_key(&(workspace_id, thread2)));
     }
 
     #[test]

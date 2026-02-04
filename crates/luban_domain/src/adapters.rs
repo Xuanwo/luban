@@ -292,6 +292,15 @@ pub trait ProjectWorkspaceService: Send + Sync {
         limit: u64,
     ) -> Result<ConversationSnapshot, String>;
 
+    fn delete_conversation_thread(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+    ) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn save_conversation_queue_state(
         &self,

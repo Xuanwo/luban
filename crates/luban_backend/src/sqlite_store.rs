@@ -302,6 +302,12 @@ enum DbCommand {
         limit: u64,
         reply: mpsc::Sender<anyhow::Result<ConversationSnapshot>>,
     },
+    DeleteConversationThread {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
     SaveConversationQueueState {
         project_slug: String,
         workspace_name: String,
@@ -538,6 +544,21 @@ impl SqliteStore {
                                 thread_local_id,
                                 before,
                                 limit,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::DeleteConversationThread {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.delete_conversation_thread(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
                             ));
                         }
                         (
@@ -926,6 +947,24 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn delete_conversation_thread(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::DeleteConversationThread {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn save_conversation_queue_state(
         &self,
@@ -1153,6 +1192,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::LoadConversationPage { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::DeleteConversationThread { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::SaveConversationQueueState { reply, .. } => {
@@ -3343,6 +3385,32 @@ impl SqliteDatabase {
         })
     }
 
+    fn delete_conversation_thread(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM conversation_queued_prompts
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM conversation_entries
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM conversations
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn save_conversation_queue_state(
         &mut self,
@@ -4142,6 +4210,56 @@ mod tests {
             err.downcast_ref::<SqliteStoreError>() == Some(&SqliteStoreError::ConversationNotFound),
             "expected missing conversation to return ConversationNotFound"
         );
+    }
+
+    #[test]
+    fn delete_conversation_thread_removes_conversation_and_entries() {
+        let path = temp_db_path("delete_conversation_thread_removes_conversation_and_entries");
+        let mut db = open_db(&path);
+
+        db.ensure_conversation("p", "w", 1).unwrap();
+        db.append_conversation_entries(
+            "p",
+            "w",
+            1,
+            &[ConversationEntry::UserEvent {
+                entry_id: String::new(),
+                event: luban_domain::UserEvent::Message {
+                    text: "hello".to_owned(),
+                    attachments: Vec::new(),
+                },
+            }],
+        )
+        .unwrap();
+
+        db.save_conversation_queue_state("p", "w", 1, false, None, None, &[])
+            .unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads.len(), 1);
+
+        db.delete_conversation_thread("p", "w", 1).unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert!(threads.is_empty());
+
+        let err = db
+            .load_conversation_page("p", "w", 1, None, 10)
+            .unwrap_err();
+        assert!(
+            err.downcast_ref::<SqliteStoreError>() == Some(&SqliteStoreError::ConversationNotFound),
+            "expected deleted conversation to return ConversationNotFound"
+        );
+
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_entries WHERE project_slug = 'p' AND workspace_name = 'w' AND thread_local_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

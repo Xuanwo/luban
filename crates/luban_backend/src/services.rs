@@ -824,6 +824,17 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         Ok(snapshot)
     }
 
+    fn delete_conversation_thread(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<(), String> {
+        self.sqlite
+            .delete_conversation_thread(project_slug, workspace_name, thread_id)
+            .map_err(anyhow_error_to_string)
+    }
+
     fn save_conversation_queue_state(
         &self,
         project_slug: String,
