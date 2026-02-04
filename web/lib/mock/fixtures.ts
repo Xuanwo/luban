@@ -9,7 +9,6 @@ import type {
   ClaudeConfigEntrySnapshot,
   CodexConfigEntrySnapshot,
   CodexCustomPromptSnapshot,
-  ContextItemSnapshot,
   ConversationEntry,
   ConversationSnapshot,
   FileChangeGroup,
@@ -39,7 +38,6 @@ export type MockFixtures = {
   threadsByWorkspace: Record<number, ThreadsSnapshot>
   tasksSnapshot: TasksSnapshot
   conversationsByWorkspaceThread: Record<string, ConversationSnapshot>
-  contextItemsByWorkspace: Record<number, ContextItemSnapshot[]>
   attachmentUrlsById: Record<string, string>
   workspaceChangesByWorkspace: Record<number, WorkspaceChangesSnapshot>
   workspaceDiffByWorkspace: Record<number, WorkspaceDiffSnapshot>
@@ -978,23 +976,6 @@ export function defaultMockFixtures(): MockFixtures {
     }),
   }
 
-  const contextItemsByWorkspace: Record<number, ContextItemSnapshot[]> = {
-    [workdir1]: [
-      {
-        context_id: 1,
-        created_at_unix_ms: unixMs(-60_000),
-        attachment: imgA,
-      },
-      {
-        context_id: 2,
-        created_at_unix_ms: unixMs(-50_000),
-        attachment: fileA,
-      },
-    ],
-    [workdir2]: [],
-    [workdir3]: [],
-  }
-
   const files: ChangedFileSnapshot[] = [
     changedFile({
       id: "mock_change_1",
@@ -1346,7 +1327,6 @@ export function defaultMockFixtures(): MockFixtures {
     threadsByWorkspace,
     tasksSnapshot,
     conversationsByWorkspaceThread,
-    contextItemsByWorkspace,
     attachmentUrlsById,
     workspaceChangesByWorkspace,
     workspaceDiffByWorkspace,

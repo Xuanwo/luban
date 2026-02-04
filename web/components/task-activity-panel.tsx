@@ -14,7 +14,6 @@ import type {
   CodexCustomPromptSnapshot,
 } from "@/lib/luban-api"
 import { attachmentHref } from "@/lib/attachment-href"
-import { onAddChatAttachments } from "@/lib/chat-attachment-events"
 import {
   draftKey,
   followTailKey,
@@ -114,29 +113,6 @@ export function TaskActivityPanel({
     },
     timeoutMs: ESC_TIMEOUT_MS,
   })
-
-  useEffect(() => {
-    return onAddChatAttachments((incoming) => {
-      if (activeWorkspaceId == null || activeThreadId == null) return
-      const scopeAtStart = attachmentScopeRef.current
-      const items: ComposerAttachment[] = incoming.map((attachment) => {
-        const isImage = attachment.kind === "image"
-        const previewUrl = isImage ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined : undefined
-        return {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          type: isImage ? "image" : "file",
-          name: attachment.name,
-          size: attachment.byte_len,
-          previewUrl,
-          status: "ready",
-          attachment,
-        }
-      })
-
-      if (attachmentScopeRef.current !== scopeAtStart) return
-      setAttachments((prev) => [...prev, ...items])
-    })
-  }, [activeWorkspaceId, activeThreadId])
 
   useEffect(() => {
     if (attachmentScope === attachmentScopeRef.current) return

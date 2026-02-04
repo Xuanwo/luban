@@ -9,8 +9,6 @@ import type {
   ClaudeConfigEntrySnapshot,
   CodexConfigEntrySnapshot,
   CodexCustomPromptSnapshot,
-  ContextItemSnapshot,
-  ContextSnapshot,
   ConversationEntry,
   ConversationSnapshot,
   FeedbackSubmitResult,
@@ -37,7 +35,6 @@ type RuntimeState = {
   threadsByWorkdir: Map<WorkspaceId, ThreadsSnapshot>
   starredTasks: Set<string>
   conversationsByWorkdirTask: Map<string, ConversationSnapshot>
-  contextItemsByWorkdir: Map<WorkspaceId, ContextItemSnapshot[]>
   attachmentUrlsById: Map<string, string>
   workdirChangesById: Map<WorkspaceId, WorkspaceChangesSnapshot>
   workdirDiffById: Map<WorkspaceId, WorkspaceDiffSnapshot>
@@ -46,7 +43,6 @@ type RuntimeState = {
   codexConfig: { tree: CodexConfigEntrySnapshot[]; files: Map<string, string> }
   ampConfig: { tree: AmpConfigEntrySnapshot[]; files: Map<string, string> }
   claudeConfig: { tree: ClaudeConfigEntrySnapshot[]; files: Map<string, string> }
-  nextContextId: number
   nextWorkdirId: number
   nextTaskId: number
 }
@@ -84,12 +80,6 @@ function allTaskIds(threadsByWorkdir: Map<WorkspaceId, ThreadsSnapshot>): Worksp
   return out
 }
 
-function allContextIds(contextByWorkdir: Map<WorkspaceId, ContextItemSnapshot[]>): number[] {
-  const out: number[] = []
-  for (const items of contextByWorkdir.values()) for (const i of items) out.push(i.context_id)
-  return out
-}
-
 function initRuntime(): RuntimeState {
   const fixtures = defaultMockFixtures()
 
@@ -98,9 +88,6 @@ function initRuntime(): RuntimeState {
 
   const conversationsByWorkdirTask = new Map<string, ConversationSnapshot>()
   for (const [k, v] of Object.entries(fixtures.conversationsByWorkspaceThread)) conversationsByWorkdirTask.set(k, clone(v))
-
-  const contextItemsByWorkdir = new Map<WorkspaceId, ContextItemSnapshot[]>()
-  for (const [k, v] of Object.entries(fixtures.contextItemsByWorkspace)) contextItemsByWorkdir.set(Number(k), clone(v))
 
   const attachmentUrlsById = new Map<string, string>()
   for (const [k, v] of Object.entries(fixtures.attachmentUrlsById)) attachmentUrlsById.set(k, v)
@@ -118,7 +105,6 @@ function initRuntime(): RuntimeState {
   const claudeFiles = new Map<string, string>()
   for (const [k, v] of Object.entries(fixtures.claudeConfig.files)) claudeFiles.set(k, v)
 
-  const nextContextId = Math.max(0, ...allContextIds(contextItemsByWorkdir)) + 1
   const nextWorkdirId = Math.max(0, ...allWorkdirIds(fixtures.app)) + 1
   const nextTaskId = Math.max(0, ...allTaskIds(threadsByWorkdir)) + 1
 
@@ -128,7 +114,6 @@ function initRuntime(): RuntimeState {
     threadsByWorkdir,
     starredTasks: new Set<string>(),
     conversationsByWorkdirTask,
-    contextItemsByWorkdir,
     attachmentUrlsById,
     workdirChangesById,
     workdirDiffById,
@@ -137,7 +122,6 @@ function initRuntime(): RuntimeState {
     codexConfig: { tree: clone(fixtures.codexConfig.tree), files: codexFiles },
     ampConfig: { tree: clone(fixtures.ampConfig.tree), files: ampFiles },
     claudeConfig: { tree: clone(fixtures.claudeConfig.tree), files: claudeFiles },
-    nextContextId,
     nextWorkdirId,
     nextTaskId,
   }
@@ -278,21 +262,6 @@ export async function mockFetchWorkspaceChanges(workdirId: WorkspaceId): Promise
 export async function mockFetchWorkspaceDiff(workdirId: WorkspaceId): Promise<WorkspaceDiffSnapshot> {
   const state = getRuntime()
   return clone(state.workdirDiffById.get(workdirId) ?? { workdir_id: workdirId, files: [] })
-}
-
-export async function mockFetchContext(workdirId: WorkspaceId): Promise<ContextSnapshot> {
-  const state = getRuntime()
-  const items = state.contextItemsByWorkdir.get(workdirId) ?? []
-  return { workdir_id: workdirId, items: clone(items) }
-}
-
-export async function mockDeleteContextItem(workdirId: WorkspaceId, contextId: number): Promise<void> {
-  const state = getRuntime()
-  const items = state.contextItemsByWorkdir.get(workdirId) ?? []
-  state.contextItemsByWorkdir.set(
-    workdirId,
-    items.filter((i) => i.context_id !== contextId),
-  )
 }
 
 export async function mockFetchCodexCustomPrompts(): Promise<CodexCustomPromptSnapshot[]> {

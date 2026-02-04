@@ -164,7 +164,7 @@ Manual (minimal):
 4. Upload:
    - one text file
    - one image
-   Verify both appear in context and the run succeeds.
+   Verify both appear as attachments in the composer and the run succeeds.
 
 ## Amp-Specific Lessons
 

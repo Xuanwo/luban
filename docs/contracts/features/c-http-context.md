@@ -1,7 +1,7 @@
 # C-HTTP-CONTEXT
 
 Status: Draft
-Verification: Mock=yes, Provider=yes, CI=no
+Verification: Mock=no, Provider=yes, CI=yes
 
 ## Surface
 
@@ -10,7 +10,7 @@ Verification: Mock=yes, Provider=yes, CI=no
 
 ## Purpose
 
-Return the current workspace context attachments used by the chat composer.
+Return the current workspace context attachments.
 
 ## Response
 
@@ -19,4 +19,4 @@ Return the current workspace context attachments used by the chat composer.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchContext(workdirId)`
+- n/a (web context UI removed)

@@ -21,8 +21,6 @@ import type {
   ThinkingEffort,
 } from "@/lib/luban-api"
 import { attachmentHref } from "@/lib/attachment-href"
-import { onAddChatAttachments } from "@/lib/chat-attachment-events"
-import { emitContextChanged } from "@/lib/context-events"
 import {
   draftKey,
   followTailKey,
@@ -165,29 +163,6 @@ export function ChatPanel({
   )
   const branchRenameSawRunningRef = useRef(false)
   const branchRenameTimeoutRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    return onAddChatAttachments((incoming) => {
-      if (activeWorkspaceId == null || activeThreadId == null) return
-      const scopeAtStart = attachmentScopeRef.current
-      const items: ComposerAttachment[] = incoming.map((attachment) => {
-        const isImage = attachment.kind === "image"
-        const previewUrl = isImage ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined : undefined
-        return {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          type: isImage ? "image" : "file",
-          name: attachment.name,
-          size: attachment.byte_len,
-          previewUrl,
-          status: "ready",
-          attachment,
-        }
-      })
-
-      if (attachmentScopeRef.current !== scopeAtStart) return
-      setAttachments((prev) => [...prev, ...items])
-    })
-  }, [activeWorkspaceId, activeThreadId])
 
   useEffect(() => {
     agentAttachmentScopeRef.current = `${attachmentScope}:agent:${Date.now()}`
@@ -891,7 +866,6 @@ export function ChatPanel({
           setAttachments((prev) =>
             prev.map((a) => (a.id === id ? { ...a, status: "ready", attachment, name: attachment.name } : a)),
           )
-          emitContextChanged(activeWorkspaceId)
         })
         .catch(() => {
           if (attachmentScopeRef.current !== scopeAtStart) return
@@ -935,7 +909,6 @@ export function ChatPanel({
           setQueuedDraftAttachments((prev) =>
             prev.map((a) => (a.id === id ? { ...a, status: "ready", attachment, name: attachment.name } : a)),
           )
-          emitContextChanged(activeWorkspaceId)
         })
         .catch(() => {
           if (queuedAttachmentScopeRef.current !== scopeAtStart) return
@@ -978,7 +951,6 @@ export function ChatPanel({
           setAgentEditorAttachments((prev) =>
             prev.map((a) => (a.id === id ? { ...a, status: "ready", attachment, name: attachment.name } : a)),
           )
-          emitContextChanged(activeWorkspaceId)
         })
         .catch(() => {
           if (agentAttachmentScopeRef.current !== scopeAtStart) return

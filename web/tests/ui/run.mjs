@@ -28,6 +28,7 @@ import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
+import { runRightSidebarNoContextTab } from './scenarios/right-sidebar-no-context-tab.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -174,6 +175,7 @@ async function main() {
     await runAgentRunnerIcons({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
     await runTaskSummariesEventsRefresh({ page, baseUrl });
+    await runRightSidebarNoContextTab({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);

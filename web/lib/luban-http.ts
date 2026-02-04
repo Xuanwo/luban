@@ -3,7 +3,6 @@ import type {
   AttachmentKind,
   AttachmentRef,
   CodexCustomPromptSnapshot,
-  ContextSnapshot,
   ConversationSnapshot,
   MentionItemSnapshot,
   TasksSnapshot,
@@ -13,10 +12,8 @@ import type {
 } from "./luban-api"
 import { isMockMode } from "./luban-mode"
 import {
-  mockDeleteContextItem,
   mockFetchApp,
   mockFetchCodexCustomPrompts,
-  mockFetchContext,
   mockFetchConversation,
   mockFetchMentionItems,
   mockFetchTasks,
@@ -97,25 +94,6 @@ export async function uploadAttachment(args: {
   }
 
   return (await res.json()) as AttachmentRef
-}
-
-export async function fetchContext(workspaceId: number): Promise<ContextSnapshot> {
-  if (isMockMode()) return await mockFetchContext(workspaceId)
-  const res = await fetch(`/api/workdirs/${workspaceId}/context`)
-  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/context failed: ${res.status}`)
-  return (await res.json()) as ContextSnapshot
-}
-
-export async function deleteContextItem(workspaceId: number, contextId: number): Promise<void> {
-  if (isMockMode()) return await mockDeleteContextItem(workspaceId, contextId)
-  const res = await fetch(`/api/workdirs/${workspaceId}/context/${contextId}`, { method: "DELETE" })
-  if (res.status === 204) return
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(
-      `DELETE /api/workdirs/${workspaceId}/context/${contextId} failed: ${res.status}${text ? `: ${text}` : ""}`,
-    )
-  }
 }
 
 export async function fetchWorkspaceChanges(workspaceId: number): Promise<WorkspaceChangesSnapshot> {

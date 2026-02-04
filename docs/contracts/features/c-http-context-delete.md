@@ -1,7 +1,7 @@
 # C-HTTP-CONTEXT-DELETE
 
 Status: Draft
-Verification: Mock=yes, Provider=yes, CI=no
+Verification: Mock=no, Provider=yes, CI=yes
 
 ## Surface
 
@@ -18,4 +18,4 @@ Remove a context item from a workspace.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `deleteContextItem(workdirId, contextId)`
+- n/a (web context UI removed)
