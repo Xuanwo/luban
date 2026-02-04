@@ -323,6 +323,15 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
+    fn save_conversation_task_status_last_analyzed(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,

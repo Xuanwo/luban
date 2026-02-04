@@ -382,7 +382,56 @@ pub(super) fn task_suggest_task_status(
         prompt,
     )?;
 
-    let raw = strip_json_fences(&raw);
+    parse_task_status_auto_update_output(input_trimmed, &raw)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TaskStatusAutoUpdateEvidence {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    pr_number: Option<u64>,
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TaskStatusAutoUpdateOutput {
+    task_status: String,
+    #[serde(default)]
+    evidence: Option<TaskStatusAutoUpdateEvidence>,
+}
+
+fn parse_current_task_status_from_input(input: &str) -> Option<TaskStatus> {
+    for line in input.lines() {
+        if let Some(rest) = line.strip_prefix("Current task_status:") {
+            return parse_task_status(rest.trim());
+        }
+    }
+    None
+}
+
+fn parse_merged_pull_request_number_from_input(input: &str) -> Option<u64> {
+    let mut merged = false;
+    let mut number: Option<u64> = None;
+    for line in input.lines() {
+        if line
+            .trim()
+            .eq_ignore_ascii_case("Workspace pull request state: merged")
+        {
+            merged = true;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("Workspace pull request number:") {
+            number = rest.trim().parse::<u64>().ok();
+        }
+    }
+    if merged { number } else { None }
+}
+
+fn parse_task_status_auto_update_output(input: &str, raw: &str) -> anyhow::Result<TaskStatus> {
+    let input_trimmed = input.trim();
+    let raw = strip_json_fences(raw);
     if let Some(status) = parse_task_status(raw) {
         return Ok(status);
     }
@@ -390,15 +439,33 @@ pub(super) fn task_suggest_task_status(
     let Some(obj) = extract_json_object(raw) else {
         return Err(anyhow!("runner returned no json output"));
     };
-    let value: serde_json::Value = serde_json::from_str(obj)?;
-    let status = value
-        .as_object()
-        .and_then(|obj| obj.get("task_status"))
-        .and_then(|v| v.as_str())
-        .and_then(parse_task_status)
-        .ok_or_else(|| anyhow!("missing or invalid task_status in json output"))?;
 
-    Ok(status)
+    let output: TaskStatusAutoUpdateOutput = serde_json::from_str(obj)?;
+    let Some(mut suggested) = parse_task_status(output.task_status.as_str()) else {
+        return Err(anyhow!("missing or invalid task_status in json output"));
+    };
+
+    let current = parse_current_task_status_from_input(input_trimmed);
+    let pr_number = parse_merged_pull_request_number_from_input(input_trimmed);
+
+    if let Some(pr_number) = pr_number
+        && current == Some(TaskStatus::Validating)
+        && suggested == TaskStatus::Done
+    {
+        let evidence = output.evidence.as_ref();
+        let valid = evidence.is_some_and(|e| {
+            e.kind == "pr_reference"
+                && e.pr_number == Some(pr_number)
+                && !e.text.trim().is_empty()
+                && e.text.contains(&pr_number.to_string())
+        });
+
+        if !valid {
+            suggested = current.unwrap_or(TaskStatus::Validating);
+        }
+    }
+
+    Ok(suggested)
 }
 
 #[cfg(test)]
@@ -419,5 +486,33 @@ mod tests {
             normalize_branch_name("refs/heads/luban/fix-star-ui"),
             Some("luban/fix-star-ui".to_owned())
         );
+    }
+
+    #[test]
+    fn auto_update_task_status_requires_pr_evidence_when_pr_is_merged() {
+        let input = r#"
+Current task_status: validating
+Turn outcome: pr_merged
+
+Recent user messages (newest first):
+1.
+Please validate PR #123
+
+Workspace pull request state: merged
+Workspace pull request number: 123
+"#;
+
+        let raw_missing =
+            r#"{"task_status":"done","evidence":{"kind":"none","pr_number":null,"text":""}}"#;
+        let status = parse_task_status_auto_update_output(input, raw_missing).unwrap();
+        assert_eq!(status, TaskStatus::Validating);
+
+        let raw_wrong = r#"{"task_status":"done","evidence":{"kind":"pr_reference","pr_number":124,"text":"PR #124 is merged"}}"#;
+        let status = parse_task_status_auto_update_output(input, raw_wrong).unwrap();
+        assert_eq!(status, TaskStatus::Validating);
+
+        let raw_ok = r#"{"task_status":"done","evidence":{"kind":"pr_reference","pr_number":123,"text":"Please validate PR #123 (merged)"}}"#;
+        let status = parse_task_status_auto_update_output(input, raw_ok).unwrap();
+        assert_eq!(status, TaskStatus::Done);
     }
 }

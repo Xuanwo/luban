@@ -130,6 +130,7 @@ Rules:
 - Do NOT include rationale, notes, or any extra fields in the output.
 - Always output a result, even if the input is vague: keep the current status.
 - Prefer conservative updates: do not mark as "done" unless the task is clearly finished.
+- If the current task_status is "validating" and the input indicates a related pull request is already merged, you may mark the task as "done" (only when the conversation context suggests the PR is the validation target).
 
 Allowed task_status values:
 - backlog
@@ -147,8 +148,21 @@ Context (JSON):
 
 Output JSON schema:
 {
-  "task_status": "<one of the allowed values>"
+  "task_status": "<one of the allowed values>",
+  "evidence": {
+    "kind": "<one of: none, pr_reference>",
+    "pr_number": "<integer or null>",
+    "text": "<string; empty if kind=none>"
+  }
 }
+
+Evidence rules:
+- Always include the evidence object.
+- If you set task_status to "done" because a pull request is already merged, you MUST set:
+  - evidence.kind = "pr_reference"
+  - evidence.pr_number = the referenced PR number
+  - evidence.text = a short excerpt from the conversation that references that PR
+- Otherwise set evidence.kind = "none" and keep pr_number as null and text as an empty string.
 "#
             .to_owned()
         }

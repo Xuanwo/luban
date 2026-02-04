@@ -224,6 +224,8 @@ pub struct ConversationThreadMeta {
     pub created_at_unix_seconds: u64,
     pub updated_at_unix_seconds: u64,
     pub task_status: TaskStatus,
+    pub last_message_seq: u64,
+    pub task_status_last_analyzed_message_seq: u64,
     pub turn_status: crate::TurnStatus,
     pub last_turn_result: Option<crate::TurnResult>,
 }

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 18;
+const LATEST_SCHEMA_VERSION: u32 = 19;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -164,6 +164,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0018_conversation_entry_id.sql"
         )),
     ),
+    (
+        19,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0019_conversation_task_status_auto_update.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -286,6 +293,12 @@ enum DbCommand {
         workspace_name: String,
         thread_local_id: u64,
         task_status: luban_domain::TaskStatus,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    SaveConversationTaskStatusLastAnalyzed {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
     InsertContextItem {
@@ -540,6 +553,21 @@ impl SqliteStore {
                                 &workspace_name,
                                 thread_local_id,
                                 task_status,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::SaveConversationTaskStatusLastAnalyzed {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.save_conversation_task_status_last_analyzed(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
                             ));
                         }
                         (
@@ -890,6 +918,24 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn save_conversation_task_status_last_analyzed(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::SaveConversationTaskStatusLastAnalyzed {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn insert_context_item(
         &self,
         project_slug: String,
@@ -994,6 +1040,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::SaveConversationTaskStatus { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::SaveConversationTaskStatusLastAnalyzed { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -2401,6 +2450,13 @@ impl SqliteDatabase {
                     c.created_at,
                     c.updated_at,
                     c.task_status,
+                    c.task_status_last_analyzed_message_seq,
+                    (SELECT COALESCE(MAX(e2.seq), 0)
+                     FROM conversation_entries e2
+                     WHERE e2.project_slug = c.project_slug
+                       AND e2.workspace_name = c.workspace_name
+                       AND e2.thread_local_id = c.thread_local_id
+                       AND e2.kind IN ('user_message', 'codex_item')) AS last_message_seq,
                     c.queue_paused,
                     c.run_started_at_unix_ms,
                     c.run_finished_at_unix_ms,
@@ -2430,10 +2486,12 @@ impl SqliteDatabase {
                 row.get::<_, i64>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
-                row.get::<_, Option<i64>>(7)?,
-                row.get::<_, Option<i64>>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, Option<String>>(10)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
+                row.get::<_, i64>(11)?,
+                row.get::<_, Option<String>>(12)?,
             ))
         })?;
 
@@ -2446,6 +2504,8 @@ impl SqliteDatabase {
                 created_at,
                 updated_at,
                 task_status,
+                task_status_last_analyzed_message_seq,
+                last_message_seq,
                 queue_paused,
                 run_started_at_unix_ms,
                 run_finished_at_unix_ms,
@@ -2464,6 +2524,9 @@ impl SqliteDatabase {
             let title = title.unwrap_or_else(|| format!("Thread {thread_local_id}"));
             let task_status = luban_domain::parse_task_status(&task_status)
                 .unwrap_or(luban_domain::TaskStatus::Todo);
+            let last_message_seq = u64::try_from(last_message_seq).unwrap_or_default();
+            let task_status_last_analyzed_message_seq =
+                u64::try_from(task_status_last_analyzed_message_seq).unwrap_or_default();
             let running = run_started_at_unix_ms.is_some() && run_finished_at_unix_ms.is_none();
             let pending_prompt_count = u64::try_from(pending_prompt_count).unwrap_or(0);
             let turn_status = if running {
@@ -2491,6 +2554,8 @@ impl SqliteDatabase {
                 created_at_unix_seconds: created_at,
                 updated_at_unix_seconds: updated_at,
                 task_status,
+                last_message_seq,
+                task_status_last_analyzed_message_seq,
                 turn_status,
                 last_turn_result,
             });
@@ -3253,6 +3318,38 @@ impl SqliteDatabase {
         Ok(())
     }
 
+    fn save_conversation_task_status_last_analyzed(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+    ) -> anyhow::Result<()> {
+        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
+
+        let last_message_seq: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(seq), 0)
+             FROM conversation_entries
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
+               AND kind IN ('user_message', 'codex_item')",
+            params![project_slug, workspace_name, thread_local_id as i64],
+            |row| row.get(0),
+        )?;
+
+        self.conn.execute(
+            "UPDATE conversations
+             SET task_status_last_analyzed_message_seq = ?4
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                last_message_seq
+            ],
+        )?;
+
+        Ok(())
+    }
+
     fn insert_context_item(
         &mut self,
         project_slug: &str,
@@ -3662,6 +3759,62 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version as u32, LATEST_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn task_status_last_analyzed_tracks_last_message_seq() {
+        let path = temp_db_path("task_status_last_analyzed_tracks_last_message_seq");
+        let mut db = open_db(&path);
+
+        db.ensure_conversation("p", "w", 1).unwrap();
+        db.append_conversation_entries(
+            "p",
+            "w",
+            1,
+            &[ConversationEntry::UserEvent {
+                entry_id: String::new(),
+                event: luban_domain::UserEvent::Message {
+                    text: "hello".to_owned(),
+                    attachments: Vec::new(),
+                },
+            }],
+        )
+        .unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].last_message_seq, 2);
+        assert_eq!(threads[0].task_status_last_analyzed_message_seq, 0);
+
+        db.save_conversation_task_status_last_analyzed("p", "w", 1)
+            .unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads[0].task_status_last_analyzed_message_seq, 2);
+
+        db.append_conversation_entries(
+            "p",
+            "w",
+            1,
+            &[ConversationEntry::AgentEvent {
+                entry_id: String::new(),
+                event: luban_domain::AgentEvent::Message {
+                    id: "m1".to_owned(),
+                    text: "hi".to_owned(),
+                },
+            }],
+        )
+        .unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads[0].last_message_seq, 3);
+        assert_eq!(threads[0].task_status_last_analyzed_message_seq, 2);
+
+        db.save_conversation_task_status_last_analyzed("p", "w", 1)
+            .unwrap();
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert_eq!(threads[0].task_status_last_analyzed_message_seq, 3);
     }
 
     #[test]

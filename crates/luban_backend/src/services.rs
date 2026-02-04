@@ -804,6 +804,17 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
+    fn save_conversation_task_status_last_analyzed(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<(), String> {
+        self.sqlite
+            .save_conversation_task_status_last_analyzed(project_slug, workspace_name, thread_id)
+            .map_err(anyhow_error_to_string)
+    }
+
     fn store_context_image(
         &self,
         project_slug: String,
