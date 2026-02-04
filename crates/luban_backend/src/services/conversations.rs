@@ -338,11 +338,62 @@ impl GitWorkspaceService {
         workspace_name: String,
         thread_id: u64,
     ) -> anyhow::Result<ConversationSnapshot> {
-        let snapshot = self.sqlite.load_conversation(
+        let snapshot = match self.sqlite.load_conversation(
             project_slug.clone(),
             workspace_name.clone(),
             thread_id,
-        )?;
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                let is_not_found = err.downcast_ref::<crate::sqlite_store::SqliteStoreError>()
+                    == Some(&crate::sqlite_store::SqliteStoreError::ConversationNotFound);
+                if thread_id != 1 || !is_not_found {
+                    return Err(err);
+                }
+
+                let Some(legacy) = self.load_conversation_legacy(&project_slug, &workspace_name)?
+                else {
+                    return Err(err);
+                };
+                if legacy.thread_id.is_none() && legacy.entries.is_empty() {
+                    return Err(err);
+                }
+
+                self.sqlite.ensure_conversation(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    thread_id,
+                )?;
+                self.sqlite.save_conversation_task_status(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    thread_id,
+                    luban_domain::TaskStatus::Todo,
+                )?;
+                if let Some(thread_id) = legacy.thread_id.as_deref() {
+                    self.sqlite.set_conversation_thread_id(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        1,
+                        thread_id.to_owned(),
+                    )?;
+                }
+                if !legacy.entries.is_empty() {
+                    self.sqlite.replace_conversation_entries(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        1,
+                        legacy.entries,
+                    )?;
+                }
+
+                self.sqlite.load_conversation(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    thread_id,
+                )?
+            }
+        };
 
         if thread_id != 1 {
             return Ok(snapshot);

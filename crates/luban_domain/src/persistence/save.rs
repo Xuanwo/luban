@@ -6,6 +6,27 @@ use crate::{
 use std::collections::HashMap;
 
 pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
+    let mut workspace_active_thread_id = HashMap::new();
+    let mut workspace_open_tabs = HashMap::new();
+    let mut workspace_archived_tabs = HashMap::new();
+    let mut workspace_next_thread_id = HashMap::new();
+
+    for (workspace_id, tabs) in &state.workspace_tabs {
+        if tabs.open_tabs.is_empty() && tabs.archived_tabs.is_empty() {
+            continue;
+        }
+        workspace_active_thread_id.insert(workspace_id.0, tabs.active_tab.0);
+        workspace_open_tabs.insert(
+            workspace_id.0,
+            tabs.open_tabs.iter().map(|id| id.0).collect(),
+        );
+        workspace_archived_tabs.insert(
+            workspace_id.0,
+            tabs.archived_tabs.iter().map(|id| id.0).collect(),
+        );
+        workspace_next_thread_id.insert(workspace_id.0, tabs.next_thread_id);
+    }
+
     PersistedAppState {
         projects: state
             .projects
@@ -51,36 +72,10 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         open_button_selection: state.open_button_selection.clone(),
         sidebar_project_order: state.sidebar_project_order.clone(),
-        workspace_active_thread_id: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| (workspace_id.0, tabs.active_tab.0))
-            .collect(),
-        workspace_open_tabs: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| {
-                (
-                    workspace_id.0,
-                    tabs.open_tabs.iter().map(|id| id.0).collect(),
-                )
-            })
-            .collect(),
-        workspace_archived_tabs: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| {
-                (
-                    workspace_id.0,
-                    tabs.archived_tabs.iter().map(|id| id.0).collect(),
-                )
-            })
-            .collect(),
-        workspace_next_thread_id: state
-            .workspace_tabs
-            .iter()
-            .map(|(workspace_id, tabs)| (workspace_id.0, tabs.next_thread_id))
-            .collect(),
+        workspace_active_thread_id,
+        workspace_open_tabs,
+        workspace_archived_tabs,
+        workspace_next_thread_id,
         workspace_chat_scroll_y10: state
             .workspace_chat_scroll_y10
             .iter()

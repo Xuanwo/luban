@@ -6757,11 +6757,10 @@ mod tests {
             .expect("workspace should exist")
             .id;
 
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = state
-            .workspace_tabs
-            .get(&workspace_id)
-            .expect("workspace tabs should exist")
-            .active_tab;
+            .active_thread_id(workspace_id)
+            .expect("active thread should exist");
 
         let run_id = 7u64;
         {

@@ -213,14 +213,12 @@ pub(crate) fn apply_persisted_app_state(
 
     for workspace in state.projects.iter().flat_map(|p| &p.workspaces) {
         let workspace_id = workspace.id;
-        let active = persisted
+        let active_opt = persisted
             .workspace_active_thread_id
             .get(&workspace_id.0)
             .copied()
-            .map(WorkspaceThreadId)
-            .unwrap_or(WorkspaceThreadId(1));
-
-        let open_tabs = persisted
+            .map(WorkspaceThreadId);
+        let open_tabs_raw = persisted
             .workspace_open_tabs
             .get(&workspace_id.0)
             .cloned()
@@ -228,7 +226,7 @@ pub(crate) fn apply_persisted_app_state(
             .into_iter()
             .map(WorkspaceThreadId)
             .collect::<Vec<_>>();
-        let archived_tabs = persisted
+        let archived_tabs_raw = persisted
             .workspace_archived_tabs
             .get(&workspace_id.0)
             .cloned()
@@ -236,13 +234,37 @@ pub(crate) fn apply_persisted_app_state(
             .into_iter()
             .map(WorkspaceThreadId)
             .collect::<Vec<_>>();
-        let (open_tabs, archived_tabs) = normalize_thread_tabs(active, open_tabs, archived_tabs);
-
-        let next_thread_id = persisted
+        let next_thread_id_opt = persisted
             .workspace_next_thread_id
             .get(&workspace_id.0)
-            .copied()
-            .unwrap_or(active.0 + 1);
+            .copied();
+
+        if active_opt.is_none()
+            && open_tabs_raw.is_empty()
+            && archived_tabs_raw.is_empty()
+            && next_thread_id_opt.is_none()
+        {
+            continue;
+        }
+
+        let active = active_opt
+            .or_else(|| open_tabs_raw.first().copied())
+            .or_else(|| archived_tabs_raw.first().copied())
+            .unwrap_or(WorkspaceThreadId(1));
+        let (open_tabs, archived_tabs) =
+            normalize_thread_tabs(active, open_tabs_raw, archived_tabs_raw);
+
+        let max_thread_id = open_tabs
+            .iter()
+            .chain(archived_tabs.iter())
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(active.0);
+        let expected_next = max_thread_id.saturating_add(1);
+        let next_thread_id = next_thread_id_opt
+            .unwrap_or(expected_next)
+            .max(expected_next)
+            .max(1);
 
         for thread_id in open_tabs.iter().copied() {
             let mut conversation = state.default_conversation(thread_id);

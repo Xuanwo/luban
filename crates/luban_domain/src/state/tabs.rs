@@ -9,6 +9,16 @@ pub struct WorkspaceTabs {
 }
 
 impl WorkspaceTabs {
+    pub fn new_empty() -> Self {
+        Self {
+            open_tabs: Vec::new(),
+            archived_tabs: Vec::new(),
+            // Placeholder value. When `open_tabs` is empty, `active_tab` is undefined.
+            active_tab: WorkspaceThreadId(1),
+            next_thread_id: 1,
+        }
+    }
+
     pub fn new_with_initial(thread_id: WorkspaceThreadId) -> Self {
         Self {
             open_tabs: vec![thread_id],

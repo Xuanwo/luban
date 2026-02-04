@@ -207,6 +207,14 @@ impl AppState {
             "luban/abandon-about",
             PathBuf::from("/Users/example/luban/worktrees/luban/abandon-about"),
         );
+        let workspace_id = this
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .find(|w| w.workspace_name == "abandon-about")
+            .map(|w| w.id)
+            .expect("missing demo workspace");
+        this.apply(Action::CreateWorkspaceThread { workspace_id });
 
         this
     }
@@ -248,12 +256,14 @@ impl AppState {
 
                 let mut effects = Vec::new();
                 for workspace_id in workspace_ids {
-                    let thread_id = self.ensure_workspace_tabs_mut(workspace_id).active_tab;
+                    self.ensure_workspace_tabs_mut(workspace_id);
                     effects.push(Effect::LoadWorkspaceThreads { workspace_id });
-                    effects.push(Effect::LoadConversation {
-                        workspace_id,
-                        thread_id,
-                    });
+                    if let Some(thread_id) = self.active_thread_id(workspace_id) {
+                        effects.push(Effect::LoadConversation {
+                            workspace_id,
+                            thread_id,
+                        });
+                    }
                 }
                 effects
             }
@@ -263,14 +273,14 @@ impl AppState {
                 }
                 self.dashboard_preview_workspace_id = Some(workspace_id);
                 let cleared = self.workspace_unread_completions.remove(&workspace_id);
-                let tabs = self.ensure_workspace_tabs_mut(workspace_id);
-                let mut effects = vec![
-                    Effect::LoadWorkspaceThreads { workspace_id },
-                    Effect::LoadConversation {
+                self.ensure_workspace_tabs_mut(workspace_id);
+                let mut effects = vec![Effect::LoadWorkspaceThreads { workspace_id }];
+                if let Some(thread_id) = self.active_thread_id(workspace_id) {
+                    effects.push(Effect::LoadConversation {
                         workspace_id,
-                        thread_id: tabs.active_tab,
-                    },
-                ];
+                        thread_id,
+                    });
+                }
                 if cleared {
                     effects.insert(0, Effect::SaveAppState);
                 }
@@ -335,24 +345,8 @@ impl AppState {
                     return Vec::new();
                 }
 
-                let workspace_id = self.insert_main_workspace(project_id);
-                let initial_thread_id = WorkspaceThreadId(1);
-                self.workspace_tabs.insert(
-                    workspace_id,
-                    WorkspaceTabs::new_with_initial(initial_thread_id),
-                );
-                self.conversations.insert(
-                    (workspace_id, initial_thread_id),
-                    self.default_conversation(initial_thread_id),
-                );
-
-                vec![
-                    Effect::SaveAppState,
-                    Effect::EnsureConversation {
-                        workspace_id,
-                        thread_id: initial_thread_id,
-                    },
-                ]
+                self.insert_main_workspace(project_id);
+                vec![Effect::SaveAppState]
             }
             Action::WorkspaceCreated {
                 project_id,
@@ -365,22 +359,8 @@ impl AppState {
                 if let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id) {
                     project.create_workspace_status = OperationStatus::Idle;
                 }
-                let initial_thread_id = WorkspaceThreadId(1);
-                self.workspace_tabs.insert(
-                    workspace_id,
-                    WorkspaceTabs::new_with_initial(initial_thread_id),
-                );
-                self.conversations.insert(
-                    (workspace_id, initial_thread_id),
-                    self.default_conversation(initial_thread_id),
-                );
-                vec![
-                    Effect::SaveAppState,
-                    Effect::EnsureConversation {
-                        workspace_id,
-                        thread_id: initial_thread_id,
-                    },
-                ]
+                self.workspace_tabs.remove(&workspace_id);
+                vec![Effect::SaveAppState]
             }
             Action::WorkspaceCreateFailed {
                 project_id,
@@ -399,16 +379,18 @@ impl AppState {
                 self.dashboard_preview_workspace_id = None;
                 self.last_open_workspace_id = Some(workspace_id);
                 self.workspace_unread_completions.remove(&workspace_id);
-                let tabs = self.ensure_workspace_tabs_mut(workspace_id);
-                let thread_id = tabs.active_tab;
-                vec![
+                self.ensure_workspace_tabs_mut(workspace_id);
+                let mut effects = vec![
                     Effect::SaveAppState,
                     Effect::LoadWorkspaceThreads { workspace_id },
-                    Effect::LoadConversation {
+                ];
+                if let Some(thread_id) = self.active_thread_id(workspace_id) {
+                    effects.push(Effect::LoadConversation {
                         workspace_id,
                         thread_id,
-                    },
-                ]
+                    });
+                }
+                effects
             }
             Action::OpenWorkspaceInIde { workspace_id } => {
                 if self.workspace(workspace_id).is_none() {
@@ -721,6 +703,10 @@ impl AppState {
                 let mut snapshot = snapshot;
                 snapshot.ensure_entry_ids();
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                let local_has_non_system_entries = conversation
+                    .entries
+                    .iter()
+                    .any(|e| !matches!(e, ConversationEntry::SystemEvent { .. }));
                 if let Some(title) = snapshot
                     .title
                     .as_deref()
@@ -774,7 +760,7 @@ impl AppState {
                     }
                 }
 
-                let should_apply_queue_snapshot = conversation.entries.is_empty()
+                let should_apply_queue_snapshot = !local_has_non_system_entries
                     && conversation.pending_prompts.is_empty()
                     && conversation.run_status == OperationStatus::Idle;
                 if should_apply_queue_snapshot {
@@ -791,7 +777,7 @@ impl AppState {
                         .saturating_add(1);
                 }
 
-                if conversation.entries.is_empty() {
+                if !local_has_non_system_entries {
                     conversation.reset_entries_from_snapshot(snapshot);
                     return Vec::new();
                 }
@@ -2245,10 +2231,7 @@ impl AppState {
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<&WorkspaceConversation> {
-        let thread_id = self
-            .workspace_tabs
-            .get(&workspace_id)
-            .map(|tabs| tabs.active_tab)?;
+        let thread_id = self.active_thread_id(workspace_id)?;
         self.conversations.get(&(workspace_id, thread_id))
     }
 
@@ -2265,28 +2248,23 @@ impl AppState {
     }
 
     pub fn active_thread_id(&self, workspace_id: WorkspaceId) -> Option<WorkspaceThreadId> {
-        self.workspace_tabs.get(&workspace_id).map(|t| t.active_tab)
+        let tabs = self.workspace_tabs.get(&workspace_id)?;
+        if tabs.open_tabs.is_empty() {
+            return None;
+        }
+        if tabs.open_tabs.contains(&tabs.active_tab) {
+            Some(tabs.active_tab)
+        } else {
+            tabs.open_tabs.first().copied()
+        }
     }
 
     fn ensure_workspace_tabs_mut(&mut self, workspace_id: WorkspaceId) -> &mut WorkspaceTabs {
         use std::collections::hash_map::Entry;
 
-        let default_model_id = self.agent_default_model_id.clone();
-        let default_thinking_effort = self.agent_default_thinking_effort;
         match self.workspace_tabs.entry(workspace_id) {
             Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let initial = WorkspaceThreadId(1);
-                let conversation = Self::default_conversation_with_defaults(
-                    initial,
-                    default_model_id,
-                    default_thinking_effort,
-                    self.agent_default_runner,
-                );
-                self.conversations
-                    .insert((workspace_id, initial), conversation);
-                entry.insert(WorkspaceTabs::new_with_initial(initial))
-            }
+            Entry::Vacant(entry) => entry.insert(WorkspaceTabs::new_empty()),
         }
     }
 
@@ -2722,6 +2700,7 @@ mod tests {
         });
 
         let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -2825,10 +2804,14 @@ mod tests {
         let tabs = state
             .workspace_tabs(workspace_id)
             .expect("missing workspace tabs");
-        assert_eq!(tabs.open_tabs, vec![WorkspaceThreadId(1)]);
+        assert_eq!(tabs.open_tabs, Vec::<WorkspaceThreadId>::new());
         assert_eq!(
             tabs.archived_tabs,
-            vec![WorkspaceThreadId(2), WorkspaceThreadId(3)]
+            vec![
+                WorkspaceThreadId(1),
+                WorkspaceThreadId(2),
+                WorkspaceThreadId(3),
+            ]
         );
         assert_eq!(tabs.next_thread_id, 4);
 
@@ -2866,6 +2849,7 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -3084,6 +3068,7 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = default_thread_id();
 
         state.apply(Action::ChatModelChanged {
@@ -3150,6 +3135,7 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = default_thread_id();
 
         state.apply(Action::ChatModelChanged {
@@ -3196,6 +3182,7 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -3524,6 +3511,7 @@ mod tests {
 
         let main_id = main_workspace_id(&state);
         let w1 = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
 
         let effects = state.apply(Action::OpenDashboard);
         assert_eq!(state.main_pane, MainPane::Dashboard);
@@ -3984,6 +3972,7 @@ mod tests {
         let workspace_id = workspace_id_by_name(&state, "w1");
         state.apply(Action::OpenWorkspace { workspace_id });
 
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
         let mut thread_ids = vec![state.active_thread_id(workspace_id).unwrap()];
         for _ in 0..3 {
             state.apply(Action::CreateWorkspaceThread { workspace_id });
@@ -4237,11 +4226,8 @@ mod tests {
             .find(|w| w.worktree_path == worktree_path)
             .expect("missing workspace")
             .id;
-        let thread_id = state
-            .workspace_tabs
-            .get(&workspace_id)
-            .expect("missing workspace tabs")
-            .active_tab;
+        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        let thread_id = state.active_thread_id(workspace_id).unwrap();
 
         {
             let conversation = state
@@ -4464,6 +4450,8 @@ mod tests {
         let w1 = workspace_id_by_name(&state, "w1");
         let w2 = workspace_id_by_name(&state, "w2");
         let thread_id = default_thread_id();
+        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
+        state.apply(Action::CreateWorkspaceThread { workspace_id: w2 });
 
         state.apply(Action::ChatDraftChanged {
             workspace_id: w1,
@@ -4519,6 +4507,7 @@ mod tests {
         });
         let w1 = workspace_id_by_name(&state, "w1");
         let thread_id = default_thread_id();
+        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
 
         state.apply(Action::ChatDraftChanged {
             workspace_id: w1,
@@ -4634,7 +4623,13 @@ mod tests {
                 .run_status,
             OperationStatus::Running
         );
-        let before_entries = &state.workspace_conversation(workspace_id).unwrap().entries;
+        let before_entries = state
+            .workspace_conversation(workspace_id)
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|e| !matches!(e, ConversationEntry::SystemEvent { .. }))
+            .collect::<Vec<_>>();
         assert_eq!(before_entries.len(), 2);
         assert!(matches!(
             &before_entries[1],
@@ -4667,9 +4662,14 @@ mod tests {
 
         let conversation = state.workspace_conversation(workspace_id).unwrap();
         assert_eq!(conversation.run_status, OperationStatus::Running);
-        assert_eq!(conversation.entries.len(), 2);
+        let entries = conversation
+            .entries
+            .iter()
+            .filter(|e| !matches!(e, ConversationEntry::SystemEvent { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
         assert!(matches!(
-            &conversation.entries[0],
+            &entries[0],
             ConversationEntry::UserEvent {
                 event: crate::UserEvent::Message { text, .. },
                 ..
@@ -4730,7 +4730,13 @@ mod tests {
             },
         });
 
-        let after = &state.workspace_conversation(workspace_id).unwrap().entries;
+        let after = state
+            .workspace_conversation(workspace_id)
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|e| !matches!(e, ConversationEntry::SystemEvent { .. }))
+            .collect::<Vec<_>>();
         assert_eq!(after.len(), 2);
         assert!(matches!(
             &after[0],
@@ -4945,8 +4951,8 @@ mod tests {
             conversation.entries.len(),
             crate::state::MAX_CONVERSATION_ENTRIES_IN_MEMORY
         );
-        assert_eq!(conversation.entries_start, 101);
-        assert_eq!(conversation.entries_total, (total + 1) as u64);
+        assert_eq!(conversation.entries_start, 102);
+        assert_eq!(conversation.entries_total, (total + 2) as u64);
     }
 
     #[test]
@@ -4984,14 +4990,17 @@ mod tests {
 
         let conversation = state.workspace_conversation(workspace_id).unwrap();
         assert_eq!(conversation.run_status, OperationStatus::Running);
-        assert_eq!(conversation.entries.len(), 1);
-        assert!(matches!(
-            &conversation.entries[0],
-            ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. },
-                ..
-            } if text == "Hello"
-        ));
+        let user_messages = conversation
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ConversationEntry::UserEvent { event, .. } => match event {
+                    crate::UserEvent::Message { text, .. } => Some(text.as_str()),
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(user_messages, vec!["Hello"]);
     }
 
     #[test]
@@ -5168,7 +5177,14 @@ mod tests {
         assert!(effects.is_empty());
 
         let conversation = state.workspace_conversation(workspace_id).unwrap();
-        assert_eq!(conversation.entries.len(), 1);
+        assert_eq!(
+            conversation
+                .entries
+                .iter()
+                .filter(|e| matches!(e, ConversationEntry::UserEvent { .. }))
+                .count(),
+            1
+        );
         assert_eq!(conversation.pending_prompts.len(), 1);
         assert_eq!(conversation.pending_prompts[0].text, "Second");
         assert_eq!(conversation.pending_prompts[0].id, 1);
@@ -5305,20 +5321,17 @@ mod tests {
         let conversation = state.workspace_conversation(workspace_id).unwrap();
         assert_eq!(conversation.run_status, OperationStatus::Running);
         assert!(conversation.pending_prompts.is_empty());
-        assert!(matches!(
-            &conversation.entries[0],
-            ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. },
-                ..
-            } if text == "First"
-        ));
-        assert!(matches!(
-            &conversation.entries[1],
-            ConversationEntry::UserEvent {
-                event: crate::UserEvent::Message { text, .. },
-                ..
-            } if text == "Second"
-        ));
+        let user_messages = conversation
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ConversationEntry::UserEvent { event, .. } => match event {
+                    crate::UserEvent::Message { text, .. } => Some(text.as_str()),
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(user_messages, vec!["First", "Second"]);
     }
 
     #[test]

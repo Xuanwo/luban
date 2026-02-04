@@ -685,6 +685,56 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         project_slug: String,
         workspace_name: String,
     ) -> Result<Vec<luban_domain::ConversationThreadMeta>, String> {
+        let threads = self
+            .sqlite
+            .list_conversation_threads(project_slug.clone(), workspace_name.clone())
+            .map_err(anyhow_error_to_string)?;
+        if !threads.is_empty() {
+            return Ok(threads);
+        }
+
+        let legacy = self
+            .load_conversation_legacy(&project_slug, &workspace_name)
+            .ok()
+            .flatten();
+        let Some(legacy) = legacy else {
+            return Ok(threads);
+        };
+        if legacy.thread_id.is_none() && legacy.entries.is_empty() {
+            return Ok(threads);
+        }
+
+        self.ensure_conversation_internal(project_slug.clone(), workspace_name.clone(), 1)
+            .map_err(anyhow_error_to_string)?;
+        self.sqlite
+            .save_conversation_task_status(
+                project_slug.clone(),
+                workspace_name.clone(),
+                1,
+                luban_domain::TaskStatus::Todo,
+            )
+            .map_err(anyhow_error_to_string)?;
+        if let Some(thread_id) = legacy.thread_id {
+            self.sqlite
+                .set_conversation_thread_id(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    1,
+                    thread_id,
+                )
+                .map_err(anyhow_error_to_string)?;
+        }
+        if !legacy.entries.is_empty() {
+            self.sqlite
+                .replace_conversation_entries(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    1,
+                    legacy.entries,
+                )
+                .map_err(anyhow_error_to_string)?;
+        }
+
         self.sqlite
             .list_conversation_threads(project_slug, workspace_name)
             .map_err(anyhow_error_to_string)
@@ -708,16 +758,44 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         before: Option<u64>,
         limit: u64,
     ) -> Result<ConversationSnapshot, String> {
-        let snapshot = self
-            .sqlite
-            .load_conversation_page(
-                project_slug.clone(),
-                workspace_name.clone(),
-                thread_id,
-                before,
-                limit,
-            )
-            .map_err(anyhow_error_to_string)?;
+        let snapshot = match self.sqlite.load_conversation_page(
+            project_slug.clone(),
+            workspace_name.clone(),
+            thread_id,
+            before,
+            limit,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                let is_not_found = err.downcast_ref::<crate::sqlite_store::SqliteStoreError>()
+                    == Some(&crate::sqlite_store::SqliteStoreError::ConversationNotFound);
+                if thread_id != 1 || !is_not_found {
+                    return Err(anyhow_error_to_string(err));
+                }
+
+                return self
+                    .load_conversation_internal(project_slug, workspace_name, thread_id)
+                    .map(|mut repaired| {
+                        let total = repaired.entries.len();
+                        let before = before
+                            .and_then(|v| usize::try_from(v).ok())
+                            .unwrap_or(total)
+                            .min(total);
+                        let limit = usize::try_from(limit).unwrap_or(0);
+                        let end = before;
+                        let start = end.saturating_sub(limit);
+                        repaired.entries = repaired
+                            .entries
+                            .get(start..end)
+                            .unwrap_or_default()
+                            .to_vec();
+                        repaired.entries_total = total as u64;
+                        repaired.entries_start = start as u64;
+                        repaired
+                    })
+                    .map_err(anyhow_error_to_string);
+            }
+        };
 
         if thread_id == 1 && snapshot.entries_total == 0 && snapshot.thread_id.is_none() {
             return self
@@ -1002,6 +1080,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 workspace_name.clone(),
                 thread_local_id,
             )?;
+
             if thread_local_id == 1
                 && existing_thread_id.is_none()
                 && let Some(legacy) =
@@ -2538,6 +2617,7 @@ impl GitWorkspaceService {
 
 #[cfg(test)]
 mod tests {
+    use super::codex_thread::qualify_codex_item;
     use super::prompt::PromptAttachment;
     use super::pull_request::is_merge_ready;
     use super::test_support::{

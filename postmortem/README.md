@@ -11,6 +11,7 @@ This directory contains engineering postmortems for user-visible bugs, CI regres
 
 ## Index (by incident)
 
+- `2026-02-duplicate-thread-1-backlog-task.md`
 - `2026-02-task-list-project-avatar-inconsistency.md`
   - Related fix commits: `c06feb1`
 - `2026-01-terminal-clipboard-shortcuts.md`

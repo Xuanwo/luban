@@ -44,11 +44,17 @@ Workspace state stores:
 - `archived_tabs: Vec<WorkspaceThreadId>`: closed tabs that can be restored.
 - `active_tab: WorkspaceThreadId`: the currently selected thread.
 
+Note: a workspace may temporarily have zero threads (and thus no open tabs) until the first task is
+created. In that state, `active_tab` is undefined and should be treated as a placeholder.
+
 Closing a tab archives it:
 
 - Remove from `open_tabs`.
 - Append to `archived_tabs` (no duplicates).
 - Select a neighbor tab as the next active tab when possible.
+
+The UI must not allow archiving the last remaining open tab once a workspace has at least one
+thread.
 
 Archiving does not delete the thread. Messages and drafts remain durable.
 

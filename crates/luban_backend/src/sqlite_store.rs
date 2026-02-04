@@ -9,7 +9,22 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-const LATEST_SCHEMA_VERSION: u32 = 20;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SqliteStoreError {
+    ConversationNotFound,
+}
+
+impl std::fmt::Display for SqliteStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SqliteStoreError::ConversationNotFound => write!(f, "conversation not found"),
+        }
+    }
+}
+
+impl std::error::Error for SqliteStoreError {}
+
+const LATEST_SCHEMA_VERSION: u32 = 21;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -176,6 +191,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations/0020_conversation_task_validation_pr.sql"
+        )),
+    ),
+    (
+        21,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0021_cleanup_autocreated_thread1.sql"
         )),
     ),
 ];
@@ -2499,7 +2521,6 @@ impl SqliteDatabase {
         workspace_name: &str,
         thread_local_id: u64,
     ) -> anyhow::Result<Option<String>> {
-        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
         self.conn
             .query_row(
                 "SELECT thread_id FROM conversations
@@ -2542,7 +2563,6 @@ impl SqliteDatabase {
         project_slug: &str,
         workspace_name: &str,
     ) -> anyhow::Result<Vec<ConversationThreadMeta>> {
-        self.ensure_conversation(project_slug, workspace_name, 1)?;
         self.repair_conversation_rows_for_entries(project_slug, workspace_name)?;
         let mut stmt = self.conn.prepare(
             "SELECT c.thread_local_id,
@@ -2910,19 +2930,7 @@ impl SqliteDatabase {
         workspace_name: &str,
         thread_local_id: u64,
     ) -> anyhow::Result<ConversationSnapshot> {
-        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
-        let (
-            title,
-            thread_id,
-            task_status,
-            queue_paused,
-            run_started_at_unix_ms,
-            run_finished_at_unix_ms,
-            agent_runner,
-            agent_model_id,
-            thinking_effort,
-            amp_mode,
-        ) = self
+        let row = self
             .conn
             .query_row(
                 "SELECT title, thread_id, task_status, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
@@ -2944,59 +2952,39 @@ impl SqliteDatabase {
                 },
             )
             .optional()
-            .context("failed to load conversation meta")?
-            .map(
-                |(
-                    title,
-                    thread_id,
-                    task_status,
-                    queue_paused,
-                    started,
-                    finished,
-                    agent_runner,
-                    model_id,
-                    thinking_effort,
-                    amp_mode,
-                )| {
-                let title = title
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(ToOwned::to_owned);
-                let thinking_effort = thinking_effort
-                    .as_deref()
-                    .and_then(luban_domain::parse_thinking_effort);
-                let agent_runner = agent_runner
-                    .as_deref()
-                    .and_then(luban_domain::parse_agent_runner_kind);
-                let task_status = luban_domain::parse_task_status(&task_status)
-                    .unwrap_or(luban_domain::TaskStatus::Todo);
-                (
-                    title,
-                    thread_id,
-                    task_status,
-                    queue_paused != 0,
-                    started.and_then(|v| u64::try_from(v).ok()),
-                    finished.and_then(|v| u64::try_from(v).ok()),
-                    agent_runner,
-                    model_id,
-                    thinking_effort,
-                    amp_mode,
-                )
-            },
-            )
-            .unwrap_or((
-                None,
-                None,
-                luban_domain::TaskStatus::Todo,
-                false,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ));
+            .context("failed to load conversation meta")?;
+        let Some((
+            title,
+            thread_id,
+            task_status,
+            queue_paused,
+            started,
+            finished,
+            agent_runner,
+            model_id,
+            thinking_effort,
+            amp_mode,
+        )) = row
+        else {
+            return Err(SqliteStoreError::ConversationNotFound.into());
+        };
+
+        let title = title
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
+        let thinking_effort = thinking_effort
+            .as_deref()
+            .and_then(luban_domain::parse_thinking_effort);
+        let agent_runner = agent_runner
+            .as_deref()
+            .and_then(luban_domain::parse_agent_runner_kind);
+        let task_status =
+            luban_domain::parse_task_status(&task_status).unwrap_or(luban_domain::TaskStatus::Todo);
+        let queue_paused = queue_paused != 0;
+        let run_started_at_unix_ms = started.and_then(|v| u64::try_from(v).ok());
+        let run_finished_at_unix_ms = finished.and_then(|v| u64::try_from(v).ok());
 
         let mut stmt = self.conn.prepare(
             "SELECT entry_id, payload_json
@@ -3043,7 +3031,7 @@ impl SqliteDatabase {
             thread_id,
             task_status,
             runner: agent_runner,
-            agent_model_id,
+            agent_model_id: model_id,
             thinking_effort,
             amp_mode,
             entries,
@@ -3064,20 +3052,7 @@ impl SqliteDatabase {
         before: Option<u64>,
         limit: u64,
     ) -> anyhow::Result<ConversationSnapshot> {
-        self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
-
-        let (
-            title,
-            thread_id,
-            task_status,
-            queue_paused,
-            run_started_at_unix_ms,
-            run_finished_at_unix_ms,
-            agent_runner,
-            agent_model_id,
-            thinking_effort,
-            amp_mode,
-        ) = self
+        let row = self
             .conn
             .query_row(
                 "SELECT title, thread_id, task_status, queue_paused, run_started_at_unix_ms, run_finished_at_unix_ms, agent_runner, agent_model_id, thinking_effort, amp_mode FROM conversations
@@ -3099,59 +3074,39 @@ impl SqliteDatabase {
                 },
             )
             .optional()
-            .context("failed to load conversation meta")?
-            .map(
-                |(
-                    title,
-                    thread_id,
-                    task_status,
-                    queue_paused,
-                    started,
-                    finished,
-                    agent_runner,
-                    model_id,
-                    thinking_effort,
-                    amp_mode,
-                )| {
-                let title = title
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(ToOwned::to_owned);
-                let thinking_effort = thinking_effort
-                    .as_deref()
-                    .and_then(luban_domain::parse_thinking_effort);
-                let agent_runner = agent_runner
-                    .as_deref()
-                    .and_then(luban_domain::parse_agent_runner_kind);
-                let task_status = luban_domain::parse_task_status(&task_status)
-                    .unwrap_or(luban_domain::TaskStatus::Todo);
-                (
-                    title,
-                    thread_id,
-                    task_status,
-                    queue_paused != 0,
-                    started.and_then(|v| u64::try_from(v).ok()),
-                    finished.and_then(|v| u64::try_from(v).ok()),
-                    agent_runner,
-                    model_id,
-                    thinking_effort,
-                    amp_mode,
-                )
-            },
-            )
-            .unwrap_or((
-                None,
-                None,
-                luban_domain::TaskStatus::Todo,
-                false,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ));
+            .context("failed to load conversation meta")?;
+        let Some((
+            title,
+            thread_id,
+            task_status,
+            queue_paused,
+            started,
+            finished,
+            agent_runner,
+            model_id,
+            thinking_effort,
+            amp_mode,
+        )) = row
+        else {
+            return Err(SqliteStoreError::ConversationNotFound.into());
+        };
+
+        let title = title
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
+        let thinking_effort = thinking_effort
+            .as_deref()
+            .and_then(luban_domain::parse_thinking_effort);
+        let agent_runner = agent_runner
+            .as_deref()
+            .and_then(luban_domain::parse_agent_runner_kind);
+        let task_status =
+            luban_domain::parse_task_status(&task_status).unwrap_or(luban_domain::TaskStatus::Todo);
+        let queue_paused = queue_paused != 0;
+        let run_started_at_unix_ms = started.and_then(|v| u64::try_from(v).ok());
+        let run_finished_at_unix_ms = finished.and_then(|v| u64::try_from(v).ok());
 
         let total_entries: u64 = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_entries
@@ -3225,7 +3180,7 @@ impl SqliteDatabase {
             thread_id,
             task_status,
             runner: agent_runner,
-            agent_model_id,
+            agent_model_id: model_id,
             thinking_effort,
             amp_mode,
             entries,
@@ -4017,6 +3972,23 @@ mod tests {
         let threads = db.list_conversation_threads("p", "w").unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Done);
+    }
+
+    #[test]
+    fn list_conversation_threads_does_not_autocreate_threads() {
+        let path = temp_db_path("list_conversation_threads_does_not_autocreate_threads");
+        let mut db = open_db(&path);
+
+        let threads = db.list_conversation_threads("p", "w").unwrap();
+        assert!(threads.is_empty(), "expected no threads for a new workspace");
+
+        let err = db
+            .load_conversation_page("p", "w", 1, None, 10)
+            .unwrap_err();
+        assert!(
+            err.downcast_ref::<SqliteStoreError>() == Some(&SqliteStoreError::ConversationNotFound),
+            "expected missing conversation to return ConversationNotFound"
+        );
     }
 
     #[test]

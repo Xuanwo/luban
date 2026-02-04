@@ -34,6 +34,11 @@ Task titles are user-facing and should be short:
 - The response must be deserializable into `ThreadsSnapshot`.
 - Task ordering must match the UI expectations documented in `docs/workspace-thread-tabs.md`.
 - `ThreadsSnapshot.tasks[]` items are `ThreadMeta`.
+- A workdir may have zero tasks (e.g. a newly created workdir). Providers must not implicitly create
+  placeholder tasks on read-only endpoints.
+- If legacy conversation storage exists for a workdir (e.g. pre-SQLite `conversation.json` /
+  `events.jsonl`), the provider may perform a one-time migration when serving this endpoint, so
+  tasks derived from legacy data become visible to the UI.
 - `ThreadMeta.created_at_unix_seconds` is the stable task creation timestamp.
 - `ThreadMeta.task_status` is the explicit lifecycle stage (`TaskStatus`).
 - `ThreadMeta.turn_status` and `ThreadMeta.last_turn_result` are derived turn-level status (see `docs/task-and-turn-status.md`).
