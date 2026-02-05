@@ -248,6 +248,9 @@ export async function mockCreateNewTaskDraft(args: {
   project_id: string | null
   workdir_id: number | null
 }): Promise<NewTaskDraftSnapshot> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   const now = Date.now()
   const draft: NewTaskDraftSnapshot = {
@@ -266,6 +269,9 @@ export async function mockUpdateNewTaskDraft(
   draftId: string,
   args: { text: string; project_id: string | null; workdir_id: number | null },
 ): Promise<NewTaskDraftSnapshot> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   const idx = state.newTaskDrafts.findIndex((d) => d.id === draftId)
   if (idx < 0) throw new Error(`mock: unknown draft id: ${draftId}`)
@@ -299,6 +305,9 @@ export async function mockSaveNewTaskStash(args: {
   workdir_id: number | null
   editing_draft_id: string | null
 }): Promise<void> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   state.newTaskStash = {
     text: args.text,

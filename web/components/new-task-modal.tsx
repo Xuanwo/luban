@@ -169,10 +169,11 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
       void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
       return
     }
+    const stashedWorkdirId = selectedWorkdirId === -1 ? null : selectedWorkdirId
     void saveNewTaskStash({
       text: input,
       projectId: effectiveProjectId || null,
-      workdirId: selectedWorkdirId,
+      workdirId: stashedWorkdirId,
       editingDraftId,
       updatedAtUnixMs: Date.now(),
     }).catch((err) => console.warn("saveNewTaskStash failed", err))
@@ -848,36 +849,37 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
           {/* Right: Expand + Close */}
           <div className="flex items-center gap-1 flex-shrink-0">
             {canSaveDraft && (
-              <button
-                type="button"
-                data-testid="new-task-save-draft-button"
-                className="h-7 px-2.5 text-[12px] transition-colors hover:bg-[#f5f5f5] disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ color: "#666", borderRadius: "5px", fontWeight: 500 }}
-                onClick={() => {
-                  void (async () => {
-                    const trimmed = input.trim()
-                    if (!trimmed) return
-                    try {
-                      await upsertNewTaskDraft({
-                        id: editingDraftId,
-                        text: input,
-                        projectId: effectiveProjectId || null,
-                        workdirId: selectedWorkdirId,
-                      })
-                      await clearNewTaskStash()
-                      setInput("")
-                      revokeAttachmentUrls(attachments)
-                      setAttachments([])
-                      setSelectedProjectId("")
-                      setSelectedWorkdirId(null)
-                      setEditingDraftId(null)
-                      onOpenChange(false)
-                      toast("Saved to Drafts")
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : String(err))
-                    }
-                  })()
-                }}
+            <button
+              type="button"
+              data-testid="new-task-save-draft-button"
+              className="h-7 px-2.5 text-[12px] transition-colors hover:bg-[#f5f5f5] disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ color: "#666", borderRadius: "5px", fontWeight: 500 }}
+              onClick={() => {
+                void (async () => {
+                  const trimmed = input.trim()
+	                  if (!trimmed) return
+	                  try {
+	                    const draftWorkdirId = selectedWorkdirId === -1 ? null : selectedWorkdirId
+	                    await upsertNewTaskDraft({
+	                      id: editingDraftId,
+	                      text: input,
+	                      projectId: effectiveProjectId || null,
+	                      workdirId: draftWorkdirId,
+	                    })
+	                    await clearNewTaskStash()
+	                    setInput("")
+	                    revokeAttachmentUrls(attachments)
+	                    setAttachments([])
+	                    setSelectedProjectId("")
+	                    setSelectedWorkdirId(null)
+	                    setEditingDraftId(null)
+	                    onOpenChange(false)
+	                    toast("Saved to Drafts")
+	                    } catch (err) {
+	                      toast.error(err instanceof Error ? err.message : String(err))
+	                    }
+	                  })()
+	                }}
                 disabled={executingMode != null}
                 title="Save as draft"
               >

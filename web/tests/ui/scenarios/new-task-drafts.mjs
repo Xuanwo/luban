@@ -28,6 +28,9 @@ export async function runNewTaskDrafts({ page }) {
   await page.getByTestId('new-task-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
 
+  await page.getByTestId('new-task-workdir-selector').click();
+  await page.getByRole('menuitem').filter({ hasText: 'Create new...' }).first().click();
+
   await page.getByTestId('new-task-input').fill(title);
   await page.getByTestId('new-task-save-draft-button').waitFor({ state: 'visible' });
   await page.getByTestId('new-task-save-draft-button').click();
@@ -54,12 +57,26 @@ export async function runNewTaskDrafts({ page }) {
 
   await waitForInputContains(page, 'new-task-input', title, 10_000);
 
-  await page.getByTestId('new-task-close-button').click();
+  // Close explicitly discards (clears stash). Use Escape for stashing.
+  await page.keyboard.press('Escape');
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
+
+  await page.getByTestId('sidebar-project-mock-project-2').click();
+  await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 
   await page.getByTestId('new-task-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
 
+  await waitForInputContains(page, 'new-task-input', title, 10_000);
+  await page.getByTestId('new-task-input').fill('');
+  await page.getByTestId('new-task-close-button').click();
+  await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
+
+  await page.getByTestId('sidebar-project-mock-project-1').click();
+  await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
+
+  await page.getByTestId('new-task-button').click();
+  await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
   await waitForInputTrimmedEmpty(page, 'new-task-input', 10_000);
   await page.getByTestId('new-task-close-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
