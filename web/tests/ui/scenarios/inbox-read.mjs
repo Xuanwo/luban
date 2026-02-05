@@ -1,5 +1,16 @@
 import { sleep, waitForDataAttribute } from '../lib/utils.mjs';
 
+async function waitForLocatorCount(locator, expected, timeoutMs = 20_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const count = await locator.count();
+    if (count === expected) return;
+    await sleep(200);
+  }
+  const last = await locator.count();
+  throw new Error(`timeout waiting for locator count; expected=${expected} got=${last}`);
+}
+
 export async function runInboxRead({ page }) {
   await page.getByTestId('nav-inbox-button').click();
   await page.getByTestId('inbox-view').waitFor({ state: 'visible' });
@@ -32,7 +43,11 @@ export async function runInboxRead({ page }) {
   await row.waitFor({ state: 'visible' });
   await waitForDataAttribute(row, 'data-read', 'false', 20_000);
 
+  const unreadIndicator = row.locator('[data-testid="inbox-notification-unread-indicator"]');
+  await waitForLocatorCount(unreadIndicator, 1, 20_000);
+
   await row.click();
   await row.waitFor({ state: 'visible' });
   await waitForDataAttribute(row, 'data-read', 'true', 20_000);
+  await waitForLocatorCount(unreadIndicator, 0, 20_000);
 }

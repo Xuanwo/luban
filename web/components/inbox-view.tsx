@@ -2,12 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
-  CheckCircle2,
-  AlertCircle,
-  MessageSquare,
   Loader2,
-  Circle,
-  PauseCircle,
   MoreHorizontal,
   Filter,
   SlidersHorizontal,
@@ -16,7 +11,7 @@ import {
 import { cn } from "@/lib/utils"
 import { TaskActivityPanel } from "./task-activity-panel"
 import { TaskHeader } from "./shared/task-header"
-import { TaskStatusSelector } from "./shared/task-status-selector"
+import { TaskStatusIcon, TaskStatusSelector, taskStatusConfig } from "./shared/task-status-selector"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
@@ -105,28 +100,40 @@ function firstNonEmptyLine(text: string): string | null {
   return null
 }
 
-function InboxTaskStatusIcon({ status }: { status: InboxNotification["taskStatus"] }) {
-  if (status.agentRunStatus === "running" || status.turnStatus === "running") {
-    return <Loader2 className="w-[14px] h-[14px] animate-spin" style={{ color: "#5e6ad2" }} />
-  }
-  if (status.turnStatus === "paused") {
-    return <PauseCircle className="w-[14px] h-[14px]" style={{ color: "#9b9b9b" }} />
-  }
-  if (status.turnStatus === "awaiting") {
-    return <MessageSquare className="w-[14px] h-[14px]" style={{ color: "#f2994a" }} />
-  }
-  if (status.lastTurnResult === "failed") {
-    return <AlertCircle className="w-[14px] h-[14px]" style={{ color: "#eb5757" }} />
-  }
-  if (status.lastTurnResult === "completed") {
-    return (
-      <CheckCircle2
-        className="w-[14px] h-[14px]"
-        style={{ color: status.hasUnreadCompletion ? "#5e6ad2" : "#27ae60" }}
-      />
-    )
-  }
-  return <Circle className="w-[14px] h-[14px]" style={{ color: "#9b9b9b" }} />
+function InboxTaskStatusIndicator({
+  lifecycleStatus,
+  isRunning,
+  hasUnreadCompletion,
+}: {
+  lifecycleStatus: TaskStatus
+  isRunning: boolean
+  hasUnreadCompletion: boolean
+}) {
+  const label = taskStatusConfig[lifecycleStatus]?.label ?? lifecycleStatus
+  return (
+    <div
+      className="flex items-center justify-end gap-1"
+      title={isRunning ? `Task status: ${label} (runner running)` : `Task status: ${label}`}
+      data-testid="inbox-notification-status-indicator"
+    >
+      <TaskStatusIcon status={lifecycleStatus} size="xs" className="w-[14px] h-[14px]" />
+      {isRunning ? (
+        <Loader2
+          className="w-[12px] h-[12px] animate-spin"
+          style={{ color: "#5e6ad2" }}
+          data-testid="inbox-notification-runner-spinner"
+        />
+      ) : hasUnreadCompletion ? (
+        <span
+          className="w-[6px] h-[6px] rounded-full"
+          style={{ backgroundColor: "#5e6ad2" }}
+          data-testid="inbox-notification-unread-indicator"
+          aria-label="Unread completion"
+          title="Unread completion"
+        />
+      ) : null}
+    </div>
+  )
 }
 
 interface NotificationRowProps {
@@ -140,6 +147,9 @@ interface NotificationRowProps {
 }
 
 function NotificationRow({ notification, previewText, timestampText, testId, selected, onClick, onDoubleClick }: NotificationRowProps) {
+  const isRunning =
+    notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
+
   return (
     <div
       data-testid={testId}
@@ -197,7 +207,11 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
       {/* Status + Timestamp (vertical stack) */}
       <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
         <span data-testid="inbox-notification-task-status-icon">
-          <InboxTaskStatusIcon status={notification.taskStatus} />
+          <InboxTaskStatusIndicator
+            lifecycleStatus={notification.taskLifecycleStatus}
+            isRunning={isRunning}
+            hasUnreadCompletion={notification.taskStatus.hasUnreadCompletion}
+          />
         </span>
         <span
           data-testid="inbox-notification-timestamp"
