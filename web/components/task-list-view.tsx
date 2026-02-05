@@ -74,9 +74,10 @@ function TaskRow({
   onStatusChange,
   agentRunner,
 }: TaskRowProps & { agentRunner: AgentRunnerKind | null | undefined }) {
+  const isArchived = task.status === "done" || task.status === "canceled"
   return (
     <div
-      onClick={onClick}
+      onClick={isArchived ? undefined : onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       data-task-row-id={task.id}
@@ -91,6 +92,7 @@ function TaskRow({
           status={task.status}
           onStatusChange={onStatusChange}
           size="sm"
+          disabled={isArchived}
           triggerTestId={`task-status-selector-${task.workspaceId}-${task.taskId}`}
         />
       </div>

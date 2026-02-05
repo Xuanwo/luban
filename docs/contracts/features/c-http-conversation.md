@@ -47,7 +47,10 @@ The event payload is structured:
 - `type`: `system_event`
 - `entry_id`: stable string identifier (unique within the conversation)
 - `created_at_unix_ms`: millisecond timestamp
-- `event.event_type`: `task_created` | `task_status_changed` | `task_status_suggestion`
+- `event.event_type`: `task_created` | `task_archived` | `task_status_changed` | `task_status_suggestion`
+  - `task_archived` indicates the provider has completed archival cleanup for a closed task (for
+    example: removing the worktree and deleting the local `luban/*` branch). Clients should treat
+    archived tasks as read-only.
 
 For `event.event_type=task_status_suggestion`:
 

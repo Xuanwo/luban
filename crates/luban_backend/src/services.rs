@@ -578,15 +578,49 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         &self,
         project_path: PathBuf,
         worktree_path: PathBuf,
+        branch_name: String,
     ) -> Result<(), String> {
         let result: anyhow::Result<()> = (|| {
             let path_str = worktree_path
                 .to_str()
                 .ok_or_else(|| anyhow!("invalid worktree path"))?;
-            self.run_git(&project_path, ["worktree", "remove", "--force", path_str])
-                .with_context(|| {
-                    format!("failed to remove worktree at {}", worktree_path.display())
-                })?;
+
+            let remove_result =
+                self.run_git(&project_path, ["worktree", "remove", "--force", path_str]);
+            if let Err(err) = remove_result {
+                let message = format!("{err:#}");
+                let missing = message.contains("not a working tree")
+                    || message.contains("is not a working tree")
+                    || message.contains("is not a git repository")
+                    || message.contains("no such file or directory")
+                    || message.contains("No such file or directory");
+                if !missing {
+                    return Err(err).with_context(|| {
+                        format!("failed to remove worktree at {}", worktree_path.display())
+                    });
+                }
+            }
+
+            let branch_name = branch_name.trim();
+            if branch_name.starts_with("luban/") && branch_name != "main" {
+                let is_checked_out_elsewhere = (|| -> anyhow::Result<bool> {
+                    let raw = self
+                        .run_git(&project_path, ["worktree", "list", "--porcelain"])
+                        .context("failed to list worktrees")?;
+                    let needle = format!("refs/heads/{branch_name}");
+                    Ok(raw
+                        .lines()
+                        .any(|line| line.trim() == format!("branch {needle}")))
+                })()
+                .unwrap_or(false);
+
+                if !is_checked_out_elsewhere && branch_exists(&project_path, branch_name) {
+                    self.run_git(&project_path, ["branch", "-D", branch_name])
+                        .with_context(|| {
+                            format!("failed to delete local branch '{branch_name}'")
+                        })?;
+                }
+            }
             Ok(())
         })();
         result.map_err(anyhow_error_to_string)
@@ -3667,9 +3701,81 @@ mod tests {
             &service,
             repo_path.clone(),
             worktree_path.clone(),
+            branch_name.clone(),
         )
         .expect("archive_workspace should remove dirty worktree with --force");
         assert!(!worktree_path.exists(), "worktree path should be removed");
+
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn archive_workspace_deletes_luban_branch_after_removing_worktree() {
+        let unique = unix_epoch_nanos_now();
+        let base_dir = std::env::temp_dir().join(format!(
+            "luban-archive-workspace-branch-delete-{}-{}",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let repo_path = base_dir.join("repo");
+        std::fs::create_dir_all(&repo_path).expect("repo dir should be created");
+
+        assert_git_success(&repo_path, &["init"]);
+        assert_git_success(&repo_path, &["config", "user.name", "Test User"]);
+        assert_git_success(&repo_path, &["config", "user.email", "test@example.com"]);
+
+        let tracked_file = repo_path.join("tracked.txt");
+        std::fs::write(&tracked_file, "hello\n").expect("write should succeed");
+        assert_git_success(&repo_path, &["add", "."]);
+        assert_git_success(&repo_path, &["commit", "-m", "init"]);
+
+        let worktree_path = base_dir.join("worktree");
+        let branch_name = format!("luban/test-branch-{unique}");
+        assert_git_success(
+            &repo_path,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &branch_name,
+                worktree_path
+                    .to_str()
+                    .expect("worktree path should be utf-8"),
+            ],
+        );
+
+        assert!(
+            branch_exists(&repo_path, &branch_name),
+            "expected local branch to exist before archive"
+        );
+
+        let sqlite =
+            SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: paths::worktrees_root(&base_dir),
+            conversations_root: paths::conversations_root(&base_dir),
+            task_prompts_root: paths::task_prompts_root(&base_dir),
+            sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
+        };
+
+        ProjectWorkspaceService::archive_workspace(
+            &service,
+            repo_path.clone(),
+            worktree_path.clone(),
+            branch_name.clone(),
+        )
+        .expect("archive_workspace should remove worktree and delete local luban branch");
+
+        assert!(!worktree_path.exists(), "worktree path should be removed");
+        assert!(
+            !branch_exists(&repo_path, &branch_name),
+            "expected local branch to be deleted after archive"
+        );
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);

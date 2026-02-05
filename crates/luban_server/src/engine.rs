@@ -325,6 +325,7 @@ pub struct Engine {
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
     workspace_threads_cache: HashMap<WorkspaceId, Vec<ConversationThreadMeta>>,
+    auto_archive_workspaces: HashSet<WorkspaceId>,
     telegram_pairing: Option<TelegramPairingState>,
 }
 
@@ -375,6 +376,7 @@ impl Engine {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -414,6 +416,65 @@ impl Engine {
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
         self.reconcile_stale_running_turns().await;
+        self.auto_archive_closed_workspaces().await;
+    }
+
+    async fn auto_archive_closed_workspaces(&mut self) {
+        let mut candidates = Vec::new();
+        for project in &self.state.projects {
+            if !project.is_git {
+                continue;
+            }
+            for workspace in &project.workspaces {
+                let is_main = workspace.workspace_name == "main";
+                if is_main {
+                    continue;
+                }
+                if workspace.archive_status == luban_domain::OperationStatus::Running {
+                    continue;
+                }
+                candidates.push((
+                    workspace.id,
+                    WorkspaceScope {
+                        project_slug: project.slug.clone(),
+                        workspace_name: workspace.workspace_name.clone(),
+                    },
+                ));
+            }
+        }
+
+        for (workspace_id, scope) in candidates {
+            let services = self.services.clone();
+            let project_slug = scope.project_slug.clone();
+            let workspace_name = scope.workspace_name.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let threads = services.list_conversation_threads(project_slug, workspace_name)?;
+                if threads.is_empty() {
+                    return Ok(false);
+                }
+                let all_closed_and_idle = threads.iter().all(|t| {
+                    matches!(
+                        t.task_status,
+                        luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                    ) && t.turn_status == luban_domain::TurnStatus::Idle
+                });
+                Ok(all_closed_and_idle)
+            })
+            .await
+            .ok()
+            .unwrap_or_else(|| Err("failed to join auto archive scan task".to_owned()));
+
+            let Ok(should_archive) = result else {
+                continue;
+            };
+            if !should_archive {
+                continue;
+            }
+
+            self.auto_archive_workspaces.insert(workspace_id);
+            self.process_action_queue(Action::ArchiveWorkspace { workspace_id })
+                .await;
+        }
     }
 
     async fn reconcile_stale_running_turns(&mut self) {
@@ -3898,7 +3959,8 @@ impl Engine {
                 }
             }
             Effect::ArchiveWorkspace { workspace_id } => {
-                if let Some(scope) = workspace_scope(&self.state, workspace_id) {
+                let scope = workspace_scope(&self.state, workspace_id);
+                if let Some(scope) = scope.as_ref() {
                     for (wid, thread_id) in self.state.conversations.keys() {
                         if *wid != workspace_id {
                             continue;
@@ -3913,12 +3975,14 @@ impl Engine {
 
                 let mut project_path: Option<PathBuf> = None;
                 let mut worktree_path: Option<PathBuf> = None;
+                let mut branch_name: Option<String> = None;
 
                 for project in &self.state.projects {
                     for workspace in &project.workspaces {
                         if workspace.id == workspace_id {
                             project_path = Some(project.path.clone());
                             worktree_path = Some(workspace.worktree_path.clone());
+                            branch_name = Some(workspace.branch_name.clone());
                             break;
                         }
                     }
@@ -3927,7 +3991,8 @@ impl Engine {
                     }
                 }
 
-                let (Some(project_path), Some(worktree_path)) = (project_path, worktree_path)
+                let (Some(project_path), Some(worktree_path), Some(branch_name)) =
+                    (project_path, worktree_path, branch_name)
                 else {
                     return Ok(VecDeque::from([Action::WorkspaceArchiveFailed {
                         workspace_id,
@@ -3936,15 +4001,80 @@ impl Engine {
                 };
 
                 let services = self.services.clone();
+                let should_emit_task_archived_events =
+                    self.auto_archive_workspaces.contains(&workspace_id);
+                let project_slug = scope
+                    .as_ref()
+                    .map(|s| s.project_slug.clone())
+                    .unwrap_or_default();
+                let workspace_name = scope
+                    .as_ref()
+                    .map(|s| s.workspace_name.clone())
+                    .unwrap_or_default();
                 let result = tokio::task::spawn_blocking(move || {
-                    services.archive_workspace(project_path, worktree_path)
+                    services.archive_workspace(project_path, worktree_path, branch_name)?;
+                    if !should_emit_task_archived_events {
+                        return Ok(());
+                    }
+                    if project_slug.is_empty() || workspace_name.is_empty() {
+                        return Ok(());
+                    }
+
+                    let threads = services
+                        .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                    for meta in threads {
+                        if !matches!(
+                            meta.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) {
+                            continue;
+                        }
+
+                        let recent = services.load_conversation_page(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            None,
+                            32,
+                        )?;
+                        let already_archived = recent.entries.iter().any(|entry| {
+                            matches!(
+                                entry,
+                                luban_domain::ConversationEntry::SystemEvent { event, .. }
+                                    if matches!(
+                                        event,
+                                        luban_domain::ConversationSystemEvent::TaskArchived
+                                    )
+                            )
+                        });
+                        if already_archived {
+                            continue;
+                        }
+
+                        services.append_conversation_entries(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            vec![luban_domain::ConversationEntry::SystemEvent {
+                                entry_id: String::new(),
+                                created_at_unix_ms: now_unix_ms(),
+                                event: luban_domain::ConversationSystemEvent::TaskArchived,
+                            }],
+                        )?;
+                    }
+                    Ok(())
                 })
                 .await
                 .ok()
                 .unwrap_or_else(|| Err("failed to join archive workspace task".to_owned()));
 
                 let action = match result {
-                    Ok(()) => Action::WorkspaceArchived { workspace_id },
+                    Ok(()) => {
+                        if should_emit_task_archived_events {
+                            self.auto_archive_workspaces.remove(&workspace_id);
+                        }
+                        Action::WorkspaceArchived { workspace_id }
+                    }
                     Err(message) => Action::WorkspaceArchiveFailed {
                         workspace_id,
                         message,
@@ -3952,6 +4082,67 @@ impl Engine {
                 };
 
                 Ok(VecDeque::from([action]))
+            }
+            Effect::MaybeAutoArchiveWorkspace { workspace_id } => {
+                let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+                    return Ok(VecDeque::new());
+                };
+
+                let mut project_is_git = false;
+                let mut workspace_is_main = false;
+                let mut workspace_status = None;
+                let mut archive_status = None;
+                for project in &self.state.projects {
+                    for workspace in &project.workspaces {
+                        if workspace.id != workspace_id {
+                            continue;
+                        }
+                        project_is_git = project.is_git;
+                        workspace_is_main = workspace.workspace_name == "main";
+                        workspace_status = Some(workspace.status);
+                        archive_status = Some(workspace.archive_status);
+                        break;
+                    }
+                }
+
+                if !project_is_git
+                    || workspace_is_main
+                    || workspace_status != Some(luban_domain::WorkspaceStatus::Active)
+                    || archive_status == Some(luban_domain::OperationStatus::Running)
+                {
+                    return Ok(VecDeque::new());
+                }
+
+                let services = self.services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let threads =
+                        services.list_conversation_threads(project_slug, workspace_name)?;
+                    if threads.is_empty() {
+                        return Ok(false);
+                    }
+                    let all_closed_and_idle = threads.iter().all(|t| {
+                        matches!(
+                            t.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) && t.turn_status == luban_domain::TurnStatus::Idle
+                    });
+                    Ok(all_closed_and_idle)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("failed to join maybe archive workspace task".to_owned()));
+
+                let Ok(should_archive) = result else {
+                    return Ok(VecDeque::new());
+                };
+                if !should_archive {
+                    return Ok(VecDeque::new());
+                }
+
+                self.auto_archive_workspaces.insert(workspace_id);
+                Ok(VecDeque::from([Action::ArchiveWorkspace { workspace_id }]))
             }
         }
     }
@@ -4753,7 +4944,7 @@ fn queue_state_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspace
         Action::TaskStatusSet {
             workspace_id,
             thread_id,
-            task_status: luban_domain::TaskStatus::Canceled,
+            task_status: luban_domain::TaskStatus::Canceled | luban_domain::TaskStatus::Done,
         } => Some((*workspace_id, *thread_id)),
         Action::AgentEventReceived {
             workspace_id,
@@ -5027,6 +5218,9 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
             event: match event {
                 luban_domain::ConversationSystemEvent::TaskCreated => {
                     luban_api::ConversationSystemEvent::TaskCreated
+                }
+                luban_domain::ConversationSystemEvent::TaskArchived => {
+                    luban_api::ConversationSystemEvent::TaskArchived
                 }
                 luban_domain::ConversationSystemEvent::TaskStatusChanged { from, to } => {
                     luban_api::ConversationSystemEvent::TaskStatusChanged {
@@ -5663,6 +5857,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -5831,6 +6026,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -6108,6 +6304,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -6283,6 +6480,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6346,6 +6544,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6496,6 +6695,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6698,6 +6898,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6795,6 +6996,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6910,6 +7112,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
@@ -6999,6 +7202,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
@@ -7075,6 +7279,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7167,6 +7372,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7317,6 +7523,7 @@ mod tests {
             &self,
             project_path: PathBuf,
             worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             if let Some(cancel_flag) = &self.cancel_flag
                 && !cancel_flag.load(Ordering::SeqCst)
@@ -7514,6 +7721,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7602,6 +7810,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7699,6 +7908,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -7879,6 +8089,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7927,6 +8138,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8009,6 +8221,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -8218,6 +8431,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -8395,6 +8609,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8461,6 +8676,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8519,6 +8735,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8592,6 +8809,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8662,6 +8880,7 @@ mod tests {
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 

@@ -165,6 +165,7 @@ function systemEvent(args: {
   createdAtUnixMs: number
   event:
     | { event_type: "task_created" }
+    | { event_type: "task_archived" }
     | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
     | {
         event_type: "task_status_suggestion"

@@ -426,6 +426,22 @@ mod task_status_tests {
     }
 }
 
+#[cfg(test)]
+mod conversation_system_event_tests {
+    use super::ConversationSystemEvent;
+
+    #[test]
+    fn conversation_system_event_archived_roundtrips() {
+        let json =
+            serde_json::to_string(&ConversationSystemEvent::TaskArchived).expect("serialize");
+        assert_eq!(json, "{\"event_type\":\"task_archived\"}");
+
+        let parsed: ConversationSystemEvent =
+            serde_json::from_str("{\"event_type\":\"task_archived\"}").expect("deserialize");
+        assert!(matches!(parsed, ConversationSystemEvent::TaskArchived));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStatus {
@@ -603,6 +619,7 @@ pub struct ConversationSystemEventEntry {
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum ConversationSystemEvent {
     TaskCreated,
+    TaskArchived,
     TaskStatusChanged {
         from: TaskStatus,
         to: TaskStatus,

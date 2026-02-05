@@ -25,6 +25,10 @@ Enum values:
 Notes:
 
 - Archive is intentionally not modeled as a task status.
+- Closed tasks (`done` / `canceled`) are treated as archived for UX and cleanup purposes:
+  - Clients must treat them as read-only (no new turns/messages).
+  - Providers may cleanup the workspace worktree/branch asynchronously and append a `system_event`
+    marker (see `ConversationSystemEvent::TaskArchived`).
 - Task status changes are triggered by explicit user actions (including sending a message, which is treated as an explicit start-work action).
 - Legacy values `in_progress` and `in_review` may exist in persisted data and are treated as aliases for `iterating` and `validating` respectively.
 

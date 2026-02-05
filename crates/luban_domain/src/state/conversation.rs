@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum ConversationSystemEvent {
     TaskCreated,
+    TaskArchived,
     TaskStatusChanged {
         from: TaskStatus,
         to: TaskStatus,

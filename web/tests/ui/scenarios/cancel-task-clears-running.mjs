@@ -35,6 +35,26 @@ async function assertRunningShowsOnlySpinner(row) {
   }
 }
 
+async function waitForInboxRowGone(page, expectedTitle, timeoutMs = 20_000) {
+  const rows = page.locator('[data-testid^="inbox-notification-row-"]');
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const rowCount = await rows.count();
+    let found = false;
+    for (let i = 0; i < Math.min(rowCount, 40); i += 1) {
+      const row = page.getByTestId(`inbox-notification-row-${i}`);
+      const title = ((await row.getByTestId('inbox-notification-task-title').textContent()) ?? '').trim();
+      if (title === expectedTitle) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) return;
+    await sleep(200);
+  }
+  throw new Error(`timeout waiting for inbox row to disappear: ${JSON.stringify(expectedTitle)}`);
+}
+
 export async function runCancelTaskClearsRunning({ page }) {
   await page.getByTestId('nav-inbox-button').click();
   await page.getByTestId('inbox-view').waitFor({ state: 'visible' });
@@ -50,6 +70,5 @@ export async function runCancelTaskClearsRunning({ page }) {
   await page.getByTestId('task-status-menu').waitFor({ state: 'visible' });
   await page.getByTestId('task-status-option-canceled').click();
 
-  const updatedRow = await findInboxRowByTitle(page, 'PR: pending');
-  await waitForNotRunning(updatedRow);
+  await waitForInboxRowGone(page, 'PR: pending');
 }

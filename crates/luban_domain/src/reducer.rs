@@ -868,6 +868,13 @@ impl AppState {
                 tabs.activate(thread_id);
 
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                if matches!(
+                    conversation.task_status,
+                    crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                ) {
+                    self.last_error = Some("Task is archived".to_owned());
+                    return Vec::new();
+                }
                 conversation.draft.clear();
                 conversation.draft_attachments.clear();
 
@@ -1009,6 +1016,13 @@ impl AppState {
                 tabs.activate(thread_id);
 
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
+                if matches!(
+                    conversation.task_status,
+                    crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                ) {
+                    self.last_error = Some("Task is archived".to_owned());
+                    return Vec::new();
+                }
                 conversation.draft.clear();
                 conversation.draft_attachments.clear();
 
@@ -1674,6 +1688,19 @@ impl AppState {
                 workspace_id,
                 thread_id,
             } => {
+                if self
+                    .conversations
+                    .get(&(workspace_id, thread_id))
+                    .is_some_and(|c| {
+                        matches!(
+                            c.task_status,
+                            crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                        )
+                    })
+                {
+                    self.last_error = Some("Task is archived".to_owned());
+                    return Vec::new();
+                }
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 tabs.activate(thread_id);
                 self.ensure_conversation_mut(workspace_id, thread_id);
@@ -1715,6 +1742,19 @@ impl AppState {
                 workspace_id,
                 thread_id,
             } => {
+                if self
+                    .conversations
+                    .get(&(workspace_id, thread_id))
+                    .is_some_and(|c| {
+                        matches!(
+                            c.task_status,
+                            crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                        )
+                    })
+                {
+                    self.last_error = Some("Task is archived".to_owned());
+                    return Vec::new();
+                }
                 let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                 let previous_active = tabs.active_tab;
                 tabs.restore_tab(thread_id, true);
@@ -2292,23 +2332,87 @@ impl AppState {
                 thread_id,
                 task_status,
             } => {
-                let Some(conversation) = self.conversations.get_mut(&(workspace_id, thread_id))
+                let Some(existing_status) = self
+                    .conversations
+                    .get(&(workspace_id, thread_id))
+                    .map(|c| c.task_status)
                 else {
                     return Vec::new();
                 };
-                if conversation.task_status == task_status {
+                if existing_status == task_status {
                     return Vec::new();
                 }
-                let from_status = conversation.task_status;
-                conversation.task_status = task_status;
-                conversation.push_entry(ConversationEntry::SystemEvent {
-                    entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
-                    created_at_unix_ms: now_unix_ms(),
-                    event: crate::ConversationSystemEvent::TaskStatusChanged {
-                        from: from_status,
-                        to: task_status,
-                    },
-                });
+                if matches!(
+                    existing_status,
+                    crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                ) {
+                    self.last_error = Some("Task is archived".to_owned());
+                    return Vec::new();
+                }
+
+                let should_close_task = matches!(
+                    task_status,
+                    crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                );
+                let mut run_id_to_cancel: Option<u64> = None;
+
+                {
+                    let conversation = self
+                        .conversations
+                        .get_mut(&(workspace_id, thread_id))
+                        .expect("conversation status already resolved; conversation should exist");
+                    let from_status = conversation.task_status;
+                    conversation.task_status = task_status;
+                    conversation.push_entry(ConversationEntry::SystemEvent {
+                        entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
+                        created_at_unix_ms: now_unix_ms(),
+                        event: crate::ConversationSystemEvent::TaskStatusChanged {
+                            from: from_status,
+                            to: task_status,
+                        },
+                    });
+
+                    if should_close_task {
+                        conversation.pending_prompts.clear();
+                        conversation.queue_paused = true;
+                        run_id_to_cancel = cancel_running_turn(conversation);
+                    }
+                }
+
+                let mut did_update_tabs = false;
+                if should_close_task {
+                    let (is_open, open_len, archived_tabs) = {
+                        let tabs = self.ensure_workspace_tabs_mut(workspace_id);
+                        (
+                            tabs.open_tabs.contains(&thread_id),
+                            tabs.open_tabs.len(),
+                            tabs.archived_tabs.clone(),
+                        )
+                    };
+
+                    if is_open && open_len > 1 {
+                        let tabs = self.ensure_workspace_tabs_mut(workspace_id);
+                        tabs.archive_tab(thread_id);
+                        did_update_tabs = true;
+                    } else if is_open {
+                        let candidate = archived_tabs.into_iter().find(|id| {
+                            self.conversations
+                                .get(&(workspace_id, *id))
+                                .is_some_and(|c| {
+                                    !matches!(
+                                        c.task_status,
+                                        crate::TaskStatus::Done | crate::TaskStatus::Canceled
+                                    )
+                                })
+                        });
+                        if let Some(candidate) = candidate {
+                            let tabs = self.ensure_workspace_tabs_mut(workspace_id);
+                            tabs.restore_tab(candidate, true);
+                            tabs.archive_tab(thread_id);
+                            did_update_tabs = true;
+                        }
+                    }
+                }
                 let mut effects = vec![
                     Effect::StoreConversationTaskStatus {
                         workspace_id,
@@ -2317,9 +2421,19 @@ impl AppState {
                     },
                     Effect::LoadWorkspaceThreads { workspace_id },
                 ];
-                if task_status == crate::TaskStatus::Canceled
-                    && let Some(run_id) = cancel_running_turn(conversation)
-                {
+                if did_update_tabs {
+                    effects.push(Effect::SaveAppState);
+                }
+
+                if should_close_task {
+                    effects.push(Effect::CleanupClaudeProcess {
+                        workspace_id,
+                        thread_id,
+                    });
+                    effects.push(Effect::MaybeAutoArchiveWorkspace { workspace_id });
+                }
+
+                if let Some(run_id) = run_id_to_cancel {
                     effects.push(Effect::CancelAgentTurn {
                         workspace_id,
                         thread_id,
@@ -5372,6 +5486,90 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn task_status_done_cancels_running_turn_and_triggers_auto_archive_check() {
+        let mut state = AppState::demo();
+        let workspace_id = first_non_main_workspace_id(&state);
+        let thread_id = default_thread_id();
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "Hello".to_owned(),
+            attachments: Vec::new(),
+            runner: None,
+            amp_mode: None,
+        });
+        let run_id = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation")
+            .active_run_id
+            .expect("missing active run id");
+
+        let effects = state.apply(Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status: crate::TaskStatus::Done,
+        });
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::CancelAgentTurn { workspace_id: wid, thread_id: tid, run_id: rid }
+                    if *wid == workspace_id && *tid == thread_id && *rid == run_id
+            )),
+            "expected CancelAgentTurn effect"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::MaybeAutoArchiveWorkspace { workspace_id: wid } if *wid == workspace_id
+            )),
+            "expected MaybeAutoArchiveWorkspace effect"
+        );
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.task_status, crate::TaskStatus::Done);
+        assert_eq!(conversation.run_status, OperationStatus::Idle);
+        assert_eq!(conversation.active_run_id, None);
+        assert!(conversation.queue_paused);
+    }
+
+    #[test]
+    fn send_agent_message_is_blocked_for_archived_tasks() {
+        let mut state = AppState::demo();
+        let workspace_id = first_non_main_workspace_id(&state);
+        let thread_id = default_thread_id();
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "Hello".to_owned(),
+            attachments: Vec::new(),
+            runner: None,
+            amp_mode: None,
+        });
+
+        state.apply(Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status: crate::TaskStatus::Done,
+        });
+
+        let effects = state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "Should be blocked".to_owned(),
+            attachments: Vec::new(),
+            runner: None,
+            amp_mode: None,
+        });
+        assert!(effects.is_empty());
+        assert_eq!(state.last_error.as_deref(), Some("Task is archived"));
     }
 
     #[test]

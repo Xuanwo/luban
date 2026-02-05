@@ -80,12 +80,19 @@ export function TaskActivityPanel() {
 
   const messages = useMemo(() => buildMessages(conversation, { agentTurns: "grouped" }), [conversation])
   const queuedPrompts = useMemo(() => conversation?.pending_prompts ?? [], [conversation?.pending_prompts])
+  const activeTaskStatus = useMemo(() => {
+    if (conversation?.task_status) return conversation.task_status
+    if (activeThreadId == null) return null
+    return threads.find((t) => t.task_id === activeThreadId)?.task_status ?? null
+  }, [activeThreadId, conversation?.task_status, threads])
+  const isArchivedTask = activeTaskStatus === "done" || activeTaskStatus === "canceled"
 
   const messageHistory = useMemo(() => {
     return messages.filter((m) => m.type === "user").map((m) => m.content)
   }, [messages])
 
   const isAgentRunning = conversation?.run_status === "running"
+  const canInteract = !isArchivedTask && activeWorkspaceId != null && activeThreadId != null
 
   const ESC_TIMEOUT_MS = 3000
   const { escHintVisible } = useAgentCancelHotkey({
@@ -209,7 +216,7 @@ export function TaskActivityPanel() {
   }
 
   const handleSend = () => {
-    if (activeWorkspaceId == null || activeThreadId == null) return
+    if (!canInteract) return
     const text = draftText.trim()
     if (text.length === 0) return
 
@@ -230,22 +237,30 @@ export function TaskActivityPanel() {
   }, [threads, activeThreadId])
 
   const canSend = useMemo(() => {
-    if (activeWorkspaceId == null || activeThreadId == null) return false
+    if (!canInteract) return false
     const hasUploading = attachments.some((a) => a.status === "uploading")
     if (hasUploading) return false
     const hasReady = attachments.some((a) => a.status === "ready" && a.attachment != null)
     return draftText.trim().length > 0 || hasReady
-  }, [activeWorkspaceId, activeThreadId, attachments, draftText])
+  }, [attachments, canInteract, draftText])
 
   const handleCancelQueuedPrompt = useCallback(
     (promptId: number) => {
-      if (activeWorkspaceId == null || activeThreadId == null) return
+      if (!canInteract) return
       removeQueuedPrompt(activeWorkspaceId, activeThreadId, promptId)
     },
-    [activeWorkspaceId, activeThreadId, removeQueuedPrompt],
+    [activeWorkspaceId, activeThreadId, canInteract, removeQueuedPrompt],
   )
 
-  const inputComponent = (
+  const inputComponent = isArchivedTask ? (
+    <div
+      className="text-[12px] px-3 py-2 rounded border"
+      style={{ borderColor: "#ebebeb", color: "#6b6b6b", backgroundColor: "#fcfcfc" }}
+      data-testid="archived-task-banner"
+    >
+      This task is archived. New messages are disabled.
+    </div>
+  ) : (
     <div className="relative">
       <EscCancelHint visible={escHintVisible} timeoutMs={ESC_TIMEOUT_MS} />
       {queuedPrompts.length > 0 && (
@@ -352,7 +367,7 @@ export function TaskActivityPanel() {
           onCommand={handleCommand}
           attachmentsEnabled
           agentSelectorEnabled
-          disabled={activeWorkspaceId == null || activeThreadId == null}
+          disabled={!canInteract}
           agentModelId={conversation?.agent_model_id}
           agentThinkingEffort={conversation?.thinking_effort}
           defaultModelId={app?.agent.default_model_id ?? null}

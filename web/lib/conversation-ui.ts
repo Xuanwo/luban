@@ -31,7 +31,13 @@ export type AgentTurnStatus = "running" | "done" | "canceled" | "error"
 export interface SystemEvent {
   id: string
   type: "event"
-  eventType: "task_created" | "task_started" | "task_completed" | "task_cancelled" | "status_changed"
+  eventType:
+    | "task_created"
+    | "task_archived"
+    | "task_started"
+    | "task_completed"
+    | "task_cancelled"
+    | "status_changed"
   title: string
   timestamp?: string
 }
@@ -55,7 +61,13 @@ export interface Message {
     duration?: string
   }
   codeReferences?: { file: string; line: number }[]
-  eventType?: "task_created" | "task_started" | "task_completed" | "task_cancelled" | "status_changed"
+  eventType?:
+    | "task_created"
+    | "task_archived"
+    | "task_started"
+    | "task_completed"
+    | "task_cancelled"
+    | "status_changed"
   terminalCommand?: {
     id: string
     command: string
@@ -473,11 +485,13 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
 
       const eventType = (() => {
         if (ev?.event_type === "task_created") return "task_created" as const
+        if (ev?.event_type === "task_archived") return "task_archived" as const
         if (ev?.event_type === "task_status_changed") return "status_changed" as const
         return "status_changed" as const
       })()
       const content = (() => {
         if (ev?.event_type === "task_created") return "created the task"
+        if (ev?.event_type === "task_archived") return "archived the task"
         if (ev?.event_type === "task_status_changed") {
           const from = taskStatusLabel(String(ev.from ?? ""))
           const to = taskStatusLabel(String(ev.to ?? ""))
@@ -790,11 +804,13 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
 
       const eventType = (() => {
         if (ev?.event_type === "task_created") return "task_created" as const
+        if (ev?.event_type === "task_archived") return "task_archived" as const
         if (ev?.event_type === "task_status_changed") return "status_changed" as const
         return "status_changed" as const
       })()
       const content = (() => {
         if (ev?.event_type === "task_created") return "created the task"
+        if (ev?.event_type === "task_archived") return "archived the task"
         if (ev?.event_type === "task_status_changed") {
           const from = taskStatusLabel(String(ev.from ?? ""))
           const to = taskStatusLabel(String(ev.to ?? ""))

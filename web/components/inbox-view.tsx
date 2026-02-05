@@ -429,6 +429,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
+      if (t.task_status === "done" || t.task_status === "canceled") return false
       return true
     })
 
@@ -659,6 +660,10 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
                     variant="pill"
                     size="sm"
                     triggerTestId="inbox-task-status-trigger"
+                    disabled={
+                      selectedNotification.taskLifecycleStatus === "done" ||
+                      selectedNotification.taskLifecycleStatus === "canceled"
+                    }
                   />
                 </div>
               }
