@@ -29,12 +29,13 @@ import { runNewTaskDrafts } from './scenarios/new-task-drafts.mjs';
 import { runNoRightSidebar } from './scenarios/no-right-sidebar.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runSidebarProjectAvatars } from './scenarios/sidebar-project-avatars.mjs';
+import { runTaskListProjectIcon } from './scenarios/task-list-project-icon.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
 import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
-import { runProjectArchiveMenu } from './scenarios/project-archive-menu.mjs';
+import { runProjectAllTasksView } from './scenarios/project-all-tasks-view.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -162,7 +163,8 @@ async function main() {
 	    await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 	
 	    await runSidebarProjectAvatars({ page, baseUrl });
-      await runProjectArchiveMenu({ page, baseUrl });
+      await runTaskListProjectIcon({ page, baseUrl });
+      await runProjectAllTasksView({ page, baseUrl });
 	    await runNewTaskModal({ page, baseUrl });
 	    await runNewTaskDrafts({ page, baseUrl });
 	    await runNewTaskProjectAvatars({ page, baseUrl });

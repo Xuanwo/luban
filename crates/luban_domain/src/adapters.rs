@@ -169,6 +169,7 @@ pub struct TaskStatusAutoUpdateSuggestion {
     pub task_status: TaskStatus,
     pub validation_pr_number: Option<u64>,
     pub validation_pr_url: Option<String>,
+    pub explanation_markdown: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -388,7 +389,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
-    fn mark_conversation_tasks_done_for_merged_pr(
+    fn list_conversation_tasks_for_merged_pr(
         &self,
         _project_slug: String,
         _workspace_name: String,
@@ -607,6 +608,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
             task_status,
             validation_pr_number: None,
             validation_pr_url: None,
+            explanation_markdown: None,
         })
     }
 

@@ -12,7 +12,6 @@ import {
   Star,
   Settings,
   SquarePen,
-  MoreHorizontal,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
@@ -112,7 +111,6 @@ interface ProjectItemProps {
   active?: boolean
   testId?: string
   onClick?: () => void
-  onOpenArchive?: () => void
 }
 
 function ProjectItem({
@@ -122,10 +120,8 @@ function ProjectItem({
   active,
   testId,
   onClick,
-  onOpenArchive,
 }: ProjectItemProps) {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     setAvatarLoadFailed(false)
@@ -137,10 +133,6 @@ function ProjectItem({
         "group w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors",
         active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]",
       )}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        setMenuOpen(true)
-      }}
     >
       <button
         type="button"
@@ -171,40 +163,6 @@ function ProjectItem({
           {name}
         </span>
       </button>
-
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="p-1 rounded hover:bg-[#e8e8e8] transition-colors opacity-60 hover:opacity-100"
-            style={{ color: "#9b9b9b" }}
-            title="Project menu"
-            data-testid={testId ? `${testId}-menu` : undefined}
-            onClick={(e) => {
-              e.stopPropagation()
-            }}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-            }}
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          sideOffset={6}
-          className="w-[200px] rounded-lg border-[#e5e5e5] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5"
-        >
-          <DropdownMenuItem
-            onClick={() => onOpenArchive?.()}
-            className="flex items-center gap-2.5 px-2.5 py-2 text-[13px] rounded-md cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5]"
-            style={{ color: "#1b1b1b" }}
-            data-testid={testId ? `${testId}-open-archive` : undefined}
-          >
-            Open Archive
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }
@@ -395,10 +353,6 @@ export function LubanSidebar({
                   onClick={() => {
                     onProjectSelected?.(p.id)
                     onViewChange?.("tasks")
-                  }}
-                  onOpenArchive={() => {
-                    onProjectSelected?.(p.id)
-                    onViewChange?.("archive")
                   }}
                 />
               </div>

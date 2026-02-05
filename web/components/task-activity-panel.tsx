@@ -5,7 +5,6 @@ import type React from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Clock, MessageSquare, Terminal, X } from "lucide-react"
 import { useLuban } from "@/lib/luban-context"
-import { cn } from "@/lib/utils"
 import { buildMessages, type Message } from "@/lib/conversation-ui"
 import { TaskActivityView } from "@/components/task-activity-view"
 import { fetchCodexCustomPrompts, uploadAttachment } from "@/lib/luban-http"
@@ -16,7 +15,6 @@ import type {
 import { attachmentHref } from "@/lib/attachment-href"
 import {
   draftKey,
-  followTailKey,
   loadJson,
   saveJson,
 } from "@/lib/ui-prefs"
@@ -26,6 +24,7 @@ import { focusChatInput } from "@/lib/focus-chat-input"
 import { useAgentCancelHotkey } from "@/lib/use-agent-cancel-hotkey"
 import { EscCancelHint } from "@/components/esc-cancel-hint"
 import { ChatComposer } from "@/components/chat-composer"
+import { PtyTerminal } from "@/components/pty-terminal"
 
 type ComposerAttachment = EditorComposerAttachment
 
@@ -45,7 +44,6 @@ export function TaskActivityPanel() {
     conversation,
     sendAgentMessage,
     queueAgentMessage,
-    runTerminalCommand,
     cancelAgentTurn,
     removeQueuedPrompt,
     setChatModel,
@@ -55,8 +53,7 @@ export function TaskActivityPanel() {
   } = useLuban()
 
   const [draftText, setDraftText] = useState("")
-  const [composerMode, setComposerMode] = useState<"chat" | "terminal">("chat")
-  const [followTail, setFollowTail] = useState(true)
+  const [composerMode, setComposerMode] = useState<"chat" | "shell">("chat")
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const attachmentScopeRef = useRef<string>("")
   const attachmentScope = `${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`
@@ -114,7 +111,6 @@ export function TaskActivityPanel() {
     const saved = loadJson<PersistedChatDraft>(draftKey(activeWorkspaceId, activeThreadId))
     setDraftText(saved?.text ?? "")
     setAttachments(attachmentsFromRefs(activeWorkspaceId, saved?.attachments ?? []))
-    setFollowTail(localStorage.getItem(followTailKey(activeWorkspaceId, activeThreadId)) !== "false")
   }, [attachmentScope, activeWorkspaceId, activeThreadId, attachmentsFromRefs])
 
   useEffect(() => {
@@ -217,13 +213,6 @@ export function TaskActivityPanel() {
     const text = draftText.trim()
     if (text.length === 0) return
 
-    if (composerMode === "terminal") {
-      runTerminalCommand(text)
-      setDraftText("")
-      setAttachments([])
-      return
-    }
-
     const readyAttachments = attachments.filter((a) => a.status === "ready" && a.attachment)
     const refs = readyAttachments.map((a) => a.attachment as AttachmentRef)
     if (text.length === 0 && refs.length === 0) return
@@ -242,12 +231,11 @@ export function TaskActivityPanel() {
 
   const canSend = useMemo(() => {
     if (activeWorkspaceId == null || activeThreadId == null) return false
-    if (composerMode === "terminal") return draftText.trim().length > 0
     const hasUploading = attachments.some((a) => a.status === "uploading")
     if (hasUploading) return false
     const hasReady = attachments.some((a) => a.status === "ready" && a.attachment != null)
     return draftText.trim().length > 0 || hasReady
-  }, [activeWorkspaceId, activeThreadId, attachments, composerMode, draftText])
+  }, [activeWorkspaceId, activeThreadId, attachments, draftText])
 
   const handleCancelQueuedPrompt = useCallback(
     (promptId: number) => {
@@ -331,90 +319,140 @@ export function TaskActivityPanel() {
           ))}
         </div>
       )}
-      <ChatComposer
-        value={draftText}
-        onChange={setDraftText}
-        attachments={attachments}
-        onRemoveAttachment={removeAttachment}
-        onFileSelect={composerMode === "terminal" ? () => {} : handleFileSelect}
-        onPaste={composerMode === "terminal" ? () => {} : handlePaste}
-        onAddAttachmentRef={(attachment) => {
-          if (composerMode === "terminal") return
-          const isImage = attachment.kind === "image"
-          const previewUrl =
-            isImage && activeWorkspaceId != null
-              ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined
-              : undefined
-          setAttachments((prev) => [
-            ...prev,
-            {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              type: isImage ? "image" : "file",
-              name: attachment.name,
-              size: attachment.byte_len,
-              previewUrl,
-              status: "ready",
-              attachment,
+      {composerMode === "chat" ? (
+        <ChatComposer
+          value={draftText}
+          onChange={setDraftText}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
+          onFileSelect={handleFileSelect}
+          onPaste={handlePaste}
+          onAddAttachmentRef={(attachment) => {
+            const isImage = attachment.kind === "image"
+            const previewUrl =
+              isImage && activeWorkspaceId != null
+                ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined
+                : undefined
+            setAttachments((prev) => [
+              ...prev,
+              {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                type: isImage ? "image" : "file",
+                name: attachment.name,
+                size: attachment.byte_len,
+                previewUrl,
+                status: "ready",
+                attachment,
+              },
+            ])
+          }}
+          workspaceId={activeWorkspaceId}
+          commands={codexCustomPrompts}
+          messageHistory={messageHistory}
+          onCommand={handleCommand}
+          attachmentsEnabled
+          agentSelectorEnabled
+          disabled={activeWorkspaceId == null || activeThreadId == null}
+          agentModelId={conversation?.agent_model_id}
+          agentThinkingEffort={conversation?.thinking_effort}
+          defaultModelId={app?.agent.default_model_id ?? null}
+          defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
+          defaultAmpMode={app?.agent.amp_mode ?? null}
+          defaultRunner={app?.agent.default_runner ?? null}
+          runner={conversation?.agent_runner ?? null}
+          ampMode={conversation?.amp_mode ?? null}
+          onChangeRunner={(runner) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setChatRunner(activeWorkspaceId, activeThreadId, runner)
+          }}
+          onChangeAmpMode={(mode) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            if (mode == null) return
+            setChatAmpMode(activeWorkspaceId, activeThreadId, mode)
+          }}
+          onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
+          onChangeModelId={(modelId) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setChatModel(activeWorkspaceId, activeThreadId, modelId)
+          }}
+          onChangeThinkingEffort={(effort) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setThinkingEffort(activeWorkspaceId, activeThreadId, effort)
+          }}
+          secondaryAction={{
+            onClick: () => {
+              setComposerMode("shell")
+              setDraftText("")
+              setAttachments([])
             },
-          ])
-        }}
-        workspaceId={activeWorkspaceId}
-        commands={codexCustomPrompts}
-        messageHistory={messageHistory}
-        onCommand={handleCommand}
-        placeholder={composerMode === "terminal" ? "Run a command..." : undefined}
-        attachmentsEnabled={composerMode === "chat"}
-        agentSelectorEnabled={composerMode === "chat"}
-        disabled={activeWorkspaceId == null || activeThreadId == null}
-        agentModelId={conversation?.agent_model_id}
-        agentThinkingEffort={conversation?.thinking_effort}
-        defaultModelId={app?.agent.default_model_id ?? null}
-        defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
-        defaultAmpMode={app?.agent.amp_mode ?? null}
-        defaultRunner={app?.agent.default_runner ?? null}
-        runner={conversation?.agent_runner ?? null}
-        ampMode={conversation?.amp_mode ?? null}
-        onChangeRunner={(runner) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setChatRunner(activeWorkspaceId, activeThreadId, runner)
-        }}
-        onChangeAmpMode={(mode) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          if (mode == null) return
-          setChatAmpMode(activeWorkspaceId, activeThreadId, mode)
-        }}
-        onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
-        onChangeModelId={(modelId) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setChatModel(activeWorkspaceId, activeThreadId, modelId)
-        }}
-        onChangeThinkingEffort={(effort) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setThinkingEffort(activeWorkspaceId, activeThreadId, effort)
-        }}
-        secondaryAction={{
-          onClick: () => {
-            setComposerMode((prev) => {
-              const next = prev === "chat" ? "terminal" : "chat"
-              if (next === "terminal") setAttachments([])
-              return next
-            })
-          },
-          ariaLabel: composerMode === "terminal" ? "Switch to chat mode" : "Switch to terminal mode",
-          icon:
-            composerMode === "terminal" ? (
+            ariaLabel: "Switch to shell",
+            icon: <Terminal className="w-3.5 h-3.5" />,
+            testId: "chat-mode-toggle",
+          }}
+          onSend={handleSend}
+          canSend={canSend}
+          codexEnabled={app?.agent.codex_enabled ?? true}
+          ampEnabled={app?.agent.amp_enabled ?? true}
+          compact
+        />
+      ) : (
+        <div
+          className="group/activity"
+          data-testid="shell-composer"
+          style={{
+            border: "1px solid #e8e8e8",
+            borderRadius: "8px",
+            backgroundColor: "#ffffff",
+            boxShadow: "rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px",
+            padding: "12px 16px",
+            marginLeft: "-6px",
+            marginRight: "-6px",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="flex items-center justify-center flex-shrink-0"
+              style={{ width: "20px", height: "20px" }}
+            >
+              <div
+                className="flex items-center justify-center"
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  borderRadius: "50%",
+                  backgroundColor: "#5e6ad2",
+                  color: "#ffffff",
+                }}
+              >
+                <Terminal className="w-3 h-3" />
+              </div>
+            </div>
+            <span style={{ fontSize: "13px", fontWeight: 500, color: "#1b1b1b" }}>Shell</span>
+            <button
+              type="button"
+              onClick={() => setComposerMode("chat")}
+              className="ml-auto inline-flex items-center justify-center h-7 w-7 rounded border border-border bg-background hover:bg-black/[0.03]"
+              aria-label="Switch to chat mode"
+              data-testid="chat-mode-toggle"
+            >
               <MessageSquare className="w-3.5 h-3.5" />
-            ) : (
-              <Terminal className="w-3.5 h-3.5" />
-            ),
-          testId: "chat-mode-toggle",
-        }}
-        onSend={handleSend}
-        canSend={canSend}
-        codexEnabled={app?.agent.codex_enabled ?? true}
-        ampEnabled={app?.agent.amp_enabled ?? true}
-        compact
-      />
+            </button>
+          </div>
+
+          <div
+            data-testid="shell-terminal-container"
+            style={{
+              height: "260px",
+              border: "1px solid #e8e8e8",
+              borderRadius: "8px",
+              overflow: "hidden",
+              backgroundColor: "#fcfcfc",
+            }}
+          >
+            <PtyTerminal autoFocus />
+          </div>
+        </div>
+      )}
     </div>
   )
 

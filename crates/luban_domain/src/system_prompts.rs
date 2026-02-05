@@ -30,7 +30,7 @@ impl SystemTaskKind {
             SystemTaskKind::InferType => "Infer Type",
             SystemTaskKind::RenameBranch => "Rename Branch",
             SystemTaskKind::AutoTitleThread => "Auto Title Thread",
-            SystemTaskKind::AutoUpdateTaskStatus => "Auto Update Task Status",
+            SystemTaskKind::AutoUpdateTaskStatus => "Suggest Task Status",
         }
     }
 }
@@ -127,11 +127,11 @@ Rules:
 - Do NOT run commands.
 - Do NOT modify files.
 - Output ONLY a single JSON object, no markdown, no extra text.
-- Do NOT include rationale, notes, or any extra fields in the output.
 - Always output a result, even if the input is vague: keep the current status.
 - Prefer conservative updates: do not mark as "done" unless the task is clearly finished.
 - If the conversation indicates the work has been submitted as a pull request, you should generally use task_status="validating".
 - When you output task_status="validating", you must try to extract the pull request number (and URL if present) from the conversation context, so the system can auto-complete the task when that PR is merged later.
+- Include a short user-facing explanation in explanation_markdown. Do NOT reveal hidden chain-of-thought; keep it to observable signals.
 
 Allowed task_status values:
 - backlog
@@ -151,7 +151,8 @@ Output JSON schema:
 {
   "task_status": "<one of the allowed values>",
   "validation_pr_number": "<integer or null>",
-  "validation_pr_url": "<string; empty if validation_pr_number is null>"
+  "validation_pr_url": "<string; empty if validation_pr_number is null>",
+  "explanation_markdown": "<string; may be empty>"
 }
 
 Validation PR rules:
@@ -159,6 +160,11 @@ Validation PR rules:
 - Only set validation_pr_number if task_status="validating" and the conversation clearly references the PR number.
 - If you cannot identify a PR number, set validation_pr_number to null and validation_pr_url to an empty string.
 - If you set validation_pr_number, set validation_pr_url if and only if a URL is present in the conversation.
+
+explanation_markdown rules:
+- Keep it concise (prefer 2-6 bullets).
+- Mention only concrete evidence (e.g., "opened PR #123", "tests failing", "waiting on review").
+- If you keep the current status, still explain why.
 "#
             .to_owned()
         }

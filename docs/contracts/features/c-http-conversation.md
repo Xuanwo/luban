@@ -47,7 +47,19 @@ The event payload is structured:
 - `type`: `system_event`
 - `entry_id`: stable string identifier (unique within the conversation)
 - `created_at_unix_ms`: millisecond timestamp
-- `event.event_type`: `task_created` | `task_status_changed`
+- `event.event_type`: `task_created` | `task_status_changed` | `task_status_suggestion`
+
+For `event.event_type=task_status_suggestion`:
+
+- `event.from`: `TaskStatus`
+- `event.to`: `TaskStatus`
+- `event.title`: string (may be empty)
+- `event.explanation_markdown`: string (may be empty; markdown is allowed)
+
+Semantics:
+
+- The provider emits this when it has analyzed the conversation progress and recommends updating the explicit `snapshot.task_status`.
+- The provider does not apply the change automatically; the client may apply it via `ClientAction::TaskStatusSet`.
 
 ### User events
 

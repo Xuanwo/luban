@@ -67,6 +67,7 @@ These enums are part of the wire surface. Adding/removing variants must update t
   - `infer-type`
   - `rename-branch`
   - `auto-title-thread`
+  - `auto-update-task-status`
 
 ## Web usage
 

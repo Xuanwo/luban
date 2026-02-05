@@ -239,6 +239,13 @@ export type ConversationSnapshot = {
 export type ConversationSystemEvent =
   | { event_type: "task_created" }
   | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
+  | {
+      event_type: "task_status_suggestion"
+      from: TaskStatus
+      to: TaskStatus
+      title: string
+      explanation_markdown: string
+    }
 
 export type ConversationSystemEventEntry = {
   entry_id: string

@@ -935,14 +935,14 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
-    fn mark_conversation_tasks_done_for_merged_pr(
+    fn list_conversation_tasks_for_merged_pr(
         &self,
         project_slug: String,
         workspace_name: String,
         pr_number: u64,
     ) -> Result<Vec<u64>, String> {
         self.sqlite
-            .mark_conversation_tasks_done_for_merged_pr(project_slug, workspace_name, pr_number)
+            .list_conversation_tasks_for_merged_pr(project_slug, workspace_name, pr_number)
             .map_err(anyhow_error_to_string)
     }
 

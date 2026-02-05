@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { MoreHorizontal, Star } from "lucide-react"
 import { OpenButton } from "./open-button"
 
@@ -8,6 +9,8 @@ export interface ProjectInfo {
   name: string
   /** Tailwind background color class (e.g., "bg-violet-500") */
   color: string
+  /** Optional project avatar URL (e.g., git provider avatar). */
+  avatarUrl?: string
 }
 
 interface TaskHeaderProps {
@@ -32,12 +35,34 @@ interface TaskHeaderProps {
 }
 
 /**
- * Project icon component - displays a colored square with the first letter
+ * Project icon component - displays an avatar image when available, otherwise a colored square with the first letter.
  * Exported for use in other components (e.g., TaskListView header)
  */
-export function ProjectIcon({ name, color }: ProjectInfo) {
+export function ProjectIcon({ name, color, avatarUrl, testId }: ProjectInfo & { testId?: string }) {
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false)
+
+  useEffect(() => {
+    setAvatarLoadFailed(false)
+  }, [avatarUrl])
+
+  if (avatarUrl && !avatarLoadFailed) {
+    return (
+      <img
+        data-testid={testId}
+        src={avatarUrl}
+        alt=""
+        aria-hidden="true"
+        width={14}
+        height={14}
+        className="w-[14px] h-[14px] rounded-[3px] overflow-hidden flex-shrink-0"
+        onError={() => setAvatarLoadFailed(true)}
+      />
+    )
+  }
+
   return (
     <span
+      data-testid={testId}
       className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center text-[9px] font-semibold text-white flex-shrink-0 ${color}`}
     >
       {name.charAt(0).toUpperCase()}
@@ -72,7 +97,7 @@ export function TaskHeader({
                 onClick={onProjectClick}
                 className="flex items-center gap-1 hover:opacity-70 transition-opacity flex-shrink-0"
               >
-                <ProjectIcon name={project.name} color={project.color} />
+                <ProjectIcon name={project.name} color={project.color} avatarUrl={project.avatarUrl} />
                 <span className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
                   {project.name}
                 </span>

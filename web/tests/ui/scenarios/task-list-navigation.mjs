@@ -73,6 +73,9 @@ export async function runTaskListNavigation({ page }) {
   await page.getByTestId('sidebar-project-mock-project-1').click();
   await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 
+  await page.getByTestId('task-view-tab-all').click();
+  await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
+
   const row = page.getByText(title).first();
   await row.waitFor({ state: 'attached' });
   await row.scrollIntoViewIfNeeded();

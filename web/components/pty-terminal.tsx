@@ -357,7 +357,7 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
   return Number.isFinite(cols) && Number.isFinite(rows) && cols >= 2 && rows >= 2
 }
 
-export function PtyTerminal() {
+export function PtyTerminal({ autoFocus = false }: { autoFocus?: boolean } = {}) {
   const { activeWorkdirId: activeWorkspaceId, activeWorkdir: activeWorkspace } = useLuban()
   const ptyThreadId = 1
   const reconnectToken = activeWorkspaceId != null ? getOrCreateReconnectToken(activeWorkspaceId, ptyThreadId) : null
@@ -369,6 +369,7 @@ export function PtyTerminal() {
       workspaceId={activeWorkspaceId}
       threadId={ptyThreadId}
       reconnectToken={reconnectToken}
+      autoFocus={autoFocus}
       mockWorkspaceLabel={mockWorkspaceLabel}
       mockCwd={mockCwd}
     />
@@ -380,6 +381,7 @@ export function PtyTerminalSession({
   threadId,
   reconnectToken,
   readOnly = false,
+  autoFocus = false,
   initialBase64,
   mockWorkspaceLabel,
   mockCwd,
@@ -391,6 +393,7 @@ export function PtyTerminalSession({
   threadId: number
   reconnectToken?: string | null
   readOnly?: boolean
+  autoFocus?: boolean
   initialBase64?: string | null
   mockWorkspaceLabel?: string | null
   mockCwd?: string | null
@@ -777,6 +780,13 @@ export function PtyTerminalSession({
       }
     }
 
+    if (autoFocus && !readOnly) {
+      window.requestAnimationFrame(() => {
+        if (disposed) return
+        focusCapture?.()
+      })
+    }
+
     keydownCapture = (ev: KeyboardEvent) => {
       if (ev.key === "Backspace" && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
         ev.preventDefault()
@@ -967,7 +977,7 @@ export function PtyTerminalSession({
       webglAddon?.dispose()
       term.dispose()
     }
-	  }, [workspaceId, threadId, reconnectToken, readOnly, initialBase64, mockWorkspaceLabel, mockCwd])
+	  }, [workspaceId, threadId, reconnectToken, readOnly, autoFocus, initialBase64, mockWorkspaceLabel, mockCwd])
 
 	  return (
 	    <div

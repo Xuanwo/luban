@@ -602,7 +602,11 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
             <TaskHeader
               title={selectedNotification.taskTitle}
               workdir={selectedNotification.workdir}
-              project={{ name: selectedNotification.projectName, color: selectedNotification.projectColor }}
+              project={{
+                name: selectedNotification.projectName,
+                color: selectedNotification.projectColor,
+                avatarUrl: selectedNotification.projectAvatarUrl,
+              }}
               actionBar={
                 <div className="flex items-center gap-2 min-w-0">
                   <TaskStatusSelector
