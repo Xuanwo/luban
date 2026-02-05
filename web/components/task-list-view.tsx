@@ -15,6 +15,7 @@ import { useLuban } from "@/lib/luban-context"
 import { agentRunnerLabel } from "@/lib/conversation-ui"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
+import { buildSidebarProjects } from "@/lib/sidebar-view-model"
 import { fetchTasks } from "@/lib/luban-http"
 import type {
   AgentRunnerKind,
@@ -430,8 +431,17 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
 
   const headerProject: ProjectInfo = useMemo(() => {
     if (!app) return { name: "Projects", color: "bg-violet-500" }
-    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
     if (activeProjectId) {
+      const sidebarVm = buildSidebarProjects(app).find((p) => p.id === activeProjectId) ?? null
+      if (sidebarVm) {
+        return {
+          name: sidebarVm.displayName,
+          color: projectColorClass(sidebarVm.id),
+          avatarUrl: sidebarVm.avatarUrl,
+        }
+      }
+
+      const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
       const p = app.projects.find((p) => p.id === activeProjectId)
       if (p) return { name: displayNames.get(p.path) ?? p.slug, color: projectColorClass(p.id) }
     }
@@ -451,10 +461,15 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
       <div
         className="flex items-center h-[39px] flex-shrink-0"
         style={{ padding: '0 24px 0 20px', borderBottom: '1px solid #ebebeb' }}
-      >
+        >
         {/* Project Indicator */}
         <div className="flex items-center gap-1">
-          <ProjectIcon name={headerProject.name} color={headerProject.color} />
+          <ProjectIcon
+            testId="task-list-project-icon"
+            name={headerProject.name}
+            color={headerProject.color}
+            avatarUrl={headerProject.avatarUrl}
+          />
           <span className="text-[13px] font-medium" style={{ color: '#1b1b1b' }}>
             {headerProject.name}
           </span>

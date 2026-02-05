@@ -28,6 +28,7 @@ import { runNewTaskDrafts } from './scenarios/new-task-drafts.mjs';
 import { runNoRightSidebar } from './scenarios/no-right-sidebar.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runSidebarProjectAvatars } from './scenarios/sidebar-project-avatars.mjs';
+import { runTaskListProjectIcon } from './scenarios/task-list-project-icon.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
 import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
@@ -161,6 +162,7 @@ async function main() {
 	    await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 	
 	    await runSidebarProjectAvatars({ page, baseUrl });
+      await runTaskListProjectIcon({ page, baseUrl });
       await runProjectArchiveMenu({ page, baseUrl });
 	    await runNewTaskModal({ page, baseUrl });
 	    await runNewTaskDrafts({ page, baseUrl });

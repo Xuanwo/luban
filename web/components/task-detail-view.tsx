@@ -6,6 +6,7 @@ import { TaskHeader } from "./shared/task-header"
 import { useLuban } from "@/lib/luban-context"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
 import { projectColorClass } from "@/lib/project-colors"
+import { buildSidebarProjects } from "@/lib/sidebar-view-model"
 import { fetchTasks } from "@/lib/luban-http"
 
 interface TaskDetailViewProps {
@@ -47,6 +48,18 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
     return "bg-violet-500"
   })()
 
+  const resolvedProjectAvatarUrl = (() => {
+    if (!app || activeWorkspaceId == null) return undefined
+    const projectId = (() => {
+      for (const p of app.projects) {
+        if (p.workdirs.some((w) => w.id === activeWorkspaceId)) return p.id
+      }
+      return null
+    })()
+    if (!projectId) return undefined
+    return buildSidebarProjects(app).find((p) => p.id === projectId)?.avatarUrl
+  })()
+
   useEffect(() => {
     if (!app || activeWorkspaceId == null || activeThreadId == null) {
       setIsStarred(false)
@@ -83,7 +96,7 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
       <TaskHeader
         title={resolvedTitle}
         workdir={resolvedWorkdir}
-        project={{ name: resolvedProjectName, color: resolvedProjectColor }}
+        project={{ name: resolvedProjectName, color: resolvedProjectColor, avatarUrl: resolvedProjectAvatarUrl }}
         onProjectClick={onBack}
         showFullActions
         isStarred={isStarred}
