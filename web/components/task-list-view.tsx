@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import { ProjectIcon, type ProjectInfo } from "./shared/task-header"
 import { TaskStatusSelector } from "./shared/task-status-selector"
+import { TaskStatusCommandMenu, type AnchorRect } from "./shared/task-status-command-menu"
 import { useLuban } from "@/lib/luban-context"
 import { agentRunnerLabel } from "@/lib/conversation-ui"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
@@ -31,6 +32,7 @@ import type {
   WorkspaceThreadId,
 } from "@/lib/luban-api"
 import { UnifiedProviderLogo } from "@/components/shared/unified-provider-logo"
+import { ShortcutTooltip } from "@/components/shared/shortcut-tooltip"
 
 const AMP_MARK_URL = "https://ampcode.com/press-kit/mark-color.svg"
 
@@ -58,6 +60,8 @@ interface TaskRowProps {
   task: TaskRowModel
   selected?: boolean
   onClick?: () => void
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
   onStatusChange?: (status: TaskStatus) => void
 }
 
@@ -65,12 +69,17 @@ function TaskRow({
   task,
   selected,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
   onStatusChange,
   agentRunner,
 }: TaskRowProps & { agentRunner: AgentRunnerKind | null | undefined }) {
   return (
     <div
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      data-task-row-id={task.id}
       className={cn(
         "group flex items-center gap-3 px-4 h-[44px] cursor-pointer transition-colors",
         selected ? "bg-[#f0f0f0]" : "hover:bg-[#f7f7f7]"
@@ -251,12 +260,31 @@ interface TaskListViewProps {
   mode?: "all" | "active" | "backlog"
   onModeChange?: (mode: "all" | "active" | "backlog") => void
   onTaskClick?: (task: Task) => void
+  statusPickerRequestSeq?: number
 }
 
-export function TaskListView({ activeProjectId, mode = "active", onModeChange, onTaskClick }: TaskListViewProps) {
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName.toLowerCase()
+  if (tag === "input" || tag === "textarea" || tag === "select") return true
+  return target.isContentEditable
+}
+
+export function TaskListView({
+  activeProjectId,
+  mode = "active",
+  onModeChange,
+  onTaskClick,
+  statusPickerRequestSeq = 0,
+}: TaskListViewProps) {
   const { app, wsConnected, setTaskStatus, subscribeServerEvents } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false)
+  const [statusMenuAnchorRect, setStatusMenuAnchorRect] = useState<AnchorRect | null>(null)
+  const [statusMenuTaskRowId, setStatusMenuTaskRowId] = useState<string | null>(null)
+  const prevStatusPickerSeqRef = useRef<number>(statusPickerRequestSeq)
   const agentRunner = app?.agent.default_runner ?? null
   const refreshInFlightRef = useRef(false)
   const prevWsConnectedRef = useRef(false)
@@ -448,8 +476,85 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
   const doneTasks = tasks.filter((t) => t.status === "done")
   const canceledTasks = tasks.filter((t) => t.status === "canceled")
 
+  const tasksByRowId = useMemo(() => {
+    const out = new Map<string, TaskRowModel>()
+    for (const t of tasks) out.set(t.id, t)
+    return out
+  }, [tasks])
+
+  const orderedTasks = useMemo(() => {
+    if (mode === "backlog") return [...backlogTasks]
+    if (mode === "active") return [...iteratingTasks, ...validatingTasks, ...todoTasks]
+    return [...iteratingTasks, ...validatingTasks, ...todoTasks, ...backlogTasks, ...doneTasks, ...canceledTasks]
+  }, [backlogTasks, canceledTasks, doneTasks, iteratingTasks, mode, todoTasks, validatingTasks])
+
+  const activeTaskRowIdForStatus = hoveredTaskId ?? selectedTask
+
+  const openStatusMenuForTaskRowId = useCallback(
+    (taskRowId: string) => {
+      const t = tasksByRowId.get(taskRowId)
+      if (!t) return
+
+      const trigger = document.querySelector(
+        `[data-testid="task-status-selector-${t.workspaceId}-${t.taskId}"]`,
+      ) as HTMLElement | null
+      const rowEl = document.querySelector(`[data-task-row-id="${taskRowId}"]`) as HTMLElement | null
+      const rect = trigger?.getBoundingClientRect() ?? rowEl?.getBoundingClientRect() ?? null
+      if (!rect) return
+
+      setStatusMenuTaskRowId(taskRowId)
+      setStatusMenuAnchorRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
+      setStatusMenuOpen(true)
+    },
+    [tasksByRowId],
+  )
+
+  useEffect(() => {
+    if (prevStatusPickerSeqRef.current === statusPickerRequestSeq) return
+    prevStatusPickerSeqRef.current = statusPickerRequestSeq
+    if (!activeTaskRowIdForStatus) return
+    openStatusMenuForTaskRowId(activeTaskRowIdForStatus)
+  }, [activeTaskRowIdForStatus, openStatusMenuForTaskRowId, statusPickerRequestSeq])
+
+  const statusMenuTask = statusMenuTaskRowId ? tasksByRowId.get(statusMenuTaskRowId) ?? null : null
+
+  useEffect(() => {
+    if (statusMenuOpen && !statusMenuTask) {
+      setStatusMenuOpen(false)
+      setStatusMenuTaskRowId(null)
+      setStatusMenuAnchorRect(null)
+    }
+  }, [statusMenuOpen, statusMenuTask])
+
   return (
-    <div className="h-full flex flex-col" data-testid="task-list-view">
+    <div
+      className="h-full flex flex-col outline-none"
+      data-testid="task-list-view"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (statusMenuOpen) return
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        if (isEditableTarget(e.target)) return
+
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+        if (orderedTasks.length === 0) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const currentIndex = selectedTask ? orderedTasks.findIndex((t) => t.id === selectedTask) : -1
+        const delta = e.key === "ArrowDown" ? 1 : -1
+        const nextIndex = Math.min(Math.max(0, currentIndex + delta), orderedTasks.length - 1)
+        const next = orderedTasks[nextIndex]
+        if (!next) return
+
+        setSelectedTask(next.id)
+        window.requestAnimationFrame(() => {
+          const el = document.querySelector(`[data-task-row-id="${next.id}"]`) as HTMLElement | null
+          el?.scrollIntoView({ block: "nearest" })
+        })
+      }}
+    >
       {/* Header */}
       <div
         className="flex items-center h-[39px] flex-shrink-0"
@@ -470,42 +575,48 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
 
         {/* View Tabs */}
         <div className="flex items-center gap-0.5 ml-3">
-          <button
-            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
-            style={{
-              backgroundColor: mode === "all" ? "#eeeeee" : "transparent",
-              color: mode === "all" ? "#1b1b1b" : "#6b6b6b",
-            }}
-            data-testid="task-view-tab-all"
-            onClick={() => onModeChange?.("all")}
-          >
-            <ListChecks className="w-3.5 h-3.5" />
-            All tasks
-          </button>
-          <button
-            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
-            style={{
-              backgroundColor: mode === "active" ? "#eeeeee" : "transparent",
-              color: mode === "active" ? "#1b1b1b" : "#6b6b6b",
-            }}
-            data-testid="task-view-tab-active"
-            onClick={() => onModeChange?.("active")}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            Active
-          </button>
-          <button
-            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
-            style={{
-              backgroundColor: mode === "backlog" ? "#eeeeee" : "transparent",
-              color: mode === "backlog" ? "#1b1b1b" : "#6b6b6b",
-            }}
-            data-testid="task-view-tab-backlog"
-            onClick={() => onModeChange?.("backlog")}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            Backlog
-          </button>
+          <ShortcutTooltip label="Go to all tasks" keys={["G", "E"]} side="bottom" align="start">
+            <button
+              className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
+              style={{
+                backgroundColor: mode === "all" ? "#eeeeee" : "transparent",
+                color: mode === "all" ? "#1b1b1b" : "#6b6b6b",
+              }}
+              data-testid="task-view-tab-all"
+              onClick={() => onModeChange?.("all")}
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+              All tasks
+            </button>
+          </ShortcutTooltip>
+          <ShortcutTooltip label="Go to active" keys={["G", "A"]} side="bottom" align="start">
+            <button
+              className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
+              style={{
+                backgroundColor: mode === "active" ? "#eeeeee" : "transparent",
+                color: mode === "active" ? "#1b1b1b" : "#6b6b6b",
+              }}
+              data-testid="task-view-tab-active"
+              onClick={() => onModeChange?.("active")}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              Active
+            </button>
+          </ShortcutTooltip>
+          <ShortcutTooltip label="Go to backlog" keys={["G", "B"]} side="bottom" align="start">
+            <button
+              className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
+              style={{
+                backgroundColor: mode === "backlog" ? "#eeeeee" : "transparent",
+                color: mode === "backlog" ? "#1b1b1b" : "#6b6b6b",
+              }}
+              data-testid="task-view-tab-backlog"
+              onClick={() => onModeChange?.("backlog")}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Backlog
+            </button>
+          </ShortcutTooltip>
         </div>
       </div>
 
@@ -524,6 +635,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -544,6 +657,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -562,6 +677,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -580,6 +697,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -601,6 +720,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -619,6 +740,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -637,6 +760,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -655,6 +780,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -673,6 +800,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -691,6 +820,8 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                     setSelectedTask(task.id)
                     onTaskClick?.(task)
                   }}
+                  onMouseEnter={() => setHoveredTaskId(task.id)}
+                  onMouseLeave={() => setHoveredTaskId((prev) => (prev === task.id ? null : prev))}
                   onStatusChange={(newStatus) =>
                     handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
                   }
@@ -700,6 +831,21 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
           </>
         )}
       </div>
+      {statusMenuTask ? (
+        <TaskStatusCommandMenu
+          open={statusMenuOpen}
+          anchorRect={statusMenuAnchorRect}
+          status={statusMenuTask.status}
+          onSelect={(next) =>
+            handleStatusChange({ workspaceId: statusMenuTask.workspaceId, taskId: statusMenuTask.taskId, status: next })
+          }
+          onClose={() => {
+            setStatusMenuOpen(false)
+            setStatusMenuTaskRowId(null)
+            setStatusMenuAnchorRect(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

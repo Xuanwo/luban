@@ -15,6 +15,8 @@ import type { ChangedFileSnapshot } from "@/lib/luban-api"
 
 export type DiffStyle = "split" | "unified"
 
+type ChangedFile = ChangedFileSnapshot
+
 export interface DiffFileData {
   file: ChangedFileSnapshot
   oldFile: FileContents

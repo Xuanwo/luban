@@ -19,6 +19,7 @@ import { buildSidebarProjects } from "@/lib/sidebar-view-model"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchTasks } from "@/lib/luban-http"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
+import { ShortcutTooltip } from "@/components/shared/shortcut-tooltip"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -285,15 +286,17 @@ export function LubanSidebar({
           >
             <Search className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => onNewTask?.()}
-            className="p-1.5 rounded-lg transition-colors hover:bg-[#e8e8e8]"
-            style={{ backgroundColor: '#ffffff', color: '#1b1b1b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
-            title="New task"
-            data-testid="new-task-button"
-          >
-            <SquarePen className="w-4 h-4" />
-          </button>
+          <ShortcutTooltip label="New task" keys="C" side="bottom" align="end">
+            <button
+              onClick={() => onNewTask?.()}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[#e8e8e8]"
+              style={{ backgroundColor: '#ffffff', color: '#1b1b1b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+              title="New task"
+              data-testid="new-task-button"
+            >
+              <SquarePen className="w-4 h-4" />
+            </button>
+          </ShortcutTooltip>
         </div>
       </div>
 
@@ -301,14 +304,16 @@ export function LubanSidebar({
       <div className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2">
         {/* Main Navigation */}
         <div className="space-y-0.5 mb-4">
-          <NavItem
-            icon={<Inbox className="w-4 h-4" />}
-            label="Inbox"
-            badge={inboxUnread}
-            testId="nav-inbox-button"
-            active={activeView === "inbox"}
-            onClick={() => handleNavClick("inbox")}
-          />
+          <ShortcutTooltip label="Go to inbox" keys={["G", "I"]} side="right" align="center">
+            <NavItem
+              icon={<Inbox className="w-4 h-4" />}
+              label="Inbox"
+              badge={inboxUnread}
+              testId="nav-inbox-button"
+              active={activeView === "inbox"}
+              onClick={() => handleNavClick("inbox")}
+            />
+          </ShortcutTooltip>
           {(newTaskDraftCount ?? 0) > 0 && (
             <NavItem
               icon={<FileText className="w-4 h-4" />}

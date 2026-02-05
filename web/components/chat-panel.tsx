@@ -20,6 +20,7 @@ import type {
   QueuedPromptSnapshot,
   ThinkingEffort,
   ChangedFileSnapshot,
+  ConversationEntry,
 } from "@/lib/luban-api"
 import { attachmentHref } from "@/lib/attachment-href"
 import {
@@ -258,10 +259,10 @@ export function ChatPanel({
   }, [displayMessages])
   const agentActivities = useMemo(() => buildAgentActivities(conversation), [conversation])
   const messageHistory = useMemo(() => {
-    const entries = conversation?.entries ?? []
+    const entries: ConversationEntry[] = conversation?.entries ?? []
     const isUserMessage = (
-      entry: (typeof entries)[number],
-    ): entry is Extract<(typeof entries)[number], { type: "user_event"; event: { type: "message" } }> =>
+      entry: ConversationEntry,
+    ): entry is Extract<ConversationEntry, { type: "user_event" }> & { event: { type: "message"; text: string } } =>
       entry.type === "user_event" && entry.event.type === "message"
     const items = entries
       .filter(isUserMessage)
