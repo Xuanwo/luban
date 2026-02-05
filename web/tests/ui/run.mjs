@@ -17,6 +17,7 @@ import { runLatestEventsVisible } from './scenarios/latest-events-visible.mjs';
 import { runActivityWindowing } from './scenarios/activity-windowing.mjs';
 import { runAgentRunnerIcons } from './scenarios/agent-runner-icons.mjs';
 import { runAgentRunningEventNoChevron } from './scenarios/agent-running-event-no-chevron.mjs';
+import { runEscapeDoesNotLeakFromChatInput } from './scenarios/escape-does-not-leak-from-chat-input.mjs';
 import { runNewTaskModal } from './scenarios/new-task-modal.mjs';
 import { runNewTaskDoubleSubmitNoDuplicate } from './scenarios/new-task-double-submit-no-duplicate.mjs';
 import { runNewTaskDefaultProjectFollowsContext } from './scenarios/new-task-default-project-follows-context.mjs';
@@ -178,6 +179,7 @@ async function main() {
     await runLatestEventsVisible({ page, baseUrl });
     await runActivityWindowing({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
+    await runEscapeDoesNotLeakFromChatInput({ page, baseUrl });
     await runAgentRunningEventNoChevron({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
     await runTaskSummariesEventsRefresh({ page, baseUrl });
