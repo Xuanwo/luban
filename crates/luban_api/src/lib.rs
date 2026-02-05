@@ -603,7 +603,18 @@ pub struct ConversationSystemEventEntry {
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum ConversationSystemEvent {
     TaskCreated,
-    TaskStatusChanged { from: TaskStatus, to: TaskStatus },
+    TaskStatusChanged {
+        from: TaskStatus,
+        to: TaskStatus,
+    },
+    TaskStatusSuggestion {
+        from: TaskStatus,
+        to: TaskStatus,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        explanation_markdown: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

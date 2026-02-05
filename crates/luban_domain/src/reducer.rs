@@ -2317,11 +2317,13 @@ impl AppState {
                     Effect::LoadWorkspaceThreads { workspace_id },
                 ]
             }
-            Action::TaskStatusAutoUpdateSuggested {
+            Action::TaskStatusSuggestionCreated {
                 workspace_id,
                 thread_id,
                 expected_current_task_status,
                 suggested_task_status,
+                title,
+                explanation_markdown,
             } => {
                 let Some(conversation) = self.conversations.get_mut(&(workspace_id, thread_id))
                 else {
@@ -2340,24 +2342,28 @@ impl AppState {
                     return Vec::new();
                 }
 
-                let from_status = conversation.task_status;
-                conversation.task_status = suggested_task_status;
+                if let Some(ConversationEntry::SystemEvent { event, .. }) =
+                    conversation.entries.last()
+                    && matches!(
+                        event,
+                        crate::ConversationSystemEvent::TaskStatusSuggestion { from, to, .. }
+                            if *from == expected_current_task_status && *to == suggested_task_status
+                    )
+                {
+                    return Vec::new();
+                }
+
                 conversation.push_entry(ConversationEntry::SystemEvent {
                     entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
                     created_at_unix_ms: now_unix_ms(),
-                    event: crate::ConversationSystemEvent::TaskStatusChanged {
-                        from: from_status,
+                    event: crate::ConversationSystemEvent::TaskStatusSuggestion {
+                        from: expected_current_task_status,
                         to: suggested_task_status,
+                        title: title.clone(),
+                        explanation_markdown: explanation_markdown.clone(),
                     },
                 });
-                vec![
-                    Effect::StoreConversationTaskStatus {
-                        workspace_id,
-                        thread_id,
-                        task_status: suggested_task_status,
-                    },
-                    Effect::LoadWorkspaceThreads { workspace_id },
-                ]
+                Vec::new()
             }
             Action::SidebarProjectOrderChanged { project_ids } => {
                 let mut seen = HashSet::<String>::new();

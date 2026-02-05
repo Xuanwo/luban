@@ -166,6 +166,13 @@ function systemEvent(args: {
   event:
     | { event_type: "task_created" }
     | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
+    | {
+        event_type: "task_status_suggestion"
+        from: TaskStatus
+        to: TaskStatus
+        title: string
+        explanation_markdown: string
+      }
 }): ConversationEntry {
   return {
     type: "system_event",

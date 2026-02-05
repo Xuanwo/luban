@@ -31,6 +31,7 @@ import { extractTurnDurationLabel, useActivityTiming } from "@/lib/activity-timi
 import { attachmentHref } from "@/lib/attachment-href"
 import { WindowedList, type WindowedListItem } from "@/components/windowed-list"
 import { PtyTerminalSession } from "@/components/pty-terminal"
+import { useLuban } from "@/lib/luban-context"
 
 const AMP_MARK_URL = "/logos/amp.svg"
 
@@ -630,6 +631,142 @@ function TerminalCommandCardEvent({
   )
 }
 
+function taskStatusLabel(status: string): string {
+  switch (status) {
+    case "backlog":
+      return "Backlog"
+    case "todo":
+      return "Todo"
+    case "iterating":
+    case "in_progress":
+      return "Iterating"
+    case "validating":
+    case "in_review":
+      return "Validating"
+    case "done":
+      return "Done"
+    case "canceled":
+      return "Canceled"
+    default:
+      return status
+  }
+}
+
+function TaskStatusSuggestionCardEvent({
+  message,
+  workspaceId,
+  taskId,
+}: {
+  message: Message
+  workspaceId?: number
+  taskId?: number
+}) {
+  const { setTaskStatus } = useLuban()
+  const suggestion = message.taskStatusSuggestion
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  if (!suggestion || workspaceId == null || taskId == null) {
+    return null
+  }
+
+  const title = (() => {
+    const trimmed = suggestion.title.trim()
+    if (trimmed.length > 0) return trimmed
+    return `Suggested moving from ${taskStatusLabel(suggestion.from)} to ${taskStatusLabel(suggestion.to)}`
+  })()
+
+  const explanation = suggestion.explanationMarkdown.trim()
+
+  return (
+    <div
+      data-testid="task-status-suggestion-card"
+      className="group/suggestion"
+      style={{
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: "8px",
+        backgroundColor: COLORS.white,
+        boxShadow: "rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px",
+        padding: "12px 16px",
+        marginLeft: "-6px",
+        marginRight: "-6px",
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+          style={{ color: COLORS.textMuted }}
+          data-testid="task-status-suggestion-toggle"
+        >
+          <div className="flex items-center justify-center flex-shrink-0" style={{ width: "20px", height: "20px" }}>
+            <div
+              data-testid="task-status-suggestion-avatar-inner"
+              className="flex items-center justify-center"
+              style={{
+                width: "16px",
+                height: "16px",
+                borderRadius: "50%",
+                backgroundColor: COLORS.white,
+                border: `1px solid ${COLORS.border}`,
+                color: COLORS.textPrimary,
+              }}
+            >
+              <Image src="/icon-light-32x32.png" alt="Luban" width={10} height={10} unoptimized />
+            </div>
+          </div>
+
+          <span
+            data-testid="activity-card-author"
+            style={{ fontSize: "13px", fontWeight: 500, color: COLORS.textPrimary }}
+          >
+            Luban
+          </span>
+          <span
+            className="truncate"
+            style={{ fontSize: "13px", fontWeight: 400, color: COLORS.textMuted }}
+          >
+            {title}
+          </span>
+          <span style={{ fontSize: "14px", fontWeight: 400, color: COLORS.textMuted }}>
+            {formatRelativeTime(message.timestamp)}
+          </span>
+          <ChevronsUpDown className="w-4 h-4 flex-shrink-0" />
+        </button>
+
+        <button
+          type="button"
+          data-testid="task-status-suggestion-apply"
+          className="px-2 py-1 rounded transition-colors hover:bg-black/[0.05]"
+          style={{ fontSize: "12px", fontWeight: 500, color: COLORS.textPrimary }}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setTaskStatus(workspaceId, taskId, suggestion.to)
+          }}
+        >
+          Apply
+        </button>
+      </div>
+
+      {isExpanded && (
+        <div className="mt-3" data-testid="task-status-suggestion-body">
+          <div style={{ fontSize: "12px", color: COLORS.textMuted, marginBottom: "6px" }}>
+            Suggested status: {taskStatusLabel(suggestion.to)}
+          </div>
+          {explanation.length > 0 ? (
+            <div className="luban-font-chat" style={{ fontSize: "14px", lineHeight: "22px", color: COLORS.textPrimary }}>
+              <Markdown content={explanation} enableMermaid />
+            </div>
+          ) : (
+            <div style={{ fontSize: "13px", color: COLORS.textMuted }}>No explanation provided.</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface AgentActivityEventProps {
   message: Message
 }
@@ -1032,6 +1169,16 @@ function ActivityStreamSection({
             node: (
               <div className="relative">
                 <TerminalCommandCardEvent message={msg} workspaceId={workspaceId} taskId={taskId} />
+              </div>
+            ),
+          }
+        }
+        if (msg.type === "task_status_suggestion") {
+          return {
+            key: msg.id,
+            node: (
+              <div className="relative">
+                <TaskStatusSuggestionCardEvent message={msg} workspaceId={workspaceId} taskId={taskId} />
               </div>
             ),
           }

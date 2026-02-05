@@ -222,10 +222,6 @@ pub enum EngineCommand {
         workspace_id: WorkspaceId,
         info: Option<PullRequestInfo>,
     },
-    TaskStatusAutoUpdateBackfillFinished {
-        workspace_id: WorkspaceId,
-        thread_id: WorkspaceThreadId,
-    },
     PruneArchivedTasks,
     WorkspaceThreadsInvalidated {
         workspace_id: WorkspaceId,
@@ -256,9 +252,6 @@ const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_UNKNOWN: Duration = Duration::from_s
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_INITIAL: Duration = Duration::from_secs(60);
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM: Duration = Duration::from_secs(3 * 60);
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX: Duration = Duration::from_secs(10 * 60);
-
-const TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT: usize = 20;
-const TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT: u64 = 250;
 
 const TASK_ARCHIVE_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
 const TASK_PURGE_AFTER_SECONDS: u64 = 2 * TASK_ARCHIVE_AFTER_SECONDS;
@@ -321,108 +314,6 @@ fn pull_request_next_refresh_at(
     (next_refresh_at, consecutive_empty)
 }
 
-fn truncate_for_system_task(input: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    let mut out = String::new();
-    for ch in input.chars().take(max_chars) {
-        out.push(ch);
-    }
-    out
-}
-
-fn task_status_auto_update_input_from_entries(
-    task_status: luban_domain::TaskStatus,
-    entries: &[luban_domain::ConversationEntry],
-    turn_outcome: &str,
-) -> String {
-    const MAX_TEXT_CHARS: usize = 1800;
-
-    let mut recent_user_messages: Vec<String> = Vec::with_capacity(5);
-    let mut recent_agent_messages: Vec<String> = Vec::with_capacity(5);
-    let mut last_turn_error: Option<String> = None;
-
-    for entry in entries.iter().rev() {
-        match entry {
-            luban_domain::ConversationEntry::UserEvent {
-                event: luban_domain::UserEvent::Message { text, .. },
-                ..
-            } => {
-                if recent_user_messages.len() < 5 {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        recent_user_messages.push(trimmed.to_owned());
-                    }
-                }
-            }
-            luban_domain::ConversationEntry::AgentEvent { event, .. } => match event {
-                luban_domain::AgentEvent::Message { text, .. } => {
-                    if recent_agent_messages.len() < 5 {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            recent_agent_messages.push(trimmed.to_owned());
-                        }
-                    }
-                }
-                luban_domain::AgentEvent::TurnError { message } => {
-                    if last_turn_error.is_none() {
-                        last_turn_error = Some(message.trim().to_owned());
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        if recent_user_messages.len() >= 5
-            && recent_agent_messages.len() >= 5
-            && last_turn_error.is_some()
-        {
-            break;
-        }
-    }
-
-    let mut out = String::new();
-    out.push_str("Current task_status: ");
-    out.push_str(task_status.as_str());
-    out.push('\n');
-    out.push_str("Turn outcome: ");
-    out.push_str(turn_outcome);
-    out.push('\n');
-
-    if !recent_user_messages.is_empty() {
-        out.push_str("\nRecent user messages (newest first):\n");
-        for (idx, message) in recent_user_messages.iter().enumerate() {
-            out.push_str(&format!("{}.\n", idx.saturating_add(1)));
-            out.push_str(&truncate_for_system_task(message, MAX_TEXT_CHARS));
-            out.push('\n');
-            out.push('\n');
-        }
-    }
-
-    if !recent_agent_messages.is_empty() {
-        out.push_str("\nRecent agent messages (newest first):\n");
-        for (idx, message) in recent_agent_messages.iter().enumerate() {
-            out.push_str(&format!("{}.\n", idx.saturating_add(1)));
-            out.push_str(&truncate_for_system_task(message, MAX_TEXT_CHARS));
-            out.push('\n');
-            out.push('\n');
-        }
-    }
-
-    if let Some(message) = last_turn_error {
-        let trimmed = message.trim();
-        if !trimmed.is_empty() {
-            out.push_str("\nLast turn error:\n");
-            out.push_str(&truncate_for_system_task(trimmed, MAX_TEXT_CHARS));
-            out.push('\n');
-        }
-    }
-
-    out
-}
-
 pub struct Engine {
     state: AppState,
     rev: u64,
@@ -433,7 +324,6 @@ pub struct Engine {
     cancel_flags: HashMap<(WorkspaceId, WorkspaceThreadId), CancelFlagEntry>,
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
-    task_status_auto_update_backfill_in_flight: HashSet<(WorkspaceId, WorkspaceThreadId)>,
     workspace_threads_cache: HashMap<WorkspaceId, Vec<ConversationThreadMeta>>,
     telegram_pairing: Option<TelegramPairingState>,
 }
@@ -484,7 +374,6 @@ impl Engine {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -776,13 +665,6 @@ impl Engine {
                 let snapshot = match threads {
                     Ok(mut threads) => {
                         dedup_thread_metas_in_place(&mut threads);
-
-                        self.spawn_task_status_auto_update_backfill_for_threads(
-                            wid,
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            &threads,
-                        );
 
                         let mapped_threads = threads
                             .iter()
@@ -2101,15 +1983,8 @@ impl Engine {
                         .and_then(|entry| entry.info.as_ref())
                     && pr.state == DomainPullRequestState::Merged
                 {
-                    self.spawn_task_status_mark_done_for_merged_pr(workspace_id, pr.number);
+                    self.spawn_task_status_suggest_done_for_merged_pr(workspace_id, pr.number);
                 }
-            }
-            EngineCommand::TaskStatusAutoUpdateBackfillFinished {
-                workspace_id,
-                thread_id,
-            } => {
-                self.task_status_auto_update_backfill_in_flight
-                    .remove(&(workspace_id, thread_id));
             }
             EngineCommand::PruneArchivedTasks => {
                 self.prune_archived_tasks().await;
@@ -2132,169 +2007,11 @@ impl Engine {
         }
     }
 
-    fn spawn_task_status_auto_update_backfill_for_threads(
-        &mut self,
+    fn spawn_task_status_suggest_done_for_merged_pr(
+        &self,
         workspace_id: WorkspaceId,
-        project_slug: &str,
-        workspace_name: &str,
-        threads: &[ConversationThreadMeta],
+        pr_number: u64,
     ) {
-        let runner_enabled = (
-            self.state.agent_codex_enabled(),
-            self.state.agent_amp_enabled(),
-            self.state.agent_claude_enabled(),
-        );
-        if !(runner_enabled.0 || runner_enabled.1 || runner_enabled.2) {
-            return;
-        }
-
-        let mut scheduled = 0usize;
-        for meta in threads {
-            if scheduled >= TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT {
-                break;
-            }
-            if !matches!(
-                meta.task_status,
-                luban_domain::TaskStatus::Iterating | luban_domain::TaskStatus::Validating
-            ) {
-                continue;
-            }
-            if meta.last_message_seq == 0
-                || meta.last_message_seq <= meta.task_status_last_analyzed_message_seq
-            {
-                continue;
-            }
-            if meta.turn_status != luban_domain::TurnStatus::Idle {
-                continue;
-            }
-
-            let key = (workspace_id, meta.thread_id);
-            if !self.task_status_auto_update_backfill_in_flight.insert(key) {
-                continue;
-            }
-
-            scheduled += 1;
-
-            let services = self.services.clone();
-            let tx = self.tx.clone();
-            let project_slug = project_slug.to_owned();
-            let workspace_name = workspace_name.to_owned();
-            let thread_local_id = meta.thread_id.as_u64();
-            let expected_current_task_status = meta.task_status;
-
-            let default_runner = self.state.agent_default_runner();
-            let default_model_id = self.state.agent_default_model_id().to_owned();
-            let default_thinking_effort = self.state.agent_default_thinking_effort();
-            let default_amp_mode = self.state.agent_amp_mode().to_owned();
-
-            let agent_codex_enabled = self.state.agent_codex_enabled();
-            let agent_amp_enabled = self.state.agent_amp_enabled();
-            let agent_claude_enabled = self.state.agent_claude_enabled();
-
-            tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let snapshot = services.load_conversation_page(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        thread_local_id,
-                        None,
-                        TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT,
-                    )?;
-
-                    let input = task_status_auto_update_input_from_entries(
-                        expected_current_task_status,
-                        &snapshot.entries,
-                        "stale",
-                    );
-
-                    let runner = snapshot.runner.unwrap_or(default_runner);
-                    let runner_enabled = match runner {
-                        luban_domain::AgentRunnerKind::Codex => agent_codex_enabled,
-                        luban_domain::AgentRunnerKind::Amp => agent_amp_enabled,
-                        luban_domain::AgentRunnerKind::Claude => agent_claude_enabled,
-                    };
-                    if !runner_enabled {
-                        return Ok::<_, String>(());
-                    }
-
-                    let model_id = snapshot
-                        .agent_model_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .unwrap_or(default_model_id.as_str())
-                        .to_owned();
-                    let thinking_effort =
-                        snapshot.thinking_effort.unwrap_or(default_thinking_effort);
-                    let amp_mode = if runner == luban_domain::AgentRunnerKind::Amp {
-                        snapshot
-                            .amp_mode
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(ToOwned::to_owned)
-                            .or(Some(default_amp_mode))
-                    } else {
-                        None
-                    };
-
-                    let suggested = services.task_suggest_task_status_auto_update(
-                        input,
-                        runner,
-                        model_id,
-                        thinking_effort,
-                        amp_mode,
-                    )?;
-                    let suggested_task_status = suggested.task_status;
-
-                    let _ = services.save_conversation_task_status_last_analyzed(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        thread_local_id,
-                    );
-
-                    if suggested_task_status == luban_domain::TaskStatus::Validating
-                        && let Some(pr_number) = suggested.validation_pr_number
-                    {
-                        let _ = services.save_conversation_task_validation_pr(
-                            project_slug.clone(),
-                            workspace_name.clone(),
-                            thread_local_id,
-                            pr_number,
-                            suggested.validation_pr_url,
-                        );
-                    }
-
-                    if suggested_task_status != expected_current_task_status {
-                        let _ = services.save_conversation_task_status(
-                            project_slug,
-                            workspace_name,
-                            thread_local_id,
-                            suggested_task_status,
-                        );
-                    }
-
-                    Ok(())
-                })
-                .await
-                .ok()
-                .unwrap_or_else(|| {
-                    Err("failed to join task status auto update backfill".to_owned())
-                });
-
-                let _ = result;
-
-                let _ = tx
-                    .send(EngineCommand::TaskStatusAutoUpdateBackfillFinished {
-                        workspace_id,
-                        thread_id: WorkspaceThreadId::from_u64(thread_local_id),
-                    })
-                    .await;
-            });
-        }
-    }
-
-    fn spawn_task_status_mark_done_for_merged_pr(&self, workspace_id: WorkspaceId, pr_number: u64) {
         let Some(scope) = workspace_scope(&self.state, workspace_id) else {
             return;
         };
@@ -2306,7 +2023,7 @@ impl Engine {
 
         tokio::spawn(async move {
             let thread_ids = tokio::task::spawn_blocking(move || {
-                services.mark_conversation_tasks_done_for_merged_pr(
+                services.list_conversation_tasks_for_merged_pr(
                     project_slug.clone(),
                     workspace_name.clone(),
                     pr_number,
@@ -2321,19 +2038,21 @@ impl Engine {
                 for thread_local_id in thread_ids {
                     let _ = tx
                         .send(EngineCommand::DispatchAction {
-                            action: Box::new(Action::TaskStatusAutoUpdateSuggested {
+                            action: Box::new(Action::TaskStatusSuggestionCreated {
                                 workspace_id,
                                 thread_id: WorkspaceThreadId::from_u64(thread_local_id),
                                 expected_current_task_status: luban_domain::TaskStatus::Validating,
                                 suggested_task_status: luban_domain::TaskStatus::Done,
+                                title: format!("Suggest moving to done (PR #{pr_number} merged)"),
+                                explanation_markdown: format!(
+                                    "- PR #{pr_number} is merged.\n- Consider marking this task as done."
+                                ),
                             }),
                         })
                         .await;
                 }
 
-                let _ = tx
-                    .send(EngineCommand::WorkspaceThreadsInvalidated { workspace_id })
-                    .await;
+                // No automatic status updates: keep thread metadata stable until the user applies.
             }
         });
     }
@@ -2492,7 +2211,9 @@ impl Engine {
 
             let should_persist_latest_conversation_entry = matches!(
                 &action,
-                Action::TerminalCommandStarted { .. } | Action::TerminalCommandFinished { .. }
+                Action::TerminalCommandStarted { .. }
+                    | Action::TerminalCommandFinished { .. }
+                    | Action::TaskStatusSuggestionCreated { .. }
             );
             let should_sync_branch_watchers = should_sync_branch_watchers(&action);
             let mut conversation_keys = Vec::<(WorkspaceId, WorkspaceThreadId)>::new();
@@ -3205,7 +2926,7 @@ impl Engine {
                             );
                         }
 
-                        Ok::<_, String>(suggested.task_status)
+                        Ok::<_, String>(suggested)
                     })
                     .await
                     .ok()
@@ -3213,17 +2934,23 @@ impl Engine {
                         Err("failed to join auto update task status task".to_owned())
                     });
 
-                    let Ok(suggested_task_status) = result else {
+                    let Ok(suggested) = result else {
                         return;
                     };
 
+                    let suggested_task_status = suggested.task_status;
+                    let title = format!("Suggest moving to {}", suggested_task_status.as_str());
+                    let explanation_markdown = suggested.explanation_markdown.unwrap_or_default();
+
                     let _ = tx
                         .send(EngineCommand::DispatchAction {
-                            action: Box::new(Action::TaskStatusAutoUpdateSuggested {
+                            action: Box::new(Action::TaskStatusSuggestionCreated {
                                 workspace_id,
                                 thread_id,
                                 expected_current_task_status,
                                 suggested_task_status,
+                                title,
+                                explanation_markdown,
                             }),
                         })
                         .await;
@@ -3246,19 +2973,10 @@ impl Engine {
                 .ok()
                 .unwrap_or_else(|| Err("failed to join list threads task".to_owned()));
                 let action = match result {
-                    Ok(threads) => {
-                        self.spawn_task_status_auto_update_backfill_for_threads(
-                            workspace_id,
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            &threads,
-                        );
-
-                        Action::WorkspaceThreadsLoaded {
-                            workspace_id,
-                            threads,
-                        }
-                    }
+                    Ok(threads) => Action::WorkspaceThreadsLoaded {
+                        workspace_id,
+                        threads,
+                    },
                     Err(message) => Action::WorkspaceThreadsLoadFailed {
                         workspace_id,
                         message,
@@ -4756,7 +4474,7 @@ fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspac
             thread_id,
             ..
         } => Some((*workspace_id, *thread_id)),
-        Action::TaskStatusAutoUpdateSuggested {
+        Action::TaskStatusSuggestionCreated {
             workspace_id,
             thread_id,
             ..
@@ -5230,6 +4948,31 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                         },
                     }
                 }
+                luban_domain::ConversationSystemEvent::TaskStatusSuggestion {
+                    from,
+                    to,
+                    title,
+                    explanation_markdown,
+                } => luban_api::ConversationSystemEvent::TaskStatusSuggestion {
+                    from: match from {
+                        luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                        luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                        luban_domain::TaskStatus::Iterating => luban_api::TaskStatus::Iterating,
+                        luban_domain::TaskStatus::Validating => luban_api::TaskStatus::Validating,
+                        luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                        luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+                    },
+                    to: match to {
+                        luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                        luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                        luban_domain::TaskStatus::Iterating => luban_api::TaskStatus::Iterating,
+                        luban_domain::TaskStatus::Validating => luban_api::TaskStatus::Validating,
+                        luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                        luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+                    },
+                    title: title.clone(),
+                    explanation_markdown: explanation_markdown.clone(),
+                },
             },
         }),
         ConversationEntry::UserEvent { entry_id, event } => {
@@ -6181,7 +5924,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6245,7 +5987,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6396,7 +6137,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6599,7 +6339,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6697,7 +6436,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6813,7 +6551,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6903,7 +6640,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -6980,7 +6716,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -7037,7 +6772,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_status_auto_update_suggested_emits_conversation_changed() {
+    async fn task_status_suggestion_created_emits_conversation_changed() {
         let mut state = AppState::new();
         let _ = state.apply(Action::AddProject {
             path: PathBuf::from("/tmp/luban-server-test"),
@@ -7073,17 +6808,18 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
 
         engine
-            .process_action_queue(Action::TaskStatusAutoUpdateSuggested {
+            .process_action_queue(Action::TaskStatusSuggestionCreated {
                 workspace_id,
                 thread_id,
                 expected_current_task_status: luban_domain::TaskStatus::Backlog,
                 suggested_task_status: luban_domain::TaskStatus::Done,
+                title: "Suggest moving to done".to_owned(),
+                explanation_markdown: "- Work appears complete.".to_owned(),
             })
             .await;
 
@@ -7104,21 +6840,21 @@ mod tests {
             {
                 continue;
             }
-            if snapshot.task_status != luban_api::TaskStatus::Done {
+            if snapshot.task_status != luban_api::TaskStatus::Backlog {
                 continue;
             }
-            let has_status_event = snapshot.entries.iter().any(|e| {
+            let has_suggestion_event = snapshot.entries.iter().any(|e| {
                 matches!(
                     e,
                     luban_api::ConversationEntry::SystemEvent(
                         luban_api::ConversationSystemEventEntry {
-                            event: luban_api::ConversationSystemEvent::TaskStatusChanged { .. },
+                            event: luban_api::ConversationSystemEvent::TaskStatusSuggestion { .. },
                             ..
                         }
                     )
                 )
             });
-            if has_status_event {
+            if has_suggestion_event {
                 saw = true;
                 break;
             }
@@ -7126,7 +6862,7 @@ mod tests {
 
         assert!(
             saw,
-            "expected a conversation_changed event reflecting the auto-updated status"
+            "expected a conversation_changed event reflecting the suggestion"
         );
     }
 
@@ -7419,7 +7155,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -7508,7 +7243,6 @@ mod tests {
             )]),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -7786,7 +7520,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -7835,7 +7568,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -8304,7 +8036,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -8371,7 +8102,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -8430,7 +8160,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
@@ -8504,7 +8233,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };

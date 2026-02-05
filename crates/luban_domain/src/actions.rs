@@ -391,11 +391,13 @@ pub enum Action {
         thread_id: WorkspaceThreadId,
         task_status: TaskStatus,
     },
-    TaskStatusAutoUpdateSuggested {
+    TaskStatusSuggestionCreated {
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         expected_current_task_status: TaskStatus,
         suggested_task_status: TaskStatus,
+        title: String,
+        explanation_markdown: String,
     },
 
     SidebarProjectOrderChanged {

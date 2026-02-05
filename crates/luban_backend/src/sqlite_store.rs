@@ -357,7 +357,7 @@ enum DbCommand {
         pr_url: Option<String>,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
-    MarkConversationTasksDoneForMergedPr {
+    ListConversationTasksForMergedPr {
         project_slug: String,
         workspace_name: String,
         pr_number: u64,
@@ -698,14 +698,14 @@ impl SqliteStore {
                         }
                         (
                             Ok(db),
-                            DbCommand::MarkConversationTasksDoneForMergedPr {
+                            DbCommand::ListConversationTasksForMergedPr {
                                 project_slug,
                                 workspace_name,
                                 pr_number,
                                 reply,
                             },
                         ) => {
-                            let _ = reply.send(db.mark_conversation_tasks_done_for_merged_pr(
+                            let _ = reply.send(db.list_conversation_tasks_for_merged_pr(
                                 &project_slug,
                                 &workspace_name,
                                 pr_number,
@@ -1164,7 +1164,7 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
-    pub fn mark_conversation_tasks_done_for_merged_pr(
+    pub fn list_conversation_tasks_for_merged_pr(
         &self,
         project_slug: String,
         workspace_name: String,
@@ -1172,7 +1172,7 @@ impl SqliteStore {
     ) -> anyhow::Result<Vec<u64>> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
-            .send(DbCommand::MarkConversationTasksDoneForMergedPr {
+            .send(DbCommand::ListConversationTasksForMergedPr {
                 project_slug,
                 workspace_name,
                 pr_number,
@@ -1381,7 +1381,7 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
         DbCommand::SaveConversationTaskValidationPr { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
-        DbCommand::MarkConversationTasksDoneForMergedPr { reply, .. } => {
+        DbCommand::ListConversationTasksForMergedPr { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -3843,7 +3843,7 @@ impl SqliteDatabase {
         Ok(())
     }
 
-    fn mark_conversation_tasks_done_for_merged_pr(
+    fn list_conversation_tasks_for_merged_pr(
         &mut self,
         project_slug: &str,
         workspace_name: &str,
@@ -3872,15 +3872,6 @@ impl SqliteDatabase {
             }
             out
         };
-
-        for thread_local_id in &thread_ids {
-            self.save_conversation_task_status(
-                project_slug,
-                workspace_name,
-                *thread_local_id,
-                luban_domain::TaskStatus::Done,
-            )?;
-        }
 
         Ok(thread_ids)
     }
@@ -4549,8 +4540,8 @@ mod tests {
     }
 
     #[test]
-    fn task_validation_pr_can_be_marked_done_on_merge() {
-        let path = temp_db_path("task_validation_pr_can_be_marked_done_on_merge");
+    fn task_validation_pr_can_be_listed_on_merge() {
+        let path = temp_db_path("task_validation_pr_can_be_listed_on_merge");
         let mut db = open_db(&path);
 
         db.ensure_conversation("p", "w", 1).unwrap();
@@ -4565,19 +4556,19 @@ mod tests {
         )
         .unwrap();
 
-        let updated = db
-            .mark_conversation_tasks_done_for_merged_pr("p", "w", 124)
+        let matching = db
+            .list_conversation_tasks_for_merged_pr("p", "w", 124)
             .unwrap();
-        assert!(updated.is_empty());
+        assert!(matching.is_empty());
 
-        let updated = db
-            .mark_conversation_tasks_done_for_merged_pr("p", "w", 123)
+        let matching = db
+            .list_conversation_tasks_for_merged_pr("p", "w", 123)
             .unwrap();
-        assert_eq!(updated, vec![1]);
+        assert_eq!(matching, vec![1]);
 
         let threads = db.list_conversation_threads("p", "w").unwrap();
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Done);
+        assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Validating);
     }
 
     #[test]

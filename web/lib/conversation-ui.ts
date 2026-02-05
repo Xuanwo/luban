@@ -6,6 +6,7 @@ import type {
   AgentRunnerKind,
   ConversationEntry,
   ConversationSnapshot,
+  TaskStatus,
   ThinkingEffort,
 } from "./luban-api"
 import { AGENT_MODELS } from "./agent-settings"
@@ -37,7 +38,7 @@ export interface SystemEvent {
 
 export interface Message {
   id: string
-  type: "user" | "assistant" | "event" | "agent_turn" | "terminal_command"
+  type: "user" | "assistant" | "event" | "agent_turn" | "terminal_command" | "task_status_suggestion"
   eventSource?: "system" | "user" | "agent"
   agentRunner?: AgentRunnerKind
   content: string
@@ -62,6 +63,12 @@ export interface Message {
     status: ActivityStatus
     outputBase64?: string
     outputByteLen?: number
+  }
+  taskStatusSuggestion?: {
+    from: TaskStatus
+    to: TaskStatus
+    title: string
+    explanationMarkdown: string
   }
 }
 
@@ -443,6 +450,27 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     const entry = conversation.entries[i]!
     if (entry.type === "system_event") {
       const ev = entry.event as any
+      if (ev?.event_type === "task_status_suggestion") {
+        const from = String(ev.from ?? "") as TaskStatus
+        const to = String(ev.to ?? "") as TaskStatus
+        const title = String(ev.title ?? "").trim()
+        const explanationMarkdown = String(ev.explanation_markdown ?? "")
+        const fromLabel = taskStatusLabel(from)
+        const toLabel = taskStatusLabel(to)
+        const content = title.length > 0 ? title : `Suggested moving from ${fromLabel} to ${toLabel}`
+
+        out.push({
+          id: `s_${entry.entry_id}`,
+          type: "task_status_suggestion",
+          eventSource: "system",
+          status: "done",
+          content,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
+          taskStatusSuggestion: { from, to, title, explanationMarkdown },
+        })
+        continue
+      }
+
       const eventType = (() => {
         if (ev?.event_type === "task_created") return "task_created" as const
         if (ev?.event_type === "task_status_changed") return "status_changed" as const
@@ -746,6 +774,20 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
     const entry = conversation.entries[i]!
     if (entry.type === "system_event") {
       const ev = entry.event as any
+      if (ev?.event_type === "task_status_suggestion") {
+        const from = taskStatusLabel(String(ev.from ?? ""))
+        const to = taskStatusLabel(String(ev.to ?? ""))
+        out.push({
+          id: `e_${entry.entry_id}`,
+          type: "event",
+          eventSource: "system",
+          status: "done",
+          content: `suggested moving from ${from} to ${to}`,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
+        })
+        continue
+      }
+
       const eventType = (() => {
         if (ev?.event_type === "task_created") return "task_created" as const
         if (ev?.event_type === "task_status_changed") return "status_changed" as const
