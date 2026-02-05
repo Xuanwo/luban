@@ -10,6 +10,8 @@ export const DropdownMenu = DropdownMenuPrimitive.Root
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 export const DropdownMenuPortal = DropdownMenuPrimitive.Portal
 export const DropdownMenuSub = DropdownMenuPrimitive.Sub
+export const DropdownMenuSubTrigger = DropdownMenuPrimitive.SubTrigger
+export const DropdownMenuSubContent = DropdownMenuPrimitive.SubContent
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group
 export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup
 
@@ -24,7 +26,7 @@ export function DropdownMenuContent({
         sideOffset={sideOffset}
         className={cn(
           "z-50 min-w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
-          className,
+          className
         )}
         {...props}
       />
@@ -42,7 +44,7 @@ export function DropdownMenuItem({
       className={cn(
         "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         inset && "pl-8",
-        className,
+        className
       )}
       {...props}
     />
@@ -55,4 +57,3 @@ export function DropdownMenuSeparator({
 }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>) {
   return <DropdownMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />
 }
-

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +12,8 @@ import {
   Star,
   Settings,
   SquarePen,
+  Check,
+  X as XIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLuban } from "@/lib/luban-context"
@@ -19,13 +21,9 @@ import { buildSidebarProjects } from "@/lib/sidebar-view-model"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchTasks } from "@/lib/luban-http"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
+import type { InboxSavedView } from "@/lib/inbox-views"
 import { ShortcutTooltip } from "@/components/shared/shortcut-tooltip"
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 
 export type NavView = "inbox" | "tasks" | string
 
@@ -35,6 +33,14 @@ interface LubanSidebarProps {
   onViewChange?: (view: NavView) => void
   activeProjectId?: string | null
   onProjectSelected?: (projectId: string | null) => void
+  inboxViews?: InboxSavedView[]
+  activeInboxViewId?: string | null
+  renamingInboxViewId?: string | null
+  onInboxViewSelected?: (viewId: string) => void
+  onInboxViewDeleted?: (viewId: string) => void
+  onInboxViewRenameRequested?: (viewId: string) => void
+  onInboxViewRenameSaved?: (viewId: string, nextName: string) => void
+  onInboxViewRenameCanceled?: () => void
   onNewTask?: () => void
   onFavoriteTaskSelected?: (task: TaskSummarySnapshot) => void
   newTaskDraftCount?: number
@@ -57,18 +63,18 @@ function NavItem({ icon, label, testId, badge, active, onClick }: NavItemProps) 
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] transition-colors",
-        active
-          ? "bg-[#e8e8e8]"
-          : "hover:bg-[#eeeeee]"
+        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]"
       )}
-      style={{ color: '#1b1b1b' }}
+      style={{ color: "#1b1b1b" }}
     >
-      <span className="w-4 h-4 flex items-center justify-center" style={{ color: '#6b6b6b' }}>{icon}</span>
+      <span className="w-4 h-4 flex items-center justify-center" style={{ color: "#6b6b6b" }}>
+        {icon}
+      </span>
       <span className="flex-1 text-left truncate">{label}</span>
       {badge !== undefined && badge > 0 && (
         <span
           className="px-1.5 py-0.5 text-[11px] font-medium rounded"
-          style={{ backgroundColor: '#e8e8e8', color: '#6b6b6b' }}
+          style={{ backgroundColor: "#e8e8e8", color: "#6b6b6b" }}
         >
           {badge}
         </span>
@@ -91,16 +97,157 @@ function Section({ title, defaultExpanded = true, children }: SectionProps) {
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors hover:bg-[#eeeeee] rounded"
-        style={{ color: '#9b9b9b' }}
+        style={{ color: "#9b9b9b" }}
       >
-        {expanded ? (
-          <ChevronDown className="w-3 h-3" />
-        ) : (
-          <ChevronRight className="w-3 h-3" />
-        )}
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         <span className="flex-1 text-left">{title}</span>
       </button>
       {expanded && <div className="mt-0.5 space-y-0.5">{children}</div>}
+    </div>
+  )
+}
+
+function InboxViewItem({
+  view,
+  index,
+  active,
+  renaming,
+  onSelect,
+  onDelete,
+  onRenameRequested,
+  onRenameSaved,
+  onRenameCanceled,
+}: {
+  view: InboxSavedView
+  index: number
+  active: boolean
+  renaming: boolean
+  onSelect: () => void
+  onDelete: () => void
+  onRenameRequested: () => void
+  onRenameSaved: (nextName: string) => void
+  onRenameCanceled: () => void
+}) {
+  const [draftName, setDraftName] = useState(view.name)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (!renaming) return
+    setDraftName(view.name)
+  }, [renaming, view.name])
+
+  useEffect(() => {
+    if (!renaming) return
+    const handler = (e: PointerEvent) => {
+      const root = rootRef.current
+      if (!root) return
+      const target = e.target
+      if (!(target instanceof Node)) return
+      if (root.contains(target)) return
+      onRenameCanceled()
+    }
+    document.addEventListener("pointerdown", handler, { capture: true })
+    return () => document.removeEventListener("pointerdown", handler, { capture: true } as AddEventListenerOptions)
+  }, [onRenameCanceled, renaming])
+
+  useEffect(() => {
+    if (!renaming) return
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [renaming])
+
+  const save = () => onRenameSaved(draftName)
+
+  return (
+    <div
+      ref={rootRef}
+      className={cn(
+        "group w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-[13px] transition-colors",
+        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]"
+      )}
+      data-testid={`inbox-view-item-${index}`}
+      onClick={() => {
+        if (renaming) return
+        onSelect()
+      }}
+      onDoubleClick={e => {
+        if (renaming) return
+        e.preventDefault()
+        onRenameRequested()
+      }}
+    >
+      {renaming ? (
+        <input
+          ref={inputRef}
+          data-testid={`inbox-view-item-${index}-rename-input`}
+          value={draftName}
+          onChange={e => setDraftName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              save()
+            } else if (e.key === "Escape") {
+              e.preventDefault()
+              onRenameCanceled()
+            }
+          }}
+          className="flex-1 min-w-0 bg-transparent outline-none text-[13px] px-1 py-0.5 rounded border"
+          style={{ borderColor: "#ebebeb", color: "#1b1b1b" }}
+          aria-label="Rename view"
+        />
+      ) : (
+        <span
+          className="flex-1 min-w-0 text-left truncate"
+          style={{ color: "#1b1b1b" }}
+          data-testid={`inbox-view-item-${index}-label`}
+        >
+          {view.name}
+        </span>
+      )}
+
+      {renaming ? (
+        <button
+          type="button"
+          data-testid={`inbox-view-item-${index}-save`}
+          className="w-6 h-6 rounded flex items-center justify-center hover:bg-[#eeeeee] transition-colors"
+          style={{ color: "#5e6ad2" }}
+          onClick={e => {
+            e.preventDefault()
+            e.stopPropagation()
+            save()
+          }}
+          title="Save"
+          aria-label="Save"
+        >
+          <Check className="w-4 h-4" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          data-testid={`inbox-view-item-${index}-delete`}
+          className={cn(
+            "w-6 h-6 rounded flex items-center justify-center transition-colors",
+            "opacity-0 group-hover:opacity-100 hover:bg-[#e8e8e8]"
+          )}
+          style={{ color: "#9b9b9b" }}
+          onClick={e => {
+            e.preventDefault()
+            e.stopPropagation()
+            onDelete()
+          }}
+          onDoubleClick={e => {
+            e.preventDefault()
+            e.stopPropagation()
+          }}
+          title="Delete view"
+          aria-label="Delete view"
+        >
+          <XIcon className="w-4 h-4" />
+        </button>
+      )}
     </div>
   )
 }
@@ -114,14 +261,7 @@ interface ProjectItemProps {
   onClick?: () => void
 }
 
-function ProjectItem({
-  name,
-  color = "bg-[#5e6ad2]",
-  avatarUrl,
-  active,
-  testId,
-  onClick,
-}: ProjectItemProps) {
+function ProjectItem({ name, color = "bg-[#5e6ad2]", avatarUrl, active, testId, onClick }: ProjectItemProps) {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false)
 
   useEffect(() => {
@@ -132,7 +272,7 @@ function ProjectItem({
     <div
       className={cn(
         "group w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors",
-        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]",
+        active ? "bg-[#e8e8e8]" : "hover:bg-[#eeeeee]"
       )}
     >
       <button
@@ -154,7 +294,7 @@ function ProjectItem({
           <span
             className={cn(
               "w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0",
-              color,
+              color
             )}
           >
             {name.charAt(0).toUpperCase()}
@@ -174,22 +314,26 @@ export function LubanSidebar({
   onViewChange,
   activeProjectId,
   onProjectSelected,
+  inboxViews = [],
+  activeInboxViewId,
+  renamingInboxViewId,
+  onInboxViewSelected,
+  onInboxViewDeleted,
+  onInboxViewRenameRequested,
+  onInboxViewRenameSaved,
+  onInboxViewRenameCanceled,
   onNewTask,
   onFavoriteTaskSelected,
   newTaskDraftCount,
   onOpenNewTaskDrafts,
 }: LubanSidebarProps) {
-  const {
-    app,
-    pickProjectPath,
-    addProject,
-  } = useLuban()
+  const { app, pickProjectPath, addProject } = useLuban()
 
   const [favoriteTasks, setFavoriteTasks] = useState<TaskSummarySnapshot[]>([])
 
   const projects = useMemo(
     () => buildSidebarProjects(app, { projectOrder: app?.ui.sidebar_project_order ?? [] }),
-    [app],
+    [app]
   )
   const inboxUnread = useMemo(() => {
     if (!app) return 0
@@ -214,7 +358,7 @@ export function LubanSidebar({
         const snap = await fetchTasks({ workdirStatus: "all" })
         if (cancelled) return
         const starred = snap.tasks
-          .filter((t) => t.is_starred)
+          .filter(t => t.is_starred)
           .sort((a, b) => b.updated_at_unix_seconds - a.updated_at_unix_seconds)
         setFavoriteTasks(starred)
       } catch (err) {
@@ -242,11 +386,7 @@ export function LubanSidebar({
   }
 
   return (
-    <div
-      data-testid="nav-sidebar"
-      className="h-full flex flex-col"
-      style={{ width: `${width}px` }}
-    >
+    <div data-testid="nav-sidebar" className="h-full flex flex-col" style={{ width: `${width}px` }}>
       {/* Header - Workspace Switcher */}
       <div className="flex items-center justify-between h-[52px] px-3">
         <DropdownMenu>
@@ -258,8 +398,10 @@ export function LubanSidebar({
               <div className="w-5 h-5 rounded bg-[#5e6ad2] flex items-center justify-center">
                 <Layers className="w-3 h-3 text-white" />
               </div>
-              <span className="text-[13px] font-semibold" style={{ color: '#1b1b1b' }}>Luban</span>
-              <ChevronDown className="w-3 h-3" style={{ color: '#9b9b9b' }} />
+              <span className="text-[13px] font-semibold" style={{ color: "#1b1b1b" }}>
+                Luban
+              </span>
+              <ChevronDown className="w-3 h-3" style={{ color: "#9b9b9b" }} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -270,10 +412,10 @@ export function LubanSidebar({
             <DropdownMenuItem
               onClick={() => onViewChange?.("settings")}
               className="flex items-center gap-2.5 px-2.5 py-2 text-[13px] rounded-md cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5]"
-              style={{ color: '#1b1b1b' }}
+              style={{ color: "#1b1b1b" }}
               data-testid="open-settings-button"
             >
-              <Settings className="w-4 h-4" style={{ color: '#6b6b6b' }} />
+              <Settings className="w-4 h-4" style={{ color: "#6b6b6b" }} />
               Settings
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -281,7 +423,7 @@ export function LubanSidebar({
         <div className="flex items-center gap-1.5">
           <button
             className="p-1.5 rounded hover:bg-[#eeeeee] transition-colors"
-            style={{ color: '#6b6b6b' }}
+            style={{ color: "#6b6b6b" }}
             title="Search"
           >
             <Search className="w-4 h-4" />
@@ -290,7 +432,7 @@ export function LubanSidebar({
             <button
               onClick={() => onNewTask?.()}
               className="p-1.5 rounded-lg transition-colors hover:bg-[#e8e8e8]"
-              style={{ backgroundColor: '#ffffff', color: '#1b1b1b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+              style={{ backgroundColor: "#ffffff", color: "#1b1b1b", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}
               title="New task"
               data-testid="new-task-button"
             >
@@ -310,10 +452,28 @@ export function LubanSidebar({
               label="Inbox"
               badge={inboxUnread}
               testId="nav-inbox-button"
-              active={activeView === "inbox"}
+              active={activeView === "inbox" && activeInboxViewId == null}
               onClick={() => handleNavClick("inbox")}
             />
           </ShortcutTooltip>
+          {inboxViews.length > 0 && (
+            <div className="ml-6 mt-0.5 space-y-0.5">
+              {inboxViews.map((view, idx) => (
+                <InboxViewItem
+                  key={view.id}
+                  view={view}
+                  index={idx}
+                  active={activeView === "inbox" && activeInboxViewId === view.id}
+                  renaming={renamingInboxViewId === view.id}
+                  onSelect={() => onInboxViewSelected?.(view.id)}
+                  onDelete={() => onInboxViewDeleted?.(view.id)}
+                  onRenameRequested={() => onInboxViewRenameRequested?.(view.id)}
+                  onRenameSaved={name => onInboxViewRenameSaved?.(view.id, name)}
+                  onRenameCanceled={() => onInboxViewRenameCanceled?.()}
+                />
+              ))}
+            </div>
+          )}
           {(newTaskDraftCount ?? 0) > 0 && (
             <NavItem
               icon={<FileText className="w-4 h-4" />}
@@ -329,7 +489,7 @@ export function LubanSidebar({
         {/* Favorites Section (only shown when non-empty) */}
         {favoriteTasks.length > 0 && (
           <Section title="Favorites" defaultExpanded={true}>
-            {favoriteTasks.map((t) => (
+            {favoriteTasks.map(t => (
               <NavItem
                 key={`fav-${t.workdir_id}-${t.task_id}`}
                 icon={<Star className="w-4 h-4" fill="#f2c94c" style={{ color: "#f2c94c" }} />}
@@ -344,7 +504,7 @@ export function LubanSidebar({
 
         {/* Projects Section */}
         <Section title="Projects">
-          {projects.map((p) => {
+          {projects.map(p => {
             const active = p.id === activeProjectId
             const color = projectColorClass(p.id)
             return (

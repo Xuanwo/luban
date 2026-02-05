@@ -12,10 +12,35 @@ import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
 import { GlobalSequenceShortcuts } from "./global-sequence-shortcuts"
 import { useLuban } from "@/lib/luban-context"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
+import type { InboxFilters } from "@/lib/inbox-filters"
+import { DEFAULT_INBOX_FILTERS, inboxFiltersEqual, normalizeInboxFilters } from "@/lib/inbox-filters"
+import type { InboxSavedView } from "@/lib/inbox-views"
+import { loadInboxViews, nextDefaultInboxViewName, saveInboxViews } from "@/lib/inbox-views"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import type { NewTaskDraft } from "@/lib/new-task-drafts"
 import { deleteNewTaskDraft, loadNewTaskDrafts, NEW_TASK_DRAFTS_CHANGED_EVENT } from "@/lib/new-task-drafts"
+import { INBOX_ACTIVE_VIEW_KEY, INBOX_FILTERS_KEY, loadJson, saveJson } from "@/lib/ui-prefs"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string"
+}
+
+function coerceInboxFilters(value: unknown): InboxFilters | null {
+  if (!isRecord(value)) return null
+  const projectIds = Array.isArray(value.projectIds) ? value.projectIds.filter(isString) : []
+  const statuses = Array.isArray(value.statuses) ? value.statuses.filter(isString) : []
+  const updated = isString(value.updated) ? value.updated : DEFAULT_INBOX_FILTERS.updated
+  return normalizeInboxFilters({
+    projectIds,
+    statuses: statuses as InboxFilters["statuses"],
+    updated: updated as InboxFilters["updated"],
+  })
+}
 
 /**
  * Luban IDE main layout
@@ -32,6 +57,16 @@ export function LubanIDE() {
 
   const [activeView, setActiveView] = useState<NavView>("tasks")
   const [inboxRefreshSeq, setInboxRefreshSeq] = useState(0)
+  const [inboxViews, setInboxViews] = useState<InboxSavedView[]>(() => loadInboxViews())
+  const [inboxFilters, setInboxFilters] = useState<InboxFilters>(() => {
+    const stored = loadJson<unknown>(INBOX_FILTERS_KEY)
+    return coerceInboxFilters(stored) ?? DEFAULT_INBOX_FILTERS
+  })
+  const [activeInboxViewId, setActiveInboxViewId] = useState<string | null>(() => {
+    const stored = loadJson<unknown>(INBOX_ACTIVE_VIEW_KEY)
+    return typeof stored === "string" ? stored : null
+  })
+  const [renamingInboxViewId, setRenamingInboxViewId] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [showDetail, setShowDetail] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -57,17 +92,95 @@ export function LubanIDE() {
     return () => window.removeEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
   }, [])
 
+  useEffect(() => {
+    saveInboxViews(inboxViews)
+  }, [inboxViews])
+
+  useEffect(() => {
+    saveJson(INBOX_FILTERS_KEY, normalizeInboxFilters(inboxFilters))
+  }, [inboxFilters])
+
+  useEffect(() => {
+    saveJson(INBOX_ACTIVE_VIEW_KEY, activeInboxViewId)
+  }, [activeInboxViewId])
+
+  useEffect(() => {
+    if (activeInboxViewId == null) return
+    if (inboxViews.some(v => v.id === activeInboxViewId)) return
+    setActiveInboxViewId(null)
+  }, [activeInboxViewId, inboxViews])
+
+  const openInboxBase = () => {
+    setInboxRefreshSeq(prev => prev + 1)
+    setActiveView("inbox")
+    setSelectedTask(null)
+    setShowDetail(false)
+  }
+
+  const openPlainInbox = () => {
+    openInboxBase()
+    setInboxFilters(DEFAULT_INBOX_FILTERS)
+    setActiveInboxViewId(null)
+    setRenamingInboxViewId(null)
+  }
+
   const handleViewChange = (view: NavView) => {
     if (view === "settings") {
       setSettingsOpen(true)
       return
     }
     if (view === "inbox") {
-      setInboxRefreshSeq((prev) => prev + 1)
+      openPlainInbox()
+      return
     }
     setActiveView(view)
     setSelectedTask(null)
     setShowDetail(false)
+  }
+
+  const handleInboxFiltersChange = (next: InboxFilters) => {
+    const normalized = normalizeInboxFilters(next)
+    setInboxFilters(normalized)
+    const match = inboxViews.find(v => inboxFiltersEqual(v.filters, normalized)) ?? null
+    setActiveInboxViewId(match?.id ?? null)
+  }
+
+  const handleCreateInboxView = () => {
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    setInboxViews(prev => [
+      ...prev,
+      {
+        id,
+        name: nextDefaultInboxViewName(prev),
+        filters: normalizeInboxFilters(inboxFilters),
+      },
+    ])
+    setActiveInboxViewId(id)
+    setRenamingInboxViewId(id)
+  }
+
+  const handleApplyInboxView = (viewId: string) => {
+    const view = inboxViews.find(v => v.id === viewId) ?? null
+    if (!view) return
+    openInboxBase()
+    setInboxFilters(normalizeInboxFilters(view.filters))
+    setActiveInboxViewId(view.id)
+    setRenamingInboxViewId(null)
+  }
+
+  const handleDeleteInboxView = (viewId: string) => {
+    setInboxViews(prev => prev.filter(v => v.id !== viewId))
+    if (activeInboxViewId === viewId) setActiveInboxViewId(null)
+    if (renamingInboxViewId === viewId) setRenamingInboxViewId(null)
+  }
+
+  const handleRenameInboxView = (viewId: string, nextName: string) => {
+    const trimmed = nextName.trim()
+    setInboxViews(prev => prev.map(v => (v.id === viewId ? { ...v, name: trimmed.length > 0 ? trimmed : v.name } : v)))
+    setRenamingInboxViewId(null)
   }
 
   // Handle opening full view from inbox notification
@@ -80,12 +193,7 @@ export function LubanIDE() {
         workspaceId: notification.workdirId,
         taskId: notification.taskId,
         title: notification.taskTitle,
-        status:
-          notification.type === "completed"
-            ? "done"
-            : notification.type === "failed"
-              ? "canceled"
-              : "iterating",
+        status: notification.type === "completed" ? "done" : notification.type === "failed" ? "canceled" : "iterating",
         workdir: notification.workdir,
         projectName: notification.projectName,
         projectColor: notification.projectColor,
@@ -98,7 +206,7 @@ export function LubanIDE() {
 
   const projectInfoById = useMemo(() => {
     if (!app) return new Map<string, { name: string; color: string }>()
-    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    const displayNames = computeProjectDisplayNames(app.projects.map(p => ({ path: p.path, name: p.name })))
     const out = new Map<string, { name: string; color: string }>()
     for (const p of app.projects) {
       out.set(p.id, {
@@ -130,6 +238,9 @@ export function LubanIDE() {
         <InboxView
           onOpenFullView={handleOpenFullViewFromInbox}
           refreshSeq={inboxRefreshSeq}
+          filters={inboxFilters}
+          onFiltersChange={handleInboxFiltersChange}
+          onSaveView={handleCreateInboxView}
         />
       )
     }
@@ -161,10 +272,10 @@ export function LubanIDE() {
         activeProjectId={activeProjectId}
         mode={taskListMode}
         statusPickerRequestSeq={statusPickerRequestSeq}
-        onModeChange={(mode) => {
+        onModeChange={mode => {
           setActiveView(mode === "all" ? "tasks-all" : mode === "backlog" ? "tasks-backlog" : "tasks")
         }}
-        onTaskClick={(task) => {
+        onTaskClick={task => {
           void (async () => {
             await openWorkspace(task.workspaceId)
             await activateTask(task.taskId)
@@ -187,12 +298,12 @@ export function LubanIDE() {
           setNewTaskOpen(true)
         }}
         onGoInbox={() => handleViewChange("inbox")}
-        onSetTaskListMode={(mode) => {
+        onSetTaskListMode={mode => {
           setSelectedTask(null)
           setShowDetail(false)
           setActiveView(mode === "all" ? "tasks-all" : mode === "backlog" ? "tasks-backlog" : "tasks")
         }}
-        onOpenStatusPicker={() => setStatusPickerRequestSeq((prev) => prev + 1)}
+        onOpenStatusPicker={() => setStatusPickerRequestSeq(prev => prev + 1)}
       />
       <LubanLayout
         sidebar={
@@ -200,12 +311,20 @@ export function LubanIDE() {
             activeView={activeView}
             onViewChange={handleViewChange}
             activeProjectId={activeProjectId}
-            onProjectSelected={(projectId) => setActiveProjectId(projectId)}
+            onProjectSelected={projectId => setActiveProjectId(projectId)}
+            inboxViews={inboxViews}
+            activeInboxViewId={activeInboxViewId}
+            renamingInboxViewId={renamingInboxViewId}
+            onInboxViewSelected={handleApplyInboxView}
+            onInboxViewDeleted={handleDeleteInboxView}
+            onInboxViewRenameRequested={setRenamingInboxViewId}
+            onInboxViewRenameSaved={handleRenameInboxView}
+            onInboxViewRenameCanceled={() => setRenamingInboxViewId(null)}
             onNewTask={() => {
               setNewTaskInitialDraft(null)
               setNewTaskOpen(true)
             }}
-            onFavoriteTaskSelected={(task) => {
+            onFavoriteTaskSelected={task => {
               void (async () => {
                 await openWorkspace(task.workdir_id)
                 await activateTask(task.task_id)
@@ -221,26 +340,23 @@ export function LubanIDE() {
       >
         {renderContent()}
       </LubanLayout>
-      <SettingsPanel
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-      />
+      <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
       <NewTaskDraftsDialog
         open={newTaskDraftsOpen}
         onOpenChange={setNewTaskDraftsOpen}
         drafts={newTaskDrafts}
-        onOpenDraft={(draft) => {
+        onOpenDraft={draft => {
           setNewTaskDraftsOpen(false)
           setNewTaskInitialDraft(draft)
           setNewTaskOpen(true)
         }}
-        onDeleteDraft={(draftId) => deleteNewTaskDraft(draftId)}
+        onDeleteDraft={draftId => deleteNewTaskDraft(draftId)}
       />
       <NewTaskModal
         open={newTaskOpen}
         activeProjectId={activeProjectId}
         initialDraft={newTaskInitialDraft}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           setNewTaskOpen(open)
           if (!open) setNewTaskInitialDraft(null)
           if (!open) setShowDetail(true)

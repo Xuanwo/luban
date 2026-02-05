@@ -1,23 +1,28 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import {
-  Loader2,
-  MoreHorizontal,
-  Filter,
-  SlidersHorizontal,
-  Inbox as InboxIcon,
-} from "lucide-react"
+import { Loader2, MoreHorizontal, Filter, SlidersHorizontal, Inbox as InboxIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TaskActivityPanel } from "./task-activity-panel"
 import { TaskHeader } from "./shared/task-header"
 import { TaskStatusIcon, TaskStatusSelector, taskStatusConfig } from "./shared/task-status-selector"
+import { InboxFilterDropdown } from "./inbox-filter-dropdown"
+import { InboxFilterBar } from "./inbox-filter-bar"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchConversation, fetchTasks } from "@/lib/luban-http"
-import type { ConversationSnapshot, OperationStatus, TaskStatus, TasksSnapshot, TurnResult, TurnStatus } from "@/lib/luban-api"
+import type {
+  ConversationSnapshot,
+  OperationStatus,
+  TaskStatus,
+  TasksSnapshot,
+  TurnResult,
+  TurnStatus,
+} from "@/lib/luban-api"
 import { isMockMode } from "@/lib/luban-mode"
+import type { InboxFilters } from "@/lib/inbox-filters"
+import { applyInboxFilters, DEFAULT_INBOX_FILTERS, inboxFiltersEqual } from "@/lib/inbox-filters"
 
 export interface InboxNotification {
   id: string
@@ -25,18 +30,21 @@ export interface InboxNotification {
   taskId: number
   taskTitle: string
   workdir: string
+  projectId: string
   projectName: string
   projectAvatarUrl: string
   projectFallbackAvatarUrl: string
   projectColor: string
   type: TurnResult | null
   taskLifecycleStatus: TaskStatus
+  status: TaskStatus
   taskStatus: {
     agentRunStatus: OperationStatus
     turnStatus: TurnStatus
     lastTurnResult: TurnResult | null
     hasUnreadCompletion: boolean
   }
+  updatedAtUnixSeconds: number
   timestamp: string
   read: boolean
   isStarred: boolean
@@ -45,6 +53,9 @@ export interface InboxNotification {
 interface InboxViewProps {
   onOpenFullView?: (notification: InboxNotification) => void
   refreshSeq?: number
+  filters: InboxFilters
+  onFiltersChange: (next: InboxFilters) => void
+  onSaveView: () => void
 }
 
 function escapeXmlText(raw: string): string {
@@ -105,7 +116,9 @@ function stableTaskKey(task: { workdir_id: number; task_id: number }): string {
   return `${task.workdir_id}:${task.task_id}`
 }
 
-function buildStableUpdatedAtMap(tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]): Map<string, number> {
+function buildStableUpdatedAtMap(
+  tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]
+): Map<string, number> {
   const out = new Map<string, number>()
   for (const t of tasks) {
     out.set(stableTaskKey(t), t.updated_at_unix_seconds)
@@ -181,7 +194,15 @@ interface NotificationRowProps {
   onDoubleClick?: () => void
 }
 
-function NotificationRow({ notification, previewText, timestampText, testId, selected, onClick, onDoubleClick }: NotificationRowProps) {
+function NotificationRow({
+  notification,
+  previewText,
+  timestampText,
+  testId,
+  selected,
+  onClick,
+  onDoubleClick,
+}: NotificationRowProps) {
   const isRunning =
     notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
 
@@ -193,9 +214,9 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
       onDoubleClick={onDoubleClick}
       className={cn(
         "group flex items-start gap-2 px-3 py-2.5 cursor-pointer transition-colors",
-        selected ? "bg-[#f0f0f0]" : "hover:bg-[#f7f7f7]",
+        selected ? "bg-[#f0f0f0]" : "hover:bg-[#f7f7f7]"
       )}
-      style={{ borderBottom: '1px solid #ebebeb' }}
+      style={{ borderBottom: "1px solid #ebebeb" }}
     >
       {/* Content */}
       <div className="flex-1 min-w-0">
@@ -208,23 +229,22 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
             className="w-[14px] h-[14px] rounded-[3px] flex-shrink-0"
             loading="lazy"
             decoding="async"
-            onError={(e) => {
+            onError={e => {
               const img = e.currentTarget
               if (img.src !== notification.projectFallbackAvatarUrl) {
                 img.src = notification.projectFallbackAvatarUrl
               }
             }}
           />
-          <span className="text-[12px]" style={{ color: '#6b6b6b' }}>
+          <span className="text-[12px]" style={{ color: "#6b6b6b" }}>
             {notification.projectName}
           </span>
-          <span className="text-[12px]" style={{ color: '#9b9b9b' }}>›</span>
+          <span className="text-[12px]" style={{ color: "#9b9b9b" }}>
+            ›
+          </span>
           <span
-            className={cn(
-              "text-[13px] truncate",
-              !notification.read ? "font-medium" : "font-normal"
-            )}
-            style={{ color: '#1b1b1b' }}
+            className={cn("text-[13px] truncate", !notification.read ? "font-medium" : "font-normal")}
+            style={{ color: "#1b1b1b" }}
             data-testid="inbox-notification-task-title"
           >
             {notification.taskTitle}
@@ -233,7 +253,7 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
         <div
           data-testid="inbox-notification-preview"
           className="text-[12px] mt-0.5 truncate"
-          style={{ color: '#6b6b6b' }}
+          style={{ color: "#6b6b6b" }}
         >
           {previewText}
         </div>
@@ -248,11 +268,7 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
             hasUnreadCompletion={notification.taskStatus.hasUnreadCompletion}
           />
         </span>
-        <span
-          data-testid="inbox-notification-timestamp"
-          className="text-[11px]"
-          style={{ color: '#9b9b9b' }}
-        >
+        <span data-testid="inbox-notification-timestamp" className="text-[11px]" style={{ color: "#9b9b9b" }}>
           {timestampText}
         </span>
       </div>
@@ -263,17 +279,18 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
 // Empty state component
 function EmptyState({ unreadCount }: { unreadCount: number }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center" style={{ color: '#9b9b9b' }}>
+    <div className="flex-1 flex flex-col items-center justify-center" style={{ color: "#9b9b9b" }}>
       <InboxIcon className="w-16 h-16 mb-4" strokeWidth={1} />
       <span className="text-[14px]">
-        {unreadCount > 0 ? `${unreadCount} unread notifications` : 'No notifications'}
+        {unreadCount > 0 ? `${unreadCount} unread notifications` : "No notifications"}
       </span>
     </div>
   )
 }
 
-export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
-  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
+export function InboxView({ onOpenFullView, refreshSeq, filters, onFiltersChange, onSaveView }: InboxViewProps) {
+  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } =
+    useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number | null>(null)
@@ -333,33 +350,33 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
   }, [refreshTasks, wsConnected])
 
   useEffect(() => {
-    return subscribeServerEvents((event) => {
+    return subscribeServerEvents(event => {
       if (event.type !== "task_summaries_changed") return
-      setTasksSnapshot((prev) => {
+      setTasksSnapshot(prev => {
         if (!prev) return prev
         ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: event.tasks ?? [] })
-        const nextTasks = [
-          ...prev.tasks.filter((t) => t.workdir_id !== event.workdir_id),
-          ...event.tasks,
-        ]
+        const nextTasks = [...prev.tasks.filter(t => t.workdir_id !== event.workdir_id), ...event.tasks]
         return { ...prev, tasks: nextTasks, rev: prev.rev + 1 }
       })
     })
   }, [subscribeServerEvents])
 
-  const applyLocalTaskLifecycleStatus = useCallback((args: { workdirId: number; taskId: number; status: TaskStatus }) => {
-    setTasksSnapshot((prev) => {
-      if (!prev) return prev
-      let changed = false
-      const nextTasks = prev.tasks.map((t) => {
-        if (t.workdir_id !== args.workdirId || t.task_id !== args.taskId) return t
-        if (t.task_status === args.status) return t
-        changed = true
-        return { ...t, task_status: args.status }
+  const applyLocalTaskLifecycleStatus = useCallback(
+    (args: { workdirId: number; taskId: number; status: TaskStatus }) => {
+      setTasksSnapshot(prev => {
+        if (!prev) return prev
+        let changed = false
+        const nextTasks = prev.tasks.map(t => {
+          if (t.workdir_id !== args.workdirId || t.task_id !== args.taskId) return t
+          if (t.task_status === args.status) return t
+          changed = true
+          return { ...t, task_status: args.status }
+        })
+        return changed ? { ...prev, tasks: nextTasks, rev: prev.rev + 1 } : prev
       })
-      return changed ? { ...prev, tasks: nextTasks, rev: prev.rev + 1 } : prev
-    })
-  }, [])
+    },
+    []
+  )
 
   const handleTaskLifecycleStatusChange = useCallback(
     (args: { workdirId: number; taskId: number; status: TaskStatus }) => {
@@ -367,7 +384,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
       setTaskStatus(args.workdirId, args.taskId, args.status)
       window.setTimeout(() => void refreshTasks(), 200)
     },
-    [applyLocalTaskLifecycleStatus, refreshTasks, setTaskStatus],
+    [applyLocalTaskLifecycleStatus, refreshTasks, setTaskStatus]
   )
 
   useEffect(() => {
@@ -377,25 +394,33 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     return () => window.clearInterval(id)
   }, [])
 
-  const formatTimestamp = useCallback((updatedAtUnixSeconds: number): string => {
-    const date = new Date(updatedAtUnixSeconds * 1000)
-    const now = nowMs ?? date.getTime()
-    const diffMs = Math.max(0, now - date.getTime())
-    const diffMinutes = Math.floor(diffMs / 60_000)
-    if (diffMinutes < 60) return `${diffMinutes}m`
-    const diffHours = Math.floor(diffMinutes / 60)
-    if (diffHours < 24) return `${diffHours}h`
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, "0")
-    const day = String(date.getDate()).padStart(2, "0")
-    return `${year}-${month}-${day}`
-  }, [nowMs])
+  const formatTimestamp = useCallback(
+    (updatedAtUnixSeconds: number): string => {
+      const date = new Date(updatedAtUnixSeconds * 1000)
+      const now = nowMs ?? date.getTime()
+      const diffMs = Math.max(0, now - date.getTime())
+      const diffMinutes = Math.floor(diffMs / 60_000)
+      if (diffMinutes < 60) return `${diffMinutes}m`
+      const diffHours = Math.floor(diffMinutes / 60)
+      if (diffHours < 24) return `${diffHours}h`
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, "0")
+      const day = String(date.getDate()).padStart(2, "0")
+      return `${year}-${month}-${day}`
+    },
+    [nowMs]
+  )
 
-  const notifications = useMemo(() => {
+  const nowUnixSeconds = useMemo(() => Math.floor((nowMs ?? Date.now()) / 1000), [nowMs])
+
+  const allNotifications = useMemo(() => {
     if (!app || !tasksSnapshot) return [] as InboxNotification[]
 
-    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
-    const workdirById = new Map<number, { projectPath: string; workdirName: string; workdirPath: string; status: string }>()
+    const displayNames = computeProjectDisplayNames(app.projects.map(p => ({ path: p.path, name: p.name })))
+    const workdirById = new Map<
+      number,
+      { projectPath: string; workdirName: string; workdirPath: string; status: string }
+    >()
     for (const p of app.projects) {
       for (const w of p.workdirs) {
         workdirById.set(w.id, {
@@ -407,7 +432,10 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
       }
     }
 
-    const projectInfoById = new Map<string, { name: string; color: string; avatarUrl: string; fallbackAvatarUrl: string }>()
+    const projectInfoById = new Map<
+      string,
+      { name: string; color: string; avatarUrl: string; fallbackAvatarUrl: string }
+    >()
     for (const p of app.projects) {
       const name = displayNames.get(p.path) ?? p.slug
       const fallbackAvatarUrl = buildFallbackAvatarUrl(name, 14)
@@ -425,11 +453,10 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     }
 
     const out: InboxNotification[] = []
-    const filtered = tasksSnapshot.tasks.filter((t) => {
+    const filtered = tasksSnapshot.tasks.filter(t => {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
-      if (t.task_status === "done" || t.task_status === "canceled") return false
       return true
     })
 
@@ -458,18 +485,21 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
         taskId: t.task_id,
         taskTitle: t.title,
         workdir: t.workdir_name || t.branch_name,
+        projectId: t.project_id,
         projectName: projectInfo.name,
         projectAvatarUrl: projectInfo.avatarUrl,
         projectFallbackAvatarUrl: projectInfo.fallbackAvatarUrl,
         projectColor: projectInfo.color,
         type: t.last_turn_result,
         taskLifecycleStatus: t.task_status,
+        status: t.task_status,
         taskStatus: {
           agentRunStatus: t.agent_run_status,
           turnStatus: t.turn_status,
           lastTurnResult: t.last_turn_result,
           hasUnreadCompletion: t.has_unread_completion,
         },
+        updatedAtUnixSeconds: t.updated_at_unix_seconds,
         timestamp: formatTimestamp(t.updated_at_unix_seconds),
         read: !t.has_unread_completion,
         isStarred: t.is_starred,
@@ -478,13 +508,43 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     return out
   }, [app, formatTimestamp, tasksSnapshot])
 
+  const visibleNotifications = useMemo(() => {
+    return applyInboxFilters(allNotifications, filters, nowUnixSeconds)
+  }, [allNotifications, filters, nowUnixSeconds])
+
+  const projectsInInbox = useMemo(() => {
+    if (!app) return [] as Array<{ id: string; name: string; avatarUrl: string; fallbackAvatarUrl: string }>
+    const ids = new Set(allNotifications.map(n => n.projectId))
+    const displayNames = computeProjectDisplayNames(app.projects.map(p => ({ path: p.path, name: p.name })))
+    const out = app.projects
+      .filter(p => ids.has(p.id))
+      .map(p => {
+        const name = displayNames.get(p.path) ?? p.slug
+        const fallbackAvatarUrl = buildFallbackAvatarUrl(name, 14)
+        const avatarUrl = p.is_git
+          ? isMockMode()
+            ? fallbackAvatarUrl
+            : `/api/projects/avatar?project_id=${encodeURIComponent(p.id)}`
+          : fallbackAvatarUrl
+        return { id: p.id, name, avatarUrl, fallbackAvatarUrl }
+      })
+    out.sort((a, b) => a.name.localeCompare(b.name))
+    return out
+  }, [allNotifications, app])
+
+  const projectNameById = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const p of projectsInInbox) out.set(p.id, p.name)
+    return out
+  }, [projectsInInbox])
+
   useEffect(() => {
-    if (notifications.length === 0) return
+    if (visibleNotifications.length === 0) return
 
     const concurrency = 4
-    const queue = notifications
-      .map((n) => ({ id: n.id, workdirId: n.workdirId, taskId: n.taskId }))
-      .filter((n) => previewByNotificationIdRef.current[n.id] === undefined && !previewInFlightRef.current.has(n.id))
+    const queue = visibleNotifications
+      .map(n => ({ id: n.id, workdirId: n.workdirId, taskId: n.taskId }))
+      .filter(n => previewByNotificationIdRef.current[n.id] === undefined && !previewInFlightRef.current.has(n.id))
 
     if (queue.length === 0) return
 
@@ -505,13 +565,13 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
           const agentLine = extractLatestAgentResponsePreviewLine(convo)
           const userLine = extractLatestUserMessagePreviewLine(convo)
           const runStartedAtUnixMs = convo.run_started_at_unix_ms ?? null
-          setPreviewByNotificationId((prev) => {
+          setPreviewByNotificationId(prev => {
             if (prev[item.id] !== undefined) return prev
             return { ...prev, [item.id]: { agentLine, userLine, runStartedAtUnixMs } }
           })
         } catch (err) {
           if (cancelled) return
-          setPreviewByNotificationId((prev) => {
+          setPreviewByNotificationId(prev => {
             if (prev[item.id] !== undefined) return prev
             return { ...prev, [item.id]: null }
           })
@@ -528,49 +588,57 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [notifications])
+  }, [visibleNotifications])
 
   const selectedNotification = useMemo(() => {
     if (!selectedNotificationId) return null
-    return notifications.find((n) => n.id === selectedNotificationId) ?? null
-  }, [notifications, selectedNotificationId])
+    return visibleNotifications.find(n => n.id === selectedNotificationId) ?? null
+  }, [selectedNotificationId, visibleNotifications])
 
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const unreadCount = visibleNotifications.filter(n => !n.read).length
+  const filtersActive = !inboxFiltersEqual(filters, DEFAULT_INBOX_FILTERS)
 
   return (
     <div className="h-full flex" data-testid="inbox-view">
       {/* Left: Notification List */}
-      <div
-        className="flex flex-col border-r"
-        style={{ width: '400px', borderColor: '#ebebeb' }}
-      >
+      <div className="flex flex-col border-r" style={{ width: "400px", borderColor: "#ebebeb" }}>
         {/* List Header */}
         <div
           className="flex items-center justify-between h-[39px] flex-shrink-0 px-3"
-          style={{ borderBottom: '1px solid #ebebeb' }}
+          style={{ borderBottom: "1px solid #ebebeb" }}
         >
           <div className="flex items-center gap-1">
-            <span className="text-[13px] font-medium" style={{ color: '#1b1b1b' }}>
+            <span className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
               Inbox
             </span>
             <button
               className="w-5 h-5 flex items-center justify-center rounded hover:bg-[#eeeeee] transition-colors"
-              style={{ color: '#9b9b9b' }}
+              style={{ color: "#9b9b9b" }}
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </button>
           </div>
           <div className="flex items-center gap-0.5">
-            <button
-              className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-              style={{ color: '#9b9b9b' }}
-              title="Filter"
+            <InboxFilterDropdown
+              filters={filters}
+              projects={projectsInInbox}
+              onFiltersChange={onFiltersChange}
+              onClear={() => onFiltersChange(DEFAULT_INBOX_FILTERS)}
             >
-              <Filter className="w-4 h-4" />
-            </button>
+              <button
+                type="button"
+                data-testid="inbox-filter-button"
+                aria-pressed={filtersActive}
+                className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
+                style={{ color: filtersActive ? "#5e6ad2" : "#9b9b9b" }}
+                title="Filter"
+              >
+                <Filter className="w-4 h-4" />
+              </button>
+            </InboxFilterDropdown>
             <button
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-              style={{ color: '#9b9b9b' }}
+              style={{ color: "#9b9b9b" }}
               title="Display options"
             >
               <SlidersHorizontal className="w-4 h-4" />
@@ -578,9 +646,16 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
           </div>
         </div>
 
+        <InboxFilterBar
+          filters={filters}
+          projectsById={projectNameById}
+          onFiltersChange={onFiltersChange}
+          onSaveView={onSaveView}
+        />
+
         {/* Notification List */}
         <div className="flex-1 overflow-y-auto">
-          {notifications.map((notification, idx) => {
+          {visibleNotifications.map((notification, idx) => {
             const preview = previewByNotificationId[notification.id]
             const isRunning =
               notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
@@ -590,7 +665,9 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
               if (preview == null) {
                 previewText = "No agent response yet."
               } else {
-                const selected = isRunning ? preview.userLine ?? preview.agentLine : preview.agentLine ?? preview.userLine
+                const selected = isRunning
+                  ? (preview.userLine ?? preview.agentLine)
+                  : (preview.agentLine ?? preview.userLine)
                 previewText = selected ?? "No agent response yet."
               }
             }
@@ -610,14 +687,14 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
                 selected={selectedNotification?.id === notification.id}
                 onClick={() => {
                   setSelectedNotificationId(notification.id)
-                  setTasksSnapshot((prev) => {
+                  setTasksSnapshot(prev => {
                     if (!prev) return prev
                     return {
                       ...prev,
-                      tasks: prev.tasks.map((t) =>
+                      tasks: prev.tasks.map(t =>
                         t.workdir_id === notification.workdirId && t.task_id === notification.taskId
                           ? { ...t, has_unread_completion: false }
-                          : t,
+                          : t
                       ),
                     }
                   })
@@ -650,7 +727,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
                 <div className="flex items-center gap-2 min-w-0">
                   <TaskStatusSelector
                     status={selectedNotification.taskLifecycleStatus}
-                    onStatusChange={(status) =>
+                    onStatusChange={status =>
                       handleTaskLifecycleStatusChange({
                         workdirId: selectedNotification.workdirId,
                         taskId: selectedNotification.taskId,
@@ -669,16 +746,16 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
               }
               showFullActions
               isStarred={selectedNotification.isStarred}
-              onToggleStar={(nextStarred) => {
+              onToggleStar={nextStarred => {
                 setTaskStarred(selectedNotification.workdirId, selectedNotification.taskId, nextStarred)
-                setTasksSnapshot((prev) => {
+                setTasksSnapshot(prev => {
                   if (!prev) return prev
                   return {
                     ...prev,
-                    tasks: prev.tasks.map((t) =>
+                    tasks: prev.tasks.map(t =>
                       t.workdir_id === selectedNotification.workdirId && t.task_id === selectedNotification.taskId
                         ? { ...t, is_starred: nextStarred }
-                        : t,
+                        : t
                     ),
                   }
                 })

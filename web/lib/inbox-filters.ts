@@ -10,7 +10,7 @@ export type InboxFilters = {
 
 export const DEFAULT_INBOX_FILTERS: InboxFilters = {
   projectIds: [],
-  statuses: ["backlog", "todo", "iterating", "validating", "canceled"],
+  statuses: ["backlog", "todo", "iterating", "validating"],
   updated: "any",
 }
 
@@ -38,6 +38,14 @@ export function inboxFiltersEqual(a: InboxFilters, b: InboxFilters): boolean {
     setEqual(uniqueSorted(a.projectIds), uniqueSorted(b.projectIds)) &&
     setEqual(uniqueSorted(a.statuses), uniqueSorted(b.statuses))
   )
+}
+
+export function normalizeInboxFilters(filters: InboxFilters): InboxFilters {
+  return {
+    projectIds: uniqueSorted(filters.projectIds),
+    statuses: uniqueSorted(filters.statuses) as TaskStatus[],
+    updated: filters.updated,
+  }
 }
 
 function thresholdUnixSeconds(preset: InboxUpdatedFilterPreset, nowUnixSeconds: number): number | null {

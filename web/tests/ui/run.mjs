@@ -14,6 +14,7 @@ import { runInboxRead } from './scenarios/inbox-read.mjs';
 import { runInboxPreviewLine } from './scenarios/inbox-preview-line.mjs';
 import { runInboxSortStability } from './scenarios/inbox-sort-stability.mjs';
 import { runInboxStatusChange } from './scenarios/inbox-status-change.mjs';
+import { runInboxSavedViews } from './scenarios/inbox-saved-views.mjs';
 import { runCancelTaskClearsRunning } from './scenarios/cancel-task-clears-running.mjs';
 import { runLatestEventsVisible } from './scenarios/latest-events-visible.mjs';
 import { runActivityWindowing } from './scenarios/activity-windowing.mjs';
@@ -178,6 +179,7 @@ async function main() {
 			    await runInboxPreviewLine({ page, baseUrl });
 				    await runInboxSortStability({ page, baseUrl });
 				    await runInboxStatusChange({ page, baseUrl });
+            await runInboxSavedViews({ page, baseUrl });
 			    await runStarFavorites({ page, baseUrl });
     await runNewTaskDefaultProjectFollowsContext({ page, baseUrl });
     await runSettingsPanel({ page, baseUrl });
