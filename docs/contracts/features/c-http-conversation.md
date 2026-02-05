@@ -67,6 +67,7 @@ User events are structured:
 
 - `type`: `user_event`
 - `entry_id`: stable string identifier (unique within the conversation)
+- `created_at_unix_ms`: millisecond timestamp
 - `event.type`: `message` | `terminal_command_started` | `terminal_command_finished`
 
 For `event.type=message`:
@@ -94,6 +95,7 @@ Agent events are structured:
 
 - `type`: `agent_event`
 - `entry_id`: stable string identifier (unique within the conversation)
+- `created_at_unix_ms`: millisecond timestamp
 - `event.type`: `message` | `item` | `turn_usage` | `turn_duration` | `turn_canceled` | `turn_error`
 
 For `event.type=message`:

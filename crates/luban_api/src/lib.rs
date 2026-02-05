@@ -621,6 +621,8 @@ pub enum ConversationSystemEvent {
 pub struct UserEventEntry {
     #[serde(default)]
     pub entry_id: String,
+    #[serde(default)]
+    pub created_at_unix_ms: u64,
     pub event: UserEvent,
 }
 
@@ -660,6 +662,8 @@ pub struct TerminalCommandFinished {
 pub struct AgentEventEntry {
     #[serde(default)]
     pub entry_id: String,
+    #[serde(default)]
+    pub created_at_unix_ms: u64,
     pub event: AgentEvent,
 }
 

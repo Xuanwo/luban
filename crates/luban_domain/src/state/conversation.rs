@@ -7,6 +7,14 @@ use super::{
 use crate::{CodexThreadItem, CodexUsage, ContextTokenKind, TaskStatus, ThinkingEffort};
 use std::collections::VecDeque;
 
+fn now_unix_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum ConversationSystemEvent {
@@ -72,11 +80,15 @@ pub enum ConversationEntry {
     UserEvent {
         #[serde(default)]
         entry_id: String,
+        #[serde(default)]
+        created_at_unix_ms: u64,
         event: UserEvent,
     },
     AgentEvent {
         #[serde(default)]
         entry_id: String,
+        #[serde(default)]
+        created_at_unix_ms: u64,
         event: AgentEvent,
     },
 }
@@ -122,20 +134,24 @@ fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
         (
             ConversationEntry::UserEvent {
                 entry_id: a_id,
+                created_at_unix_ms: a_created_at,
                 event: a,
             },
             ConversationEntry::UserEvent {
                 entry_id: b_id,
+                created_at_unix_ms: b_created_at,
                 event: b,
             },
-        ) => a_id == b_id && a == b,
+        ) => a_id == b_id && a_created_at == b_created_at && a == b,
         (
             ConversationEntry::AgentEvent {
                 entry_id: a_entry_id,
+                created_at_unix_ms: a_created_at,
                 event: a,
             },
             ConversationEntry::AgentEvent {
                 entry_id: b_entry_id,
+                created_at_unix_ms: b_created_at,
                 event: b,
             },
         ) => match (a, b) {
@@ -148,21 +164,30 @@ fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
                     id: b_id,
                     text: b_text,
                 },
-            ) => a_entry_id == b_entry_id && a_id == b_id && a_text == b_text,
+            ) => {
+                a_entry_id == b_entry_id
+                    && a_created_at == b_created_at
+                    && a_id == b_id
+                    && a_text == b_text
+            }
             (AgentEvent::Item { item: a_item }, AgentEvent::Item { item: b_item }) => {
-                a_entry_id == b_entry_id && codex_item_id(a_item) == codex_item_id(b_item)
+                a_entry_id == b_entry_id
+                    && a_created_at == b_created_at
+                    && codex_item_id(a_item) == codex_item_id(b_item)
             }
             (
                 AgentEvent::TurnUsage { usage: a_usage },
                 AgentEvent::TurnUsage { usage: b_usage },
-            ) => a_entry_id == b_entry_id && a_usage == b_usage,
+            ) => a_entry_id == b_entry_id && a_created_at == b_created_at && a_usage == b_usage,
             (
                 AgentEvent::TurnDuration { duration_ms: a },
                 AgentEvent::TurnDuration { duration_ms: b },
-            ) => a_entry_id == b_entry_id && a == b,
-            (AgentEvent::TurnCanceled, AgentEvent::TurnCanceled) => a_entry_id == b_entry_id,
+            ) => a_entry_id == b_entry_id && a_created_at == b_created_at && a == b,
+            (AgentEvent::TurnCanceled, AgentEvent::TurnCanceled) => {
+                a_entry_id == b_entry_id && a_created_at == b_created_at
+            }
             (AgentEvent::TurnError { message: a }, AgentEvent::TurnError { message: b }) => {
-                a_entry_id == b_entry_id && a == b
+                a_entry_id == b_entry_id && a_created_at == b_created_at && a == b
             }
             _ => false,
         },
@@ -300,6 +325,7 @@ impl WorkspaceConversation {
 
     fn push_entry_and_update_totals(&mut self, entry: ConversationEntry) {
         let mut entry = entry;
+        self.ensure_entry_created_at(&mut entry);
         self.ensure_entry_id(&mut entry);
         self.entries.push(entry);
         self.entries_total = self
@@ -320,10 +346,12 @@ impl WorkspaceConversation {
         let entry = match item {
             CodexThreadItem::AgentMessage { id, text } => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Message { id, text },
             },
             other => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -368,6 +396,26 @@ impl WorkspaceConversation {
 
         if slot.is_empty() {
             *slot = format!("e_{}", self.entries_total.saturating_add(1));
+        }
+    }
+
+    fn ensure_entry_created_at(&self, entry: &mut ConversationEntry) {
+        match entry {
+            ConversationEntry::SystemEvent { .. } => {}
+            ConversationEntry::UserEvent {
+                created_at_unix_ms, ..
+            } => {
+                if *created_at_unix_ms == 0 {
+                    *created_at_unix_ms = now_unix_ms();
+                }
+            }
+            ConversationEntry::AgentEvent {
+                created_at_unix_ms, ..
+            } => {
+                if *created_at_unix_ms == 0 {
+                    *created_at_unix_ms = now_unix_ms();
+                }
+            }
         }
     }
 
@@ -522,6 +570,7 @@ mod tests {
         let mut entries = Vec::with_capacity(MAX_CONVERSATION_ENTRIES_IN_MEMORY + 2);
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_a".to_owned(),
+            created_at_unix_ms: 1,
             event: AgentEvent::Message {
                 id: "item-a".to_owned(),
                 text: "a".to_owned(),
@@ -529,6 +578,7 @@ mod tests {
         });
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_b".to_owned(),
+            created_at_unix_ms: 2,
             event: AgentEvent::Message {
                 id: "item-b".to_owned(),
                 text: "b".to_owned(),
@@ -536,6 +586,7 @@ mod tests {
         });
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_c".to_owned(),
+            created_at_unix_ms: 3,
             event: AgentEvent::Message {
                 id: "item-c".to_owned(),
                 text: "c".to_owned(),
@@ -544,6 +595,7 @@ mod tests {
         for idx in 0..(MAX_CONVERSATION_ENTRIES_IN_MEMORY - 1) {
             entries.push(ConversationEntry::UserEvent {
                 entry_id: format!("e_user_{idx}"),
+                created_at_unix_ms: 10 + idx as u64,
                 event: UserEvent::Message {
                     text: format!("user-{idx}"),
                     attachments: Vec::new(),
@@ -595,14 +647,18 @@ mod tests {
         assert_eq!(conversation.entries_total, 2);
 
         let (first_entry_id, first_item_id) = match &conversation.entries[0] {
-            ConversationEntry::AgentEvent { entry_id, event } => match event {
+            ConversationEntry::AgentEvent {
+                entry_id, event, ..
+            } => match event {
                 AgentEvent::Item { item } => (entry_id.as_str(), codex_item_id(item.as_ref())),
                 other => panic!("expected agent item entry, got {other:?}"),
             },
             other => panic!("expected agent event entry, got {other:?}"),
         };
         let (second_entry_id, second_item_id) = match &conversation.entries[1] {
-            ConversationEntry::AgentEvent { entry_id, event } => match event {
+            ConversationEntry::AgentEvent {
+                entry_id, event, ..
+            } => match event {
                 AgentEvent::Item { item } => (entry_id.as_str(), codex_item_id(item.as_ref())),
                 other => panic!("expected agent item entry, got {other:?}"),
             },
@@ -612,5 +668,43 @@ mod tests {
         assert_eq!(first_item_id, "cmd_1");
         assert_eq!(second_item_id, "cmd_1");
         assert_ne!(first_entry_id, second_entry_id);
+    }
+
+    #[test]
+    fn push_entry_fills_created_at_unix_ms_for_user_and_agent_entries() {
+        let state = crate::AppState::new();
+        let mut conversation = state.default_conversation(WorkspaceThreadId(1));
+
+        conversation.push_entry(ConversationEntry::UserEvent {
+            entry_id: String::new(),
+            created_at_unix_ms: 0,
+            event: UserEvent::Message {
+                text: "hello".to_owned(),
+                attachments: Vec::new(),
+            },
+        });
+        let user_created_at = match conversation.entries.last().expect("user entry") {
+            ConversationEntry::UserEvent {
+                created_at_unix_ms, ..
+            } => *created_at_unix_ms,
+            other => panic!("expected UserEvent entry, got {other:?}"),
+        };
+        assert!(user_created_at > 0);
+
+        conversation.push_entry(ConversationEntry::AgentEvent {
+            entry_id: String::new(),
+            created_at_unix_ms: 0,
+            event: AgentEvent::Message {
+                id: "agent-msg".to_owned(),
+                text: "hi".to_owned(),
+            },
+        });
+        let agent_created_at = match conversation.entries.last().expect("agent entry") {
+            ConversationEntry::AgentEvent {
+                created_at_unix_ms, ..
+            } => *created_at_unix_ms,
+            other => panic!("expected AgentEvent entry, got {other:?}"),
+        };
+        assert!(agent_created_at > 0);
     }
 }

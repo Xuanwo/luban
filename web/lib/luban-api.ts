@@ -387,8 +387,8 @@ export type AgentItem = {
 
 export type ConversationEntry =
   | { type: "system_event"; entry_id: string; created_at_unix_ms: number; event: ConversationSystemEvent }
-  | { type: "user_event"; entry_id: string; event: UserEvent }
-  | { type: "agent_event"; entry_id: string; event: AgentEvent }
+  | { type: "user_event"; entry_id: string; created_at_unix_ms: number; event: UserEvent }
+  | { type: "agent_event"; entry_id: string; created_at_unix_ms: number; event: AgentEvent }
 
 export type UserEvent =
   | { type: "message"; text: string; attachments: AttachmentRef[] }

@@ -64,7 +64,7 @@ Legend:
 - `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.
-- `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
+- `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id` and `created_at_unix_ms`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
 - `C-HTTP-CONVERSATION`: `ConversationEntry.type=system_event` may include `event_type=task_status_suggestion` to recommend a status change; clients apply via `ClientAction::TaskStatusSet`.
 - `C-HTTP-CONVERSATION`: `ConversationEntry.type=user_event` supports `event.type=message`, `terminal_command_started`, and `terminal_command_finished`.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.title` matches `ThreadMeta.title` and may be updated after the first user message.

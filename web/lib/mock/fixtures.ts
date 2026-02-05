@@ -58,9 +58,15 @@ export type MockFixtures = {
 }
 
 const FIXTURE_BASE_UNIX_MS = Date.UTC(2026, 0, 22, 12, 0, 0)
+let fixtureEntryCursorUnixMs = FIXTURE_BASE_UNIX_MS
 
 function unixMs(offsetMs: number = 0): number {
   return FIXTURE_BASE_UNIX_MS + offsetMs
+}
+
+function nextEntryCreatedAtUnixMs(stepMs: number = 250): number {
+  fixtureEntryCursorUnixMs += stepMs
+  return fixtureEntryCursorUnixMs
 }
 
 function unixSeconds(offsetSeconds: number = 0): number {
@@ -107,13 +113,19 @@ function newEntryId(prefix: string): string {
 }
 
 function userMessage(text: string): ConversationEntry {
-  return { type: "user_event", entry_id: newEntryId("ue"), event: { type: "message", text, attachments: [] } }
+  return {
+    type: "user_event",
+    entry_id: newEntryId("ue"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "message", text, attachments: [] },
+  }
 }
 
 function agentMessage(text: string): ConversationEntry {
   return {
     type: "agent_event",
     entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
     event: { type: "message", id: `agent_msg_${Math.random().toString(16).slice(2)}`, text },
   }
 }
@@ -122,20 +134,36 @@ function agentActivity(kind: AgentItemKind, payload: unknown): ConversationEntry
   return {
     type: "agent_event",
     entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
     event: { type: "item", id: `agent_act_${Math.random().toString(16).slice(2)}`, kind, payload },
   }
 }
 
 function agentTurnDuration(durationMs: number): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_duration", duration_ms: durationMs } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_duration", duration_ms: durationMs },
+  }
 }
 
 function agentTurnError(message: string): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_error", message } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_error", message },
+  }
 }
 
 function agentTurnCanceled(): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_canceled" } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_canceled" },
+  }
 }
 
 function queuedPrompt(args: {
@@ -505,6 +533,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_dedupe",
@@ -515,6 +544,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_dedupe",
@@ -525,6 +555,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -535,6 +566,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -545,6 +577,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -717,7 +750,28 @@ export function defaultMockFixtures(): MockFixtures {
           event: { event_type: "task_created" },
         }),
         userMessage("Show a completed turn."),
-        agentActivity("command_execution", { command: "rg -n \"FIXME\" -S", status: "completed", aggregated_output: "No matches" }),
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "turn_duration_smoke_command",
+            kind: "command_execution",
+            payload: { command: "rg -n \"FIXME\" -S", status: "in_progress", aggregated_output: "" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(3_200),
+          event: {
+            type: "item",
+            id: "turn_duration_smoke_command",
+            kind: "command_execution",
+            payload: { command: "rg -n \"FIXME\" -S", status: "completed", aggregated_output: "No matches" },
+          },
+        },
         agentTurnDuration(2_400),
         agentMessage("Done."),
         userMessage("Show a failed turn."),
@@ -752,6 +806,7 @@ export function defaultMockFixtures(): MockFixtures {
 	        {
 	          type: "agent_event",
 	          entry_id: newEntryId("ae"),
+            created_at_unix_ms: nextEntryCreatedAtUnixMs(),
 	          event: {
             type: "item",
             id: "prog_1",
@@ -762,6 +817,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_2",
@@ -772,6 +828,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_3",
@@ -782,6 +839,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_4",
@@ -792,11 +850,13 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: { type: "item", id: "prog_5", kind: "web_search", payload: { query: "TypeScript best practices for error handling" } },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_6",
@@ -807,6 +867,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_7",
@@ -817,6 +878,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_8",
@@ -827,6 +889,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
 	          event: {
 	            type: "item",
 	            id: "prog_9",

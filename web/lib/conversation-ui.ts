@@ -22,6 +22,7 @@ export interface ActivityEvent {
   status: "running" | "done"
   duration?: string
   badge?: string
+  timing?: { startedAtUnixMs: number | null; doneAtUnixMs: number | null }
 }
 
 type ActivityStatus = ActivityEvent["status"]
@@ -280,6 +281,12 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
 
   const order: string[] = []
   const latestById = new Map<string, ActivityEvent>()
+  const timingById = new Map<string, { startedAtUnixMs: number | null; doneAtUnixMs: number | null }>()
+
+  const normalizeUnixMs = (unixMs: unknown): number | null => {
+    if (typeof unixMs !== "number" || !Number.isFinite(unixMs) || unixMs <= 0) return null
+    return unixMs
+  }
 
   const upsert = (event: ActivityEvent) => {
     if (!latestById.has(event.id)) order.push(event.id)
@@ -296,10 +303,20 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
 
   for (const entry of conversation.entries.slice(lastUserIndex + 1)) {
     if (entry.type !== "agent_event") continue
+    const entryCreatedAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
     const ev = entry.event
     if (ev.type === "item") {
       const base = activityFromAgentItem(ev)
-      upsert({ ...base, status: inferActivityStatusFromPayload(ev.payload) })
+      const status = inferActivityStatusFromPayload(ev.payload)
+      const timing = timingById.get(base.id) ?? { startedAtUnixMs: null, doneAtUnixMs: null }
+      if (timing.startedAtUnixMs == null && entryCreatedAtUnixMs != null) timing.startedAtUnixMs = entryCreatedAtUnixMs
+      if (status === "done" && entryCreatedAtUnixMs != null) {
+        if (timing.doneAtUnixMs == null || entryCreatedAtUnixMs >= timing.doneAtUnixMs) {
+          timing.doneAtUnixMs = entryCreatedAtUnixMs
+        }
+      }
+      timingById.set(base.id, timing)
+      upsert({ ...base, status, timing })
       continue
     }
     if (ev.type === "turn_duration") {
@@ -308,6 +325,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
         type: "complete",
         title: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
         status: "done",
+        timing: { startedAtUnixMs: entryCreatedAtUnixMs, doneAtUnixMs: entryCreatedAtUnixMs },
       })
       continue
     }
@@ -318,6 +336,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
         title: "Turn usage",
         detail: safeStringify(ev.usage_json ?? null),
         status: "done",
+        timing: { startedAtUnixMs: entryCreatedAtUnixMs, doneAtUnixMs: entryCreatedAtUnixMs },
       })
       continue
     }
@@ -328,6 +347,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
         title: "Turn error",
         detail: ev.message,
         status: "done",
+        timing: { startedAtUnixMs: entryCreatedAtUnixMs, doneAtUnixMs: entryCreatedAtUnixMs },
       })
       continue
     }
@@ -337,6 +357,7 @@ export function buildAgentActivities(conversation: ConversationSnapshot | null):
         type: "tool_call",
         title: "Turn canceled",
         status: "done",
+        timing: { startedAtUnixMs: entryCreatedAtUnixMs, doneAtUnixMs: entryCreatedAtUnixMs },
       })
       continue
     }
@@ -357,9 +378,15 @@ export function buildMessages(
 function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[] {
   const out: Message[] = []
 
-  const unixMsToIso = (unixMs: number | null | undefined): string | undefined => {
-    if (typeof unixMs !== "number" || !Number.isFinite(unixMs)) return undefined
-    return new Date(unixMs).toISOString()
+  const normalizeUnixMs = (unixMs: unknown): number | null => {
+    if (typeof unixMs !== "number" || !Number.isFinite(unixMs) || unixMs <= 0) return null
+    return unixMs
+  }
+
+  const unixMsToIso = (unixMs: unknown): string | undefined => {
+    const normalized = normalizeUnixMs(unixMs)
+    if (normalized == null) return undefined
+    return new Date(normalized).toISOString()
   }
 
   const taskStatusLabel = (status: string): string => {
@@ -387,7 +414,12 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
   const turnMessageById = new Map<string, Message>()
   const turnActivityById = new Map<
     string,
-    { order: string[]; latestByRowId: Map<string, ActivityEvent>; latestByKey: Map<string, string> }
+    {
+      order: string[]
+      latestByRowId: Map<string, ActivityEvent>
+      latestByKey: Map<string, string>
+      timingByKey: Map<string, { startedAtUnixMs: number | null; doneAtUnixMs: number | null }>
+    }
   >()
   let lastUserEntryId: string | null = null
   let lastUserOutIndex: number | null = null
@@ -412,8 +444,28 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       out.push(msg)
     }
     turnMessageById.set(turnId, msg)
-    turnActivityById.set(turnId, { order: [], latestByRowId: new Map(), latestByKey: new Map() })
+    turnActivityById.set(turnId, { order: [], latestByRowId: new Map(), latestByKey: new Map(), timingByKey: new Map() })
     return msg
+  }
+
+  const ensureTurnActivityTiming = (
+    turnId: string,
+    key: string,
+    status: ActivityStatus,
+    createdAtUnixMs: number | null,
+  ): { startedAtUnixMs: number | null; doneAtUnixMs: number | null } => {
+    const state = turnActivityById.get(turnId) ?? null
+    if (!state) return { startedAtUnixMs: null, doneAtUnixMs: null }
+
+    const timing = state.timingByKey.get(key) ?? { startedAtUnixMs: null, doneAtUnixMs: null }
+    if (timing.startedAtUnixMs == null && createdAtUnixMs != null) timing.startedAtUnixMs = createdAtUnixMs
+    if (status === "done" && createdAtUnixMs != null) {
+      if (timing.doneAtUnixMs == null || createdAtUnixMs >= timing.doneAtUnixMs) {
+        timing.doneAtUnixMs = createdAtUnixMs
+      }
+    }
+    state.timingByKey.set(key, timing)
+    return timing
   }
 
   const appendTurnActivity = (turnId: string, args: { key: string; rowId: string; event: ActivityEvent }) => {
@@ -510,7 +562,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
           eventSource: "user",
           content: ev.text,
           attachments: ev.attachments,
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         lastUserOutIndex = out.length - 1
         continue
@@ -523,7 +575,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
           eventSource: "user",
           content: ev.command,
           status: "running",
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
           terminalCommand: {
             id: ev.id,
             command: ev.command,
@@ -539,7 +591,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         const status: ActivityStatus = "done"
         const existingIndex = terminalCommandIndexById.get(ev.id)
         const hasOutput = (ev.output_byte_len ?? 0) > 0
-        const timestamp = new Date().toISOString()
+        const timestamp = unixMsToIso(entry.created_at_unix_ms)
 
         const asSimpleEvent: Message = {
           id: `tc_ev_${ev.id}`,
@@ -633,7 +685,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
             eventSource: "agent",
             agentRunner: conversation.agent_runner,
             content: ev.text.trim(),
-            timestamp: new Date().toISOString(),
+            timestamp: unixMsToIso(entry.created_at_unix_ms),
           }
           out.push(msg)
           agentMessageById.set(baseId, msg)
@@ -648,13 +700,14 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         const status = inferActivityStatusFromPayload(ev.payload)
         const activityKey = `item_${ev.id}`
         const rowId = activityKey
+        const timing = ensureTurnActivityTiming(turnId, activityKey, status, normalizeUnixMs(entry.created_at_unix_ms))
         const activity = activityFromAgentItemLike({
           id: rowId,
           kind: String(ev.kind ?? "item"),
           payload: ev.payload,
           forcedStatus: status,
         })
-        appendTurnActivity(turnId, { key: activityKey, rowId, event: activity })
+        appendTurnActivity(turnId, { key: activityKey, rowId, event: { ...activity, timing } })
         continue
       }
 
@@ -664,10 +717,17 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         ensureTurnMessage(turnId)
         const activityKey = `turn_duration_${ev.duration_ms}`
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
+        const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
         appendTurnActivity(turnId, {
           key: activityKey,
           rowId,
-          event: { id: rowId, type: "complete", title: `Turn duration: ${formatDurationMs(ev.duration_ms)}`, status: "done" },
+          event: {
+            id: rowId,
+            type: "complete",
+            title: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
+            status: "done",
+            timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
+          },
         })
         continue
       }
@@ -678,10 +738,18 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         ensureTurnMessage(turnId)
         const activityKey = "turn_usage"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
+        const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
         appendTurnActivity(turnId, {
           key: activityKey,
           rowId,
-          event: { id: rowId, type: "tool_call", title: "Turn usage", detail: safeStringify(ev.usage_json ?? null), status: "done" },
+          event: {
+            id: rowId,
+            type: "tool_call",
+            title: "Turn usage",
+            detail: safeStringify(ev.usage_json ?? null),
+            status: "done",
+            timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
+          },
         })
         continue
       }
@@ -693,10 +761,18 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         applyTurnStatus(turnId, "error")
         const activityKey = "turn_error"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
+        const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
         appendTurnActivity(turnId, {
           key: activityKey,
           rowId,
-          event: { id: rowId, type: "tool_call", title: "Turn error", detail: ev.message, status: "done" },
+          event: {
+            id: rowId,
+            type: "tool_call",
+            title: "Turn error",
+            detail: ev.message,
+            status: "done",
+            timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
+          },
         })
         continue
       }
@@ -708,10 +784,17 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         applyTurnStatus(turnId, "canceled")
         const activityKey = "turn_canceled"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
+        const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
         appendTurnActivity(turnId, {
           key: activityKey,
           rowId,
-          event: { id: rowId, type: "tool_call", title: "Turn canceled", status: "done" },
+          event: {
+            id: rowId,
+            type: "tool_call",
+            title: "Turn canceled",
+            status: "done",
+            timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
+          },
         })
         continue
       }
@@ -740,9 +823,15 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
 function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] {
   const out: Message[] = []
 
-  const unixMsToIso = (unixMs: number | null | undefined): string | undefined => {
-    if (typeof unixMs !== "number" || !Number.isFinite(unixMs)) return undefined
-    return new Date(unixMs).toISOString()
+  const normalizeUnixMs = (unixMs: unknown): number | null => {
+    if (typeof unixMs !== "number" || !Number.isFinite(unixMs) || unixMs <= 0) return null
+    return unixMs
+  }
+
+  const unixMsToIso = (unixMs: unknown): string | undefined => {
+    const normalized = normalizeUnixMs(unixMs)
+    if (normalized == null) return undefined
+    return new Date(normalized).toISOString()
   }
 
   const taskStatusLabel = (status: string): string => {
@@ -826,7 +915,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           eventSource: "user",
           content: ev.text,
           attachments: ev.attachments,
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -838,7 +927,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           eventSource: "user",
           content: ev.command,
           status: "running",
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
           terminalCommand: {
             id: ev.id,
             command: ev.command,
@@ -854,7 +943,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
         const status: ActivityStatus = "done"
         const existingIndex = terminalCommandIndexById.get(ev.id)
         const hasOutput = (ev.output_byte_len ?? 0) > 0
-        const timestamp = new Date().toISOString()
+        const timestamp = unixMsToIso(entry.created_at_unix_ms)
 
         const asSimpleEvent: Message = {
           id: `tc_ev_${ev.id}`,
@@ -951,7 +1040,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
             eventSource: "agent",
             agentRunner: conversation.agent_runner,
             content: ev.text.trim(),
-            timestamp: new Date().toISOString(),
+            timestamp: unixMsToIso(entry.created_at_unix_ms),
           })
           agentMessageIndexById.set(baseId, out.length - 1)
         }
@@ -977,7 +1066,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
             agentRunner: conversation.agent_runner,
             status,
             content: activity.title,
-            timestamp: new Date().toISOString(),
+            timestamp: unixMsToIso(entry.created_at_unix_ms),
           })
           agentEventIndexById.set(baseId, out.length - 1)
         }
@@ -992,7 +1081,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           agentRunner: conversation.agent_runner,
           status: "done",
           content: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -1005,7 +1094,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           agentRunner: conversation.agent_runner,
           status: "done",
           content: "Turn usage",
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -1018,7 +1107,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           agentRunner: conversation.agent_runner,
           status: "done",
           content: `Turn error: ${ev.message}`,
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -1031,7 +1120,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           agentRunner: conversation.agent_runner,
           status: "done",
           content: "Turn canceled",
-          timestamp: new Date().toISOString(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }

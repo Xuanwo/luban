@@ -993,6 +993,19 @@ async fn http_contracts_smoke() {
                 .any(|entry| matches!(entry, luban_api::ConversationEntry::SystemEvent(_))),
             "expected conversation to include system events"
         );
+        for entry in &convo.entries {
+            match entry {
+                luban_api::ConversationEntry::SystemEvent(ev) => {
+                    assert!(ev.created_at_unix_ms > 0);
+                }
+                luban_api::ConversationEntry::UserEvent(ev) => {
+                    assert!(ev.created_at_unix_ms > 0);
+                }
+                luban_api::ConversationEntry::AgentEvent(ev) => {
+                    assert!(ev.created_at_unix_ms > 0);
+                }
+            }
+        }
     }
 
     // C-HTTP-CHANGES / C-HTTP-DIFF

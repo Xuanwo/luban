@@ -3043,6 +3043,7 @@ mod tests {
     fn format_conversation_entry_skips_turn_duration() {
         let entry = ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
             entry_id: "e".to_owned(),
+            created_at_unix_ms: 0,
             event: luban_api::AgentEvent::TurnDuration { duration_ms: 123 },
         });
         assert_eq!(format_conversation_entry_for_telegram(&entry), None);

@@ -134,6 +134,8 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
     let mut saw_ack = false;
     let mut started: Option<luban_api::TerminalCommandStarted> = None;
     let mut finished: Option<luban_api::TerminalCommandFinished> = None;
+    let mut started_created_at_unix_ms: Option<u64> = None;
+    let mut finished_created_at_unix_ms: Option<u64> = None;
 
     for _ in 0..200 {
         let msg = recv_ws_msg(&mut socket, Duration::from_secs(5)).await;
@@ -153,15 +155,21 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
                     let luban_api::ConversationEntry::UserEvent(user) = entry else {
                         continue;
                     };
+                    assert!(
+                        user.created_at_unix_ms > 0,
+                        "expected created_at_unix_ms to be present on user event entries"
+                    );
                     match user.event {
                         luban_api::UserEvent::TerminalCommandStarted(ev) => {
                             if ev.command == cmd {
                                 started = Some(ev);
+                                started_created_at_unix_ms = Some(user.created_at_unix_ms);
                             }
                         }
                         luban_api::UserEvent::TerminalCommandFinished(ev) => {
                             if ev.command == cmd {
                                 finished = Some(ev);
+                                finished_created_at_unix_ms = Some(user.created_at_unix_ms);
                             }
                         }
                         _ => {}
@@ -178,6 +186,14 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
     assert!(saw_ack, "expected ack for terminal command action");
     let started = started.expect("expected TerminalCommandStarted user event");
     let finished = finished.expect("expected TerminalCommandFinished user event");
+    let started_created_at_unix_ms =
+        started_created_at_unix_ms.expect("expected created_at_unix_ms for started entry");
+    let finished_created_at_unix_ms =
+        finished_created_at_unix_ms.expect("expected created_at_unix_ms for finished entry");
+    assert!(
+        started_created_at_unix_ms <= finished_created_at_unix_ms,
+        "expected started.created_at_unix_ms <= finished.created_at_unix_ms"
+    );
     assert_eq!(started.id, finished.id, "start/finish should share id");
     assert_eq!(
         started.reconnect, finished.reconnect,

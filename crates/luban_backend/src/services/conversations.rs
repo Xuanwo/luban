@@ -86,16 +86,19 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
         LegacyConversationEntry::UserMessage { text, attachments } => {
             Some(ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: UserEvent::Message { text, attachments },
             })
         }
         LegacyConversationEntry::CodexItem { item } => match *item {
             CodexThreadItem::AgentMessage { id, text } => Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Message { id, text },
             }),
             other => Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -105,15 +108,18 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
         LegacyConversationEntry::TurnDuration { duration_ms } => {
             Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::TurnDuration { duration_ms },
             })
         }
         LegacyConversationEntry::TurnCanceled => Some(ConversationEntry::AgentEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: AgentEvent::TurnCanceled,
         }),
         LegacyConversationEntry::TurnError { message } => Some(ConversationEntry::AgentEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: AgentEvent::TurnError { message },
         }),
     }
@@ -610,6 +616,7 @@ mod tests {
         let broken_entries = vec![
             ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: UserEvent::Message {
                     text: "u1".to_owned(),
                     attachments: Vec::new(),
@@ -617,6 +624,7 @@ mod tests {
             },
             ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "A".to_owned(),
@@ -624,6 +632,7 @@ mod tests {
             },
             ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: UserEvent::Message {
                     text: "u2".to_owned(),
                     attachments: Vec::new(),
@@ -631,6 +640,7 @@ mod tests {
             },
             ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "B".to_owned(),

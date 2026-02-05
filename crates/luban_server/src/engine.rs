@@ -466,6 +466,7 @@ impl Engine {
                         meta.thread_id.as_u64(),
                         vec![luban_domain::ConversationEntry::AgentEvent {
                             entry_id: String::new(),
+                            created_at_unix_ms: 0,
                             event: luban_domain::AgentEvent::TurnError {
                                 message: "Agent run interrupted by server restart.".to_owned(),
                             },
@@ -5079,7 +5080,11 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                 },
             },
         }),
-        ConversationEntry::UserEvent { entry_id, event } => {
+        ConversationEntry::UserEvent {
+            entry_id,
+            created_at_unix_ms,
+            event,
+        } => {
             let event = match event {
                 luban_domain::UserEvent::Message { text, attachments } => {
                     luban_api::UserEvent::Message(luban_api::UserMessage {
@@ -5116,10 +5121,15 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
             };
             luban_api::ConversationEntry::UserEvent(luban_api::UserEventEntry {
                 entry_id: entry_id.clone(),
+                created_at_unix_ms: *created_at_unix_ms,
                 event,
             })
         }
-        ConversationEntry::AgentEvent { entry_id, event } => {
+        ConversationEntry::AgentEvent {
+            entry_id,
+            created_at_unix_ms,
+            event,
+        } => {
             let event = match event {
                 luban_domain::AgentEvent::Message { id, text } => {
                     luban_api::AgentEvent::Message(luban_api::AgentMessage {
@@ -5148,6 +5158,7 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
             };
             luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
                 entry_id: entry_id.clone(),
+                created_at_unix_ms: *created_at_unix_ms,
                 event,
             })
         }
@@ -5887,6 +5898,7 @@ mod tests {
                 amp_mode: None,
                 entries: vec![ConversationEntry::UserEvent {
                     entry_id: "e_1".to_owned(),
+                    created_at_unix_ms: 1,
                     event: luban_domain::UserEvent::Message {
                         text: "hi".to_owned(),
                         attachments: Vec::new(),
@@ -6468,6 +6480,7 @@ mod tests {
         for i in 0..7000u32 {
             convo.entries.push(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: i as u64,
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(CodexThreadItem::CommandExecution {
                         id: format!("cmd_{i}"),

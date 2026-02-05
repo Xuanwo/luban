@@ -1178,6 +1178,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 thread_local_id,
                 vec![ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: luban_domain::UserEvent::Message {
                         text: prompt.clone(),
                         attachments: attachments.clone(),
@@ -1280,6 +1281,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             CodexThreadItem::AgentMessage { id, text } => {
                                                 ConversationEntry::AgentEvent {
                                                     entry_id: String::new(),
+                                                    created_at_unix_ms: 0,
                                                     event: luban_domain::AgentEvent::Message {
                                                         id: id.clone(),
                                                         text: text.clone(),
@@ -1288,6 +1290,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             }
                                             _ => ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::Item {
                                                     item: Box::new(item.clone()),
                                                 },
@@ -1320,6 +1323,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1338,6 +1342,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: error.message.clone(),
                                             },
@@ -1360,6 +1365,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1378,6 +1384,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: message.clone(),
                                             },
@@ -1400,6 +1407,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1479,6 +1487,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             CodexThreadItem::AgentMessage { id, text } => {
                                                 ConversationEntry::AgentEvent {
                                                     entry_id: String::new(),
+                                                    created_at_unix_ms: 0,
                                                     event: luban_domain::AgentEvent::Message {
                                                         id: id.clone(),
                                                         text: text.clone(),
@@ -1487,6 +1496,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             }
                                             _ => ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::Item {
                                                     item: Box::new(item.clone()),
                                                 },
@@ -1519,6 +1529,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1537,6 +1548,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: error.message.clone(),
                                             },
@@ -1559,6 +1571,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1577,6 +1590,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: message.clone(),
                                             },
@@ -1599,6 +1613,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1674,6 +1689,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             CodexThreadItem::AgentMessage { id, text } => {
                                                 ConversationEntry::AgentEvent {
                                                     entry_id: String::new(),
+                                                    created_at_unix_ms: 0,
                                                     event: luban_domain::AgentEvent::Message {
                                                         id: id.clone(),
                                                         text: text.clone(),
@@ -1682,6 +1698,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             }
                                             _ => ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::Item {
                                                     item: Box::new(item.clone()),
                                                 },
@@ -1714,6 +1731,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1732,6 +1750,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: error.message.clone(),
                                             },
@@ -1754,6 +1773,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1772,6 +1792,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                         thread_local_id,
                                         vec![ConversationEntry::AgentEvent {
                                             entry_id: String::new(),
+                                            created_at_unix_ms: 0,
                                             event: luban_domain::AgentEvent::TurnError {
                                                 message: message.clone(),
                                             },
@@ -1794,6 +1815,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                                             thread_local_id,
                                             vec![ConversationEntry::AgentEvent {
                                                 entry_id: String::new(),
+                                                created_at_unix_ms: 0,
                                                 event: luban_domain::AgentEvent::TurnDuration {
                                                     duration_ms,
                                                 },
@@ -1828,6 +1850,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                         thread_local_id,
                         vec![ConversationEntry::AgentEvent {
                             entry_id: String::new(),
+                            created_at_unix_ms: 0,
                             event: luban_domain::AgentEvent::TurnDuration { duration_ms },
                         }],
                     )?;
@@ -1839,6 +1862,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     thread_local_id,
                     vec![ConversationEntry::AgentEvent {
                         entry_id: String::new(),
+                        created_at_unix_ms: 0,
                         event: luban_domain::AgentEvent::TurnCanceled,
                     }],
                 )?;
@@ -1868,6 +1892,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     thread_local_id,
                     vec![ConversationEntry::AgentEvent {
                         entry_id: String::new(),
+                        created_at_unix_ms: 0,
                         event: luban_domain::AgentEvent::TurnDuration { duration_ms },
                     }],
                 );
@@ -1879,6 +1904,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                 thread_local_id,
                 vec![ConversationEntry::AgentEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: luban_domain::AgentEvent::TurnError {
                         message: format!("{err:#}"),
                     },

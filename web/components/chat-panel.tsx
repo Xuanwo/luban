@@ -1032,7 +1032,6 @@ export function ChatPanel({
         <AgentRunningCard
           activities={activities}
           elapsedTime={agentRunElapsedLabel}
-          turnStartedAtMs={agentRunStartedAtMs}
           status={agentStatus}
           hasQueuedMessages={queuedPrompts.length > 0}
           editorValue={agentEditorValue}

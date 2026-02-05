@@ -42,6 +42,7 @@ fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> 
     conversation.run_finished_at_unix_ms = Some(now_unix_ms());
     conversation.push_entry(ConversationEntry::AgentEvent {
         entry_id: String::new(),
+        created_at_unix_ms: 0,
         event: crate::AgentEvent::TurnCanceled,
     });
     Some(run_id)
@@ -822,6 +823,7 @@ impl AppState {
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 conversation.push_entry(ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: crate::UserEvent::TerminalCommandStarted {
                         id: command_id,
                         command,
@@ -845,6 +847,7 @@ impl AppState {
                 let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                 conversation.push_entry(ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: crate::UserEvent::TerminalCommandFinished {
                         id: command_id,
                         command,
@@ -1506,6 +1509,7 @@ impl AppState {
                             }
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
+                                created_at_unix_ms: 0,
                                 event: crate::AgentEvent::TurnDuration { duration_ms },
                             });
                             Vec::new()
@@ -1526,6 +1530,7 @@ impl AppState {
                             let error_message = error.message.clone();
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
+                                created_at_unix_ms: 0,
                                 event: crate::AgentEvent::TurnError {
                                     message: error_message.clone(),
                                 },
@@ -1581,6 +1586,7 @@ impl AppState {
                             }
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
+                                created_at_unix_ms: 0,
                                 event: crate::AgentEvent::TurnError {
                                     message: message.clone(),
                                 },
@@ -2834,6 +2840,7 @@ fn start_agent_run(
 
     conversation.push_entry(ConversationEntry::UserEvent {
         entry_id: String::new(),
+        created_at_unix_ms: 0,
         event: crate::UserEvent::Message {
             text: text.clone(),
             attachments: attachments.clone(),
@@ -3716,6 +3723,7 @@ mod tests {
             entries: (1..=8)
                 .map(|idx| ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: idx as u64,
                     event: crate::UserEvent::Message {
                         text: format!("Message {idx}"),
                         attachments: Vec::new(),
@@ -4462,6 +4470,7 @@ mod tests {
                 ConversationEntry::AgentEvent {
                     entry_id,
                     event: crate::AgentEvent::Item { item },
+                    ..
                 } => Some((entry_id.as_str(), codex_item_id(item.as_ref()))),
                 _ => None,
             })
@@ -5032,6 +5041,7 @@ mod tests {
                 amp_mode: None,
                 entries: vec![ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 1,
                     event: crate::UserEvent::Message {
                         text: "Hello".to_owned(),
                         attachments: Vec::new(),
@@ -5089,6 +5099,7 @@ mod tests {
                 amp_mode: None,
                 entries: vec![ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 1,
                     event: crate::UserEvent::Message {
                         text: "Hello".to_owned(),
                         attachments: Vec::new(),
@@ -5117,6 +5128,7 @@ mod tests {
                 entries: vec![
                     ConversationEntry::UserEvent {
                         entry_id: String::new(),
+                        created_at_unix_ms: 1,
                         event: crate::UserEvent::Message {
                             text: "Hello".to_owned(),
                             attachments: Vec::new(),
@@ -5124,6 +5136,7 @@ mod tests {
                     },
                     ConversationEntry::AgentEvent {
                         entry_id: String::new(),
+                        created_at_unix_ms: 2,
                         event: crate::AgentEvent::TurnDuration { duration_ms: 1234 },
                     },
                 ],
