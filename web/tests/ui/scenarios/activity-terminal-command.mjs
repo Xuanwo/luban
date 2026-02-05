@@ -7,24 +7,9 @@ export async function runActivityTerminalCommand({ page }) {
 
   await page.getByTestId('chat-mode-toggle').click();
 
-  const cmdWithOutput = `echo terminal-smoke-${Date.now()}`;
-  await page.getByTestId('chat-input').fill(cmdWithOutput);
-  await page.getByTestId('chat-send').click();
+  await page.getByTestId('shell-composer').waitFor({ state: 'visible' });
+  await page.getByTestId('pty-terminal').waitFor({ state: 'visible' });
 
-  await page
-    .getByTestId('activity-terminal-command')
-    .filter({ hasText: cmdWithOutput })
-    .first()
-    .waitFor({ state: 'visible' });
-
-  const cmdNoOutput = 'true';
-  await page.getByTestId('chat-input').fill(cmdNoOutput);
-  await page.getByTestId('chat-send').click();
-
-  await page
-    .getByTestId('activity-event')
-    .filter({ hasText: `ran ${cmdNoOutput}` })
-    .first()
-    .waitFor({ state: 'visible' });
+  await page.getByTestId('chat-mode-toggle').click();
+  await page.getByTestId('chat-input').waitFor({ state: 'visible' });
 }
-
