@@ -49,6 +49,7 @@ export interface InboxNotification {
 
 interface InboxViewProps {
   onOpenFullView?: (notification: InboxNotification) => void
+  refreshSeq?: number
 }
 
 function escapeXmlText(raw: string): string {
@@ -103,6 +104,28 @@ function firstNonEmptyLine(text: string): string | null {
     return trimmed
   }
   return null
+}
+
+function stableTaskKey(task: { workdir_id: number; task_id: number }): string {
+  return `${task.workdir_id}:${task.task_id}`
+}
+
+function buildStableUpdatedAtMap(tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const t of tasks) {
+    out.set(stableTaskKey(t), t.updated_at_unix_seconds)
+  }
+  return out
+}
+
+function ensureStableUpdatedAtForNewTasks(args: {
+  stable: Map<string, number>
+  tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]
+}): void {
+  for (const t of args.tasks) {
+    const key = stableTaskKey(t)
+    if (!args.stable.has(key)) args.stable.set(key, t.updated_at_unix_seconds)
+  }
 }
 
 function InboxTaskStatusIcon({ status }: { status: InboxNotification["taskStatus"] }) {
@@ -223,7 +246,7 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
   )
 }
 
-export function InboxView({ onOpenFullView }: InboxViewProps) {
+export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
   const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
@@ -244,6 +267,7 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
     const hasApp = app != null
     if (!hasApp) {
       setTasksSnapshot(null)
+      stableUpdatedAtByTaskRef.current = new Map()
       return
     }
 
@@ -252,11 +276,7 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
       try {
         const snap = await fetchTasks()
         if (cancelled) return
-        const stable = stableUpdatedAtByTaskRef.current
-        for (const t of snap.tasks ?? []) {
-          const key = `${t.workdir_id}:${t.task_id}`
-          if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-        }
+        stableUpdatedAtByTaskRef.current = buildStableUpdatedAtMap(snap.tasks ?? [])
         setTasksSnapshot(snap)
       } catch (err) {
         console.warn("fetchTasks failed", err)
@@ -266,17 +286,13 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [app != null])
+  }, [app != null, refreshSeq])
 
   const refreshTasks = useCallback(async () => {
     if (!app) return
     try {
       const snap = await fetchTasks()
-      const stable = stableUpdatedAtByTaskRef.current
-      for (const t of snap.tasks ?? []) {
-        const key = `${t.workdir_id}:${t.task_id}`
-        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-      }
+      ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: snap.tasks ?? [] })
       setTasksSnapshot(snap)
     } catch (err) {
       console.warn("fetchTasks failed", err)
@@ -293,13 +309,9 @@ export function InboxView({ onOpenFullView }: InboxViewProps) {
   useEffect(() => {
     return subscribeServerEvents((event) => {
       if (event.type !== "task_summaries_changed") return
-      const stable = stableUpdatedAtByTaskRef.current
-      for (const t of event.tasks ?? []) {
-        const key = `${t.workdir_id}:${t.task_id}`
-        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-      }
       setTasksSnapshot((prev) => {
         if (!prev) return prev
+        ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: event.tasks ?? [] })
         const nextTasks = [
           ...prev.tasks.filter((t) => t.workdir_id !== event.workdir_id),
           ...event.tasks,

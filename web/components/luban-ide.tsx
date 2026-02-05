@@ -30,6 +30,7 @@ export function LubanIDE() {
   const { app, openWorkdir: openWorkspace, activateTask } = useLuban()
 
   const [activeView, setActiveView] = useState<NavView>("tasks")
+  const [inboxRefreshSeq, setInboxRefreshSeq] = useState(0)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [showDetail, setShowDetail] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -58,6 +59,9 @@ export function LubanIDE() {
     if (view === "settings") {
       setSettingsOpen(true)
       return
+    }
+    if (view === "inbox") {
+      setInboxRefreshSeq((prev) => prev + 1)
     }
     setActiveView(view)
     setSelectedTask(null)
@@ -123,6 +127,7 @@ export function LubanIDE() {
       return (
         <InboxView
           onOpenFullView={handleOpenFullViewFromInbox}
+          refreshSeq={inboxRefreshSeq}
         />
       )
     }

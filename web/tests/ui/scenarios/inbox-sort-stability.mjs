@@ -62,6 +62,21 @@ export async function runInboxSortStability({ page }) {
     );
   }
 
+  // Reselecting inbox should refresh and resort by updated_at.
+  await page.getByTestId('nav-inbox-button').click();
+  const startReselect = Date.now();
+  while (Date.now() - startReselect < 20_000) {
+    const current = await inboxRowTaskTitle(row0);
+    if (current === row1Title) break;
+    await sleep(100);
+  }
+  const row0TitleAfterReselect = await inboxRowTaskTitle(row0);
+  if (row0TitleAfterReselect !== row1Title) {
+    throw new Error(
+      `expected inbox to move the updated task ahead after reselect; got row0="${row0TitleAfterReselect}" expected "${row1Title}"`,
+    );
+  }
+
   // Leaving and reopening inbox should refresh and resort by updated_at.
   await page.getByTestId('sidebar-project-mock-project-1').click();
   await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
