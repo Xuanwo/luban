@@ -143,13 +143,18 @@ export function LubanIDE() {
       )
     }
 
-    const taskListMode = activeView === "archive" ? "archive" : "active"
+    const taskListMode =
+      activeView === "tasks-all" || activeView === "archive"
+        ? "all"
+        : activeView === "tasks-backlog"
+          ? "backlog"
+          : "active"
     return (
       <TaskListView
         activeProjectId={activeProjectId}
         mode={taskListMode}
         onModeChange={(mode) => {
-          setActiveView(mode === "archive" ? "archive" : "tasks")
+          setActiveView(mode === "all" ? "tasks-all" : mode === "backlog" ? "tasks-backlog" : "tasks")
         }}
         onTaskClick={(task) => {
           void (async () => {

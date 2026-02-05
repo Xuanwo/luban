@@ -1,6 +1,7 @@
 export async function runNoRightSidebar({ page }) {
   await page.getByTestId('sidebar-project-mock-project-1').click();
   await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
+  await page.getByTestId('task-view-tab-backlog').click();
   await page.getByText('Mock task 2').first().click();
 
   await page.getByTestId('chat-scroll-container').waitFor({ state: 'visible' });
@@ -20,4 +21,3 @@ export async function runNoRightSidebar({ page }) {
     throw new Error('expected right sidebar to be removed (resizer still present)');
   }
 }
-

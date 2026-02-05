@@ -12,6 +12,9 @@ export async function runNewTaskDoubleSubmitNoDuplicate({ page }) {
   await page.getByTestId('sidebar-project-mock-project-1').click();
   await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
 
+  await page.getByTestId('task-view-tab-all').click();
+  await page.getByTestId('task-list-view').waitFor({ state: 'visible' });
+
   const matches = page.getByTestId('task-list-view').locator('div.group', { hasText: title });
   await matches.first().waitFor({ state: 'visible' });
 
@@ -20,4 +23,3 @@ export async function runNewTaskDoubleSubmitNoDuplicate({ page }) {
     throw new Error(`expected exactly one task row for "${title}", saw ${count}`);
   }
 }
-
