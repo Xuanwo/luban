@@ -24,9 +24,6 @@ import { projectColorClass } from "@/lib/project-colors"
 import { fetchConversation, fetchTasks } from "@/lib/luban-http"
 import type { ConversationSnapshot, OperationStatus, TaskStatus, TasksSnapshot, TurnResult, TurnStatus } from "@/lib/luban-api"
 import { isMockMode } from "@/lib/luban-mode"
-import type { NewTaskDraft } from "@/lib/new-task-drafts"
-import { NEW_TASK_DRAFTS_CHANGED_EVENT, deleteNewTaskDraft, loadNewTaskDrafts } from "@/lib/new-task-drafts"
-import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
 
 export interface InboxNotification {
   id: string
@@ -53,7 +50,6 @@ export interface InboxNotification {
 
 interface InboxViewProps {
   onOpenFullView?: (notification: InboxNotification) => void
-  onOpenDraft?: (draft: NewTaskDraft) => void
 }
 
 function escapeXmlText(raw: string): string {
@@ -228,7 +224,7 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
   )
 }
 
-export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
+export function InboxView({ onOpenFullView }: InboxViewProps) {
   const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
@@ -241,23 +237,6 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
   const previewInFlightRef = useRef<Set<string>>(new Set())
   const prevWsConnectedRef = useRef(false)
   const stableUpdatedAtByTaskRef = useRef<Map<string, number>>(new Map())
-  const [drafts, setDrafts] = useState<NewTaskDraft[]>([])
-  const [draftsOpen, setDraftsOpen] = useState(false)
-
-  useEffect(() => {
-    const refresh = () => {
-      void (async () => {
-        try {
-          setDrafts(await loadNewTaskDrafts())
-        } catch (err) {
-          console.warn("loadNewTaskDrafts failed", err)
-        }
-      })()
-    }
-    refresh()
-    window.addEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
-    return () => window.removeEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
-  }, [])
 
   useEffect(() => {
     previewByNotificationIdRef.current = previewByNotificationId
@@ -537,18 +516,6 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
             <span className="text-[13px] font-medium" style={{ color: '#1b1b1b' }}>
               Inbox
             </span>
-            {drafts.length > 0 && (
-              <button
-                type="button"
-                data-testid="inbox-drafts-button"
-                className="h-6 px-2 text-[12px] rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-                style={{ color: "#6b6b6b", fontWeight: 500 }}
-                title="Drafts"
-                onClick={() => setDraftsOpen(true)}
-              >
-                Drafts
-              </button>
-            )}
             <button
               className="w-5 h-5 flex items-center justify-center rounded hover:bg-[#eeeeee] transition-colors"
               style={{ color: '#9b9b9b' }}
@@ -628,17 +595,6 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
           })}
         </div>
       </div>
-
-      <NewTaskDraftsDialog
-        open={draftsOpen}
-        onOpenChange={setDraftsOpen}
-        drafts={drafts}
-        onOpenDraft={(draft) => {
-          setDraftsOpen(false)
-          onOpenDraft?.(draft)
-        }}
-        onDeleteDraft={(draftId) => deleteNewTaskDraft(draftId)}
-      />
 
       {/* Right: Preview Panel */}
       <div className="flex-1 flex flex-col min-w-0">

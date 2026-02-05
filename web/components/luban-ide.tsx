@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { LubanLayout } from "./luban-layout"
 import { LubanSidebar, type NavView } from "./luban-sidebar"
 import { TaskListView, Task } from "./task-list-view"
@@ -8,11 +8,13 @@ import { TaskDetailView } from "./task-detail-view"
 import { InboxView, type InboxNotification } from "./inbox-view"
 import { SettingsPanel } from "./settings-panel"
 import { NewTaskModal } from "./new-task-modal"
+import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
 import { useLuban } from "@/lib/luban-context"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import type { NewTaskDraft } from "@/lib/new-task-drafts"
+import { deleteNewTaskDraft, loadNewTaskDrafts, NEW_TASK_DRAFTS_CHANGED_EVENT } from "@/lib/new-task-drafts"
 
 /**
  * Luban IDE main layout
@@ -34,6 +36,23 @@ export function LubanIDE() {
   const [newTaskOpen, setNewTaskOpen] = useState(false)
   const [newTaskInitialDraft, setNewTaskInitialDraft] = useState<NewTaskDraft | null>(null)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [newTaskDrafts, setNewTaskDrafts] = useState<NewTaskDraft[]>([])
+  const [newTaskDraftsOpen, setNewTaskDraftsOpen] = useState(false)
+
+  useEffect(() => {
+    const refresh = () => {
+      void (async () => {
+        try {
+          setNewTaskDrafts(await loadNewTaskDrafts())
+        } catch (err) {
+          console.warn("loadNewTaskDrafts failed", err)
+        }
+      })()
+    }
+    refresh()
+    window.addEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
+  }, [])
 
   const handleViewChange = (view: NavView) => {
     if (view === "settings") {
@@ -104,10 +123,6 @@ export function LubanIDE() {
       return (
         <InboxView
           onOpenFullView={handleOpenFullViewFromInbox}
-          onOpenDraft={(draft) => {
-            setNewTaskInitialDraft(draft)
-            setNewTaskOpen(true)
-          }}
         />
       )
     }
@@ -170,6 +185,8 @@ export function LubanIDE() {
                 setShowDetail(true)
               })()
             }}
+            newTaskDraftCount={newTaskDrafts.length}
+            onOpenNewTaskDrafts={() => setNewTaskDraftsOpen(true)}
           />
         }
       >
@@ -178,6 +195,17 @@ export function LubanIDE() {
       <SettingsPanel
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+      />
+      <NewTaskDraftsDialog
+        open={newTaskDraftsOpen}
+        onOpenChange={setNewTaskDraftsOpen}
+        drafts={newTaskDrafts}
+        onOpenDraft={(draft) => {
+          setNewTaskDraftsOpen(false)
+          setNewTaskInitialDraft(draft)
+          setNewTaskOpen(true)
+        }}
+        onDeleteDraft={(draftId) => deleteNewTaskDraft(draftId)}
       />
       <NewTaskModal
         open={newTaskOpen}

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Inbox,
+  FileText,
   Search,
   Plus,
   Layers,
@@ -36,6 +37,8 @@ interface LubanSidebarProps {
   onProjectSelected?: (projectId: string | null) => void
   onNewTask?: () => void
   onFavoriteTaskSelected?: (task: TaskSummarySnapshot) => void
+  newTaskDraftCount?: number
+  onOpenNewTaskDrafts?: () => void
 }
 
 interface NavItemProps {
@@ -214,6 +217,8 @@ export function LubanSidebar({
   onProjectSelected,
   onNewTask,
   onFavoriteTaskSelected,
+  newTaskDraftCount,
+  onOpenNewTaskDrafts,
 }: LubanSidebarProps) {
   const {
     app,
@@ -346,6 +351,16 @@ export function LubanSidebar({
             active={activeView === "inbox"}
             onClick={() => handleNavClick("inbox")}
           />
+          {(newTaskDraftCount ?? 0) > 0 && (
+            <NavItem
+              icon={<FileText className="w-4 h-4" />}
+              label="Drafts"
+              badge={newTaskDraftCount}
+              testId="nav-drafts-button"
+              active={false}
+              onClick={() => onOpenNewTaskDrafts?.()}
+            />
+          )}
         </div>
 
         {/* Favorites Section (only shown when non-empty) */}

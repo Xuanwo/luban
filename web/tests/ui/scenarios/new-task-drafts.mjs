@@ -37,13 +37,11 @@ export async function runNewTaskDrafts({ page }) {
 
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 
-  await page.getByTestId('nav-inbox-button').click();
-  await page.getByTestId('inbox-view').waitFor({ state: 'visible' });
-
-  await page.getByTestId('inbox-drafts-button').waitFor({ state: 'visible' });
-  await page.getByTestId('inbox-drafts-button').click();
+  await page.getByTestId('nav-drafts-button').waitFor({ state: 'visible' });
+  await page.getByTestId('nav-drafts-button').click();
   await page.getByTestId('new-task-drafts-dialog').waitFor({ state: 'visible' });
 
+  await page.getByTestId('new-task-drafts-open-0').waitFor({ state: 'visible' });
   await page.getByTestId('new-task-drafts-open-0').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
 
@@ -81,17 +79,14 @@ export async function runNewTaskDrafts({ page }) {
   await page.getByTestId('new-task-close-button').click();
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 
-  await page.getByTestId('nav-inbox-button').click();
-  await page.getByTestId('inbox-view').waitFor({ state: 'visible' });
-
-  await page.getByTestId('inbox-drafts-button').waitFor({ state: 'visible' });
-  await page.getByTestId('inbox-drafts-button').click();
+  await page.getByTestId('nav-drafts-button').click();
   await page.getByTestId('new-task-drafts-dialog').waitFor({ state: 'visible' });
 
+  await page.getByTestId('new-task-drafts-delete-0').waitFor({ state: 'visible' });
   await page.getByTestId('new-task-drafts-delete-0').click();
   await page.getByText('No drafts saved.').waitFor({ state: 'visible' });
   await page.keyboard.press('Escape');
   await page.getByTestId('new-task-drafts-dialog').waitFor({ state: 'hidden' });
 
-  await page.getByTestId('inbox-drafts-button').waitFor({ state: 'hidden' });
+  await page.getByTestId('nav-drafts-button').waitFor({ state: 'hidden' });
 }
