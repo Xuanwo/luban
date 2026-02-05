@@ -26,11 +26,21 @@ async function waitForNotRunning(row, timeoutMs = 20_000) {
   throw new Error('timeout waiting for running icon to clear');
 }
 
+async function assertRunningShowsOnlySpinner(row) {
+  const status = row.getByTestId('inbox-notification-task-status-icon');
+  await status.getByTestId('inbox-notification-runner-spinner').waitFor({ state: 'visible' });
+  const taskGlyphs = await status.locator('[class*="icon-[tabler--"]').count();
+  if (taskGlyphs !== 0) {
+    throw new Error(`expected no task status icon while running, found ${taskGlyphs}`);
+  }
+}
+
 export async function runCancelTaskClearsRunning({ page }) {
   await page.getByTestId('nav-inbox-button').click();
   await page.getByTestId('inbox-view').waitFor({ state: 'visible' });
 
   const row = await findInboxRowByTitle(page, 'PR: pending');
+  await assertRunningShowsOnlySpinner(row);
   await row.click();
 
   const trigger = page.getByTestId('inbox-task-status-trigger');
@@ -43,4 +53,3 @@ export async function runCancelTaskClearsRunning({ page }) {
   const updatedRow = await findInboxRowByTitle(page, 'PR: pending');
   await waitForNotRunning(updatedRow);
 }
-
