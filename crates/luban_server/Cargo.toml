@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 blake3.workspace = true
+base64 = "0.22"
 futures = "0.3"
 luban_api = { path = "../luban_api" }
 luban_backend = { path = "../luban_backend" }

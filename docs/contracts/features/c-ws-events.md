@@ -33,6 +33,7 @@ Wire invariant for conversations:
 
 - `ConversationEntry` is tagged by `type` and only includes: `system_event`, `user_event`, `agent_event`.
 - Each `ConversationEntry` includes a stable `entry_id` (unique per entry).
+- Each `ConversationEntry` includes `created_at_unix_ms` (millisecond timestamp).
 - Streaming/tool updates are sent as additional appended `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
 
 ## Invariants
@@ -67,6 +68,7 @@ These enums are part of the wire surface. Adding/removing variants must update t
   - `infer-type`
   - `rename-branch`
   - `auto-title-thread`
+  - `auto-update-task-status`
 
 ## Web usage
 
@@ -124,6 +126,7 @@ update this section.
 - `RemoveQueuedPrompt`
 - `ReorderQueuedPrompt`
 - `UpdateQueuedPrompt`
+- `TerminalCommandStart`
 - `WorkdirRenameBranch`
 - `WorkdirAiRenameBranch`
 - `CancelAgentTurn`
@@ -176,6 +179,15 @@ update this section.
 - Providers should accept legacy aliases for backward compatibility:
   - `in_progress` -> `iterating`
   - `in_review` -> `validating`
+
+### `ClientAction::TerminalCommandStart`
+
+- Starts a provider-side PTY session that runs a single shell command.
+- Providers append `ConversationEntry.type=user_event` entries to the conversation:
+  - `event.type=terminal_command_started` with `{ id, command, reconnect }`
+  - `event.type=terminal_command_finished` with `{ id, command, reconnect, output_base64, output_byte_len }`
+- `reconnect` can be used to attach a terminal UI to `WS /api/pty/{workdir_id}/{task_id}?reconnect=<token>` while the command is running.
+- `output_base64` is base64-encoded bytes captured from the PTY output history and may be empty when `output_byte_len=0`.
 
 ## Event inventory (tracked)
 

@@ -411,6 +411,8 @@ struct TaskStatusAutoUpdateOutput {
     validation_pr_number: Option<u64>,
     #[serde(default)]
     validation_pr_url: String,
+    #[serde(default)]
+    explanation_markdown: String,
 }
 
 fn parse_task_status_auto_update_output(
@@ -422,6 +424,7 @@ fn parse_task_status_auto_update_output(
             task_status: status,
             validation_pr_number: None,
             validation_pr_url: None,
+            explanation_markdown: None,
         });
     }
 
@@ -450,6 +453,14 @@ fn parse_task_status_auto_update_output(
         task_status: suggested,
         validation_pr_number,
         validation_pr_url,
+        explanation_markdown: {
+            let trimmed = output.explanation_markdown.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        },
     })
 }
 
@@ -483,11 +494,24 @@ mod tests {
             suggested.validation_pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/123")
         );
+        assert_eq!(suggested.explanation_markdown, None);
 
         let raw = r#"{"task_status":"iterating","validation_pr_number":123,"validation_pr_url":"https://github.com/acme/repo/pull/123"}"#;
         let suggested = parse_task_status_auto_update_output(raw).unwrap();
         assert_eq!(suggested.task_status, TaskStatus::Iterating);
         assert_eq!(suggested.validation_pr_number, None);
         assert_eq!(suggested.validation_pr_url, None);
+        assert_eq!(suggested.explanation_markdown, None);
+    }
+
+    #[test]
+    fn auto_update_task_status_parses_explanation_markdown() {
+        let raw = r#"{"task_status":"iterating","validation_pr_number":null,"validation_pr_url":"","explanation_markdown":"- Still implementing\n- No PR yet"}"#;
+        let suggested = parse_task_status_auto_update_output(raw).unwrap();
+        assert_eq!(suggested.task_status, TaskStatus::Iterating);
+        assert_eq!(
+            suggested.explanation_markdown.as_deref(),
+            Some("- Still implementing\n- No PR yet")
+        );
     }
 }

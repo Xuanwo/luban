@@ -47,6 +47,8 @@ export function useAgentCancelHotkey(args: {
       if (e.key !== "Escape") return
       if (!args.enabled) return
       if (args.blocked) return
+      if (e.defaultPrevented) return
+      if (isTextInputTarget(e.target)) return
 
       if (escHintVisibleRef.current) {
         e.preventDefault()
@@ -55,9 +57,7 @@ export function useAgentCancelHotkey(args: {
         return
       }
 
-      if (!isTextInputTarget(e.target)) {
-        e.preventDefault()
-      }
+      e.preventDefault()
 
       setEscHintVisible(true)
       if (escTimeoutRef.current != null) {
@@ -81,4 +81,3 @@ export function useAgentCancelHotkey(args: {
 
   return { escHintVisible, escTimeoutMs, clearEscHint }
 }
-

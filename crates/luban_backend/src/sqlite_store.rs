@@ -357,7 +357,7 @@ enum DbCommand {
         pr_url: Option<String>,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
-    MarkConversationTasksDoneForMergedPr {
+    ListConversationTasksForMergedPr {
         project_slug: String,
         workspace_name: String,
         pr_number: u64,
@@ -698,14 +698,14 @@ impl SqliteStore {
                         }
                         (
                             Ok(db),
-                            DbCommand::MarkConversationTasksDoneForMergedPr {
+                            DbCommand::ListConversationTasksForMergedPr {
                                 project_slug,
                                 workspace_name,
                                 pr_number,
                                 reply,
                             },
                         ) => {
-                            let _ = reply.send(db.mark_conversation_tasks_done_for_merged_pr(
+                            let _ = reply.send(db.list_conversation_tasks_for_merged_pr(
                                 &project_slug,
                                 &workspace_name,
                                 pr_number,
@@ -1164,7 +1164,7 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
-    pub fn mark_conversation_tasks_done_for_merged_pr(
+    pub fn list_conversation_tasks_for_merged_pr(
         &self,
         project_slug: String,
         workspace_name: String,
@@ -1172,7 +1172,7 @@ impl SqliteStore {
     ) -> anyhow::Result<Vec<u64>> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
-            .send(DbCommand::MarkConversationTasksDoneForMergedPr {
+            .send(DbCommand::ListConversationTasksForMergedPr {
                 project_slug,
                 workspace_name,
                 pr_number,
@@ -1381,7 +1381,7 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
         DbCommand::SaveConversationTaskValidationPr { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
-        DbCommand::MarkConversationTasksDoneForMergedPr { reply, .. } => {
+        DbCommand::ListConversationTasksForMergedPr { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -3127,12 +3127,13 @@ impl SqliteDatabase {
         self.ensure_conversation(project_slug, workspace_name, thread_local_id)?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserEvent { event, .. } => match event {
-                luban_domain::UserEvent::Message { text, .. } => {
-                    let title = luban_domain::derive_thread_title(text);
-                    if title.is_empty() { None } else { Some(title) }
-                }
-            },
+            ConversationEntry::UserEvent {
+                event: luban_domain::UserEvent::Message { text, .. },
+                ..
+            } => {
+                let title = luban_domain::derive_thread_title(text);
+                if title.is_empty() { None } else { Some(title) }
+            }
             _ => None,
         });
 
@@ -3160,6 +3161,7 @@ impl SqliteDatabase {
                 };
                 let mut stored_entry = entry.clone();
                 set_conversation_entry_id(&mut stored_entry, entry_id.clone());
+                ensure_conversation_entry_created_at(&mut stored_entry, now_unix_millis());
                 let payload_json =
                     serde_json::to_string(&stored_entry).context("failed to serialize entry")?;
                 stmt.execute(params![
@@ -3214,12 +3216,13 @@ impl SqliteDatabase {
         )?;
 
         let derived_title = entries.iter().find_map(|entry| match entry {
-            ConversationEntry::UserEvent { event, .. } => match event {
-                luban_domain::UserEvent::Message { text, .. } => {
-                    let title = luban_domain::derive_thread_title(text);
-                    if title.is_empty() { None } else { Some(title) }
-                }
-            },
+            ConversationEntry::UserEvent {
+                event: luban_domain::UserEvent::Message { text, .. },
+                ..
+            } => {
+                let title = luban_domain::derive_thread_title(text);
+                if title.is_empty() { None } else { Some(title) }
+            }
             _ => None,
         });
 
@@ -3239,6 +3242,7 @@ impl SqliteDatabase {
                 };
                 let mut stored_entry = entry.clone();
                 set_conversation_entry_id(&mut stored_entry, entry_id.clone());
+                ensure_conversation_entry_created_at(&mut stored_entry, now_unix_millis());
                 let payload_json =
                     serde_json::to_string(&stored_entry).context("failed to serialize entry")?;
                 stmt.execute(params![
@@ -3841,7 +3845,7 @@ impl SqliteDatabase {
         Ok(())
     }
 
-    fn mark_conversation_tasks_done_for_merged_pr(
+    fn list_conversation_tasks_for_merged_pr(
         &mut self,
         project_slug: &str,
         workspace_name: &str,
@@ -3870,15 +3874,6 @@ impl SqliteDatabase {
             }
             out
         };
-
-        for thread_local_id in &thread_ids {
-            self.save_conversation_task_status(
-                project_slug,
-                workspace_name,
-                *thread_local_id,
-                luban_domain::TaskStatus::Done,
-            )?;
-        }
 
         Ok(thread_ids)
     }
@@ -4264,6 +4259,7 @@ fn migrate_conversation_entries_v17(conn: &mut Connection) -> anyhow::Result<()>
             LegacyConversationEntry::UserMessage { text, attachments } => {
                 ConversationEntry::UserEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: luban_domain::UserEvent::Message { text, attachments },
                 }
             }
@@ -4271,11 +4267,13 @@ fn migrate_conversation_entries_v17(conn: &mut Connection) -> anyhow::Result<()>
                 luban_domain::CodexThreadItem::AgentMessage { id, text } => {
                     ConversationEntry::AgentEvent {
                         entry_id: String::new(),
+                        created_at_unix_ms: 0,
                         event: luban_domain::AgentEvent::Message { id, text },
                     }
                 }
                 other => ConversationEntry::AgentEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: luban_domain::AgentEvent::Item {
                         item: Box::new(other),
                     },
@@ -4283,20 +4281,24 @@ fn migrate_conversation_entries_v17(conn: &mut Connection) -> anyhow::Result<()>
             },
             LegacyConversationEntry::TurnUsage { usage } => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::TurnUsage { usage },
             },
             LegacyConversationEntry::TurnDuration { duration_ms } => {
                 ConversationEntry::AgentEvent {
                     entry_id: String::new(),
+                    created_at_unix_ms: 0,
                     event: luban_domain::AgentEvent::TurnDuration { duration_ms },
                 }
             }
             LegacyConversationEntry::TurnCanceled => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::TurnCanceled,
             },
             LegacyConversationEntry::TurnError { message } => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::TurnError { message },
             },
         }
@@ -4385,10 +4387,20 @@ fn conversation_entry_index_fields(
         ConversationEntry::SystemEvent { entry_id, .. } => {
             ("system_event", None, entry_id.as_str())
         }
-        ConversationEntry::UserEvent { entry_id, event } => match event {
+        ConversationEntry::UserEvent {
+            entry_id, event, ..
+        } => match event {
             luban_domain::UserEvent::Message { .. } => ("user_message", None, entry_id.as_str()),
+            luban_domain::UserEvent::TerminalCommandStarted { .. } => {
+                ("terminal_command_started", None, entry_id.as_str())
+            }
+            luban_domain::UserEvent::TerminalCommandFinished { .. } => {
+                ("terminal_command_finished", None, entry_id.as_str())
+            }
         },
-        ConversationEntry::AgentEvent { entry_id, event } => match event {
+        ConversationEntry::AgentEvent {
+            entry_id, event, ..
+        } => match event {
             luban_domain::AgentEvent::Message { id, .. } => {
                 ("codex_item", Some(id.as_str()), entry_id.as_str())
             }
@@ -4412,6 +4424,28 @@ fn set_conversation_entry_id(entry: &mut ConversationEntry, entry_id: String) {
         ConversationEntry::SystemEvent { entry_id: slot, .. } => *slot = entry_id,
         ConversationEntry::UserEvent { entry_id: slot, .. } => *slot = entry_id,
         ConversationEntry::AgentEvent { entry_id: slot, .. } => *slot = entry_id,
+    }
+}
+
+fn ensure_conversation_entry_created_at(entry: &mut ConversationEntry, created_at_unix_ms: u64) {
+    match entry {
+        ConversationEntry::SystemEvent { .. } => {}
+        ConversationEntry::UserEvent {
+            created_at_unix_ms: slot,
+            ..
+        } => {
+            if *slot == 0 {
+                *slot = created_at_unix_ms;
+            }
+        }
+        ConversationEntry::AgentEvent {
+            created_at_unix_ms: slot,
+            ..
+        } => {
+            if *slot == 0 {
+                *slot = created_at_unix_ms;
+            }
+        }
     }
 }
 
@@ -4496,6 +4530,7 @@ mod tests {
             1,
             &[ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::UserEvent::Message {
                     text: "hello".to_owned(),
                     attachments: Vec::new(),
@@ -4521,6 +4556,7 @@ mod tests {
             1,
             &[ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::Message {
                     id: "m1".to_owned(),
                     text: "hi".to_owned(),
@@ -4541,8 +4577,8 @@ mod tests {
     }
 
     #[test]
-    fn task_validation_pr_can_be_marked_done_on_merge() {
-        let path = temp_db_path("task_validation_pr_can_be_marked_done_on_merge");
+    fn task_validation_pr_can_be_listed_on_merge() {
+        let path = temp_db_path("task_validation_pr_can_be_listed_on_merge");
         let mut db = open_db(&path);
 
         db.ensure_conversation("p", "w", 1).unwrap();
@@ -4557,19 +4593,19 @@ mod tests {
         )
         .unwrap();
 
-        let updated = db
-            .mark_conversation_tasks_done_for_merged_pr("p", "w", 124)
+        let matching = db
+            .list_conversation_tasks_for_merged_pr("p", "w", 124)
             .unwrap();
-        assert!(updated.is_empty());
+        assert!(matching.is_empty());
 
-        let updated = db
-            .mark_conversation_tasks_done_for_merged_pr("p", "w", 123)
+        let matching = db
+            .list_conversation_tasks_for_merged_pr("p", "w", 123)
             .unwrap();
-        assert_eq!(updated, vec![1]);
+        assert_eq!(matching, vec![1]);
 
         let threads = db.list_conversation_threads("p", "w").unwrap();
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Done);
+        assert_eq!(threads[0].task_status, luban_domain::TaskStatus::Validating);
     }
 
     #[test]
@@ -4604,6 +4640,7 @@ mod tests {
             1,
             &[ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::UserEvent::Message {
                     text: "hello".to_owned(),
                     attachments: Vec::new(),
@@ -4658,6 +4695,7 @@ mod tests {
             1,
             &[ConversationEntry::UserEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::UserEvent::Message {
                     text: "Hello world".to_owned(),
                     attachments: Vec::new(),
@@ -4979,10 +5017,12 @@ mod tests {
         let entry = match item {
             CodexThreadItem::AgentMessage { id, text } => ConversationEntry::AgentEvent {
                 entry_id: "e_1".to_owned(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::Message { id, text },
             },
             other => ConversationEntry::AgentEvent {
                 entry_id: "e_1".to_owned(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -5137,6 +5177,7 @@ mod tests {
         for idx in 0..10_u64 {
             let entry = ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: 0,
                 event: luban_domain::AgentEvent::TurnDuration { duration_ms: idx },
             };
             db.append_conversation_entries("p", "w", 1, std::slice::from_ref(&entry))
@@ -5228,6 +5269,7 @@ mod tests {
 
         let entry_a = ConversationEntry::AgentEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: luban_domain::AgentEvent::Message {
                 id: "turn-a/item_0".to_owned(),
                 text: "A".to_owned(),
@@ -5235,6 +5277,7 @@ mod tests {
         };
         let entry_b = ConversationEntry::AgentEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: luban_domain::AgentEvent::Message {
                 id: "turn-b/item_0".to_owned(),
                 text: "B".to_owned(),
@@ -5344,6 +5387,7 @@ mod tests {
         db.ensure_conversation("p2", "w", 1).unwrap();
         let entry = ConversationEntry::UserEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: luban_domain::UserEvent::Message {
                 text: "hello".to_owned(),
                 attachments: Vec::new(),
@@ -5489,6 +5533,7 @@ mod tests {
         db.ensure_conversation("p", "w", 1).unwrap();
         let entry = ConversationEntry::UserEvent {
             entry_id: String::new(),
+            created_at_unix_ms: 0,
             event: luban_domain::UserEvent::Message {
                 text: "hello".to_owned(),
                 attachments: Vec::new(),

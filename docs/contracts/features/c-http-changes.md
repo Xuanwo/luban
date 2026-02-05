@@ -1,7 +1,7 @@
 # C-HTTP-CHANGES
 
 Status: Draft
-Verification: Mock=yes, Provider=yes, CI=no
+Verification: Mock=yes, Provider=yes, CI=yes
 
 ## Surface
 
@@ -19,4 +19,4 @@ Return workspace VCS summary (status/changed files) for UI panels.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchWorkspaceChanges(workdirId)`
+- n/a (right sidebar removed)

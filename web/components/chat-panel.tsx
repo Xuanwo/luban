@@ -19,6 +19,8 @@ import type {
   CodexCustomPromptSnapshot,
   QueuedPromptSnapshot,
   ThinkingEffort,
+  ChangedFileSnapshot,
+  ConversationEntry,
 } from "@/lib/luban-api"
 import { attachmentHref } from "@/lib/attachment-href"
 import {
@@ -27,7 +29,6 @@ import {
   loadJson,
   saveJson,
 } from "@/lib/ui-prefs"
-import type { ChangedFile } from "./right-sidebar"
 import { type ComposerAttachment as EditorComposerAttachment } from "@/components/shared/message-editor"
 import { AgentRunningCard, type AgentRunningStatus } from "@/components/shared/agent-running-card"
 import { openSettingsPanel } from "@/lib/open-settings"
@@ -41,6 +42,7 @@ import { ChatComposer } from "@/components/chat-composer"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
 
 type ComposerAttachment = EditorComposerAttachment
+type ChangedFile = ChangedFileSnapshot
 
 type PersistedChatDraft = {
   text: string
@@ -257,10 +259,10 @@ export function ChatPanel({
   }, [displayMessages])
   const agentActivities = useMemo(() => buildAgentActivities(conversation), [conversation])
   const messageHistory = useMemo(() => {
-    const entries = conversation?.entries ?? []
+    const entries: ConversationEntry[] = conversation?.entries ?? []
     const isUserMessage = (
-      entry: (typeof entries)[number],
-    ): entry is Extract<(typeof entries)[number], { type: "user_event"; event: { type: "message" } }> =>
+      entry: ConversationEntry,
+    ): entry is Extract<ConversationEntry, { type: "user_event" }> & { event: { type: "message"; text: string } } =>
       entry.type === "user_event" && entry.event.type === "message"
     const items = entries
       .filter(isUserMessage)
@@ -1030,7 +1032,6 @@ export function ChatPanel({
         <AgentRunningCard
           activities={activities}
           elapsedTime={agentRunElapsedLabel}
-          turnStartedAtMs={agentRunStartedAtMs}
           status={agentStatus}
           hasQueuedMessages={queuedPrompts.length > 0}
           editorValue={agentEditorValue}

@@ -426,6 +426,22 @@ mod task_status_tests {
     }
 }
 
+#[cfg(test)]
+mod conversation_system_event_tests {
+    use super::ConversationSystemEvent;
+
+    #[test]
+    fn conversation_system_event_archived_roundtrips() {
+        let json =
+            serde_json::to_string(&ConversationSystemEvent::TaskArchived).expect("serialize");
+        assert_eq!(json, "{\"event_type\":\"task_archived\"}");
+
+        let parsed: ConversationSystemEvent =
+            serde_json::from_str("{\"event_type\":\"task_archived\"}").expect("deserialize");
+        assert!(matches!(parsed, ConversationSystemEvent::TaskArchived));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStatus {
@@ -603,13 +619,27 @@ pub struct ConversationSystemEventEntry {
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum ConversationSystemEvent {
     TaskCreated,
-    TaskStatusChanged { from: TaskStatus, to: TaskStatus },
+    TaskArchived,
+    TaskStatusChanged {
+        from: TaskStatus,
+        to: TaskStatus,
+    },
+    TaskStatusSuggestion {
+        from: TaskStatus,
+        to: TaskStatus,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        explanation_markdown: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserEventEntry {
     #[serde(default)]
     pub entry_id: String,
+    #[serde(default)]
+    pub created_at_unix_ms: u64,
     pub event: UserEvent,
 }
 
@@ -617,6 +647,8 @@ pub struct UserEventEntry {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UserEvent {
     Message(UserMessage),
+    TerminalCommandStarted(TerminalCommandStarted),
+    TerminalCommandFinished(TerminalCommandFinished),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -626,9 +658,29 @@ pub struct UserMessage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TerminalCommandStarted {
+    pub id: String,
+    pub command: String,
+    pub reconnect: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TerminalCommandFinished {
+    pub id: String,
+    pub command: String,
+    pub reconnect: String,
+    #[serde(default)]
+    pub output_base64: String,
+    #[serde(default)]
+    pub output_byte_len: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentEventEntry {
     #[serde(default)]
     pub entry_id: String,
+    #[serde(default)]
+    pub created_at_unix_ms: u64,
     pub event: AgentEvent,
 }
 
@@ -920,6 +972,13 @@ pub enum ClientAction {
         #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
         thinking_effort: ThinkingEffort,
+    },
+    TerminalCommandStart {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
+        workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
+        thread_id: WorkspaceThreadId,
+        command: String,
     },
     SendAgentMessage {
         #[serde(rename = "workdir_id", alias = "workspace_id")]

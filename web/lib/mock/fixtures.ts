@@ -58,21 +58,19 @@ export type MockFixtures = {
 }
 
 const FIXTURE_BASE_UNIX_MS = Date.UTC(2026, 0, 22, 12, 0, 0)
-const FIXTURE_RELATIVE_NOW_UNIX_MS = (() => {
-  const now = Date.now()
-  return now - (now % 60_000)
-})()
+let fixtureEntryCursorUnixMs = FIXTURE_BASE_UNIX_MS
 
 function unixMs(offsetMs: number = 0): number {
   return FIXTURE_BASE_UNIX_MS + offsetMs
 }
 
-function unixSeconds(offsetSeconds: number = 0): number {
-  return Math.floor(FIXTURE_BASE_UNIX_MS / 1000) + offsetSeconds
+function nextEntryCreatedAtUnixMs(stepMs: number = 250): number {
+  fixtureEntryCursorUnixMs += stepMs
+  return fixtureEntryCursorUnixMs
 }
 
-function nowUnixSeconds(offsetSeconds: number = 0): number {
-  return Math.floor(FIXTURE_RELATIVE_NOW_UNIX_MS / 1000) + offsetSeconds
+function unixSeconds(offsetSeconds: number = 0): number {
+  return Math.floor(FIXTURE_BASE_UNIX_MS / 1000) + offsetSeconds
 }
 
 function dataUrlSvg(text: string): string {
@@ -115,13 +113,19 @@ function newEntryId(prefix: string): string {
 }
 
 function userMessage(text: string): ConversationEntry {
-  return { type: "user_event", entry_id: newEntryId("ue"), event: { type: "message", text, attachments: [] } }
+  return {
+    type: "user_event",
+    entry_id: newEntryId("ue"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "message", text, attachments: [] },
+  }
 }
 
 function agentMessage(text: string): ConversationEntry {
   return {
     type: "agent_event",
     entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
     event: { type: "message", id: `agent_msg_${Math.random().toString(16).slice(2)}`, text },
   }
 }
@@ -130,20 +134,36 @@ function agentActivity(kind: AgentItemKind, payload: unknown): ConversationEntry
   return {
     type: "agent_event",
     entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
     event: { type: "item", id: `agent_act_${Math.random().toString(16).slice(2)}`, kind, payload },
   }
 }
 
 function agentTurnDuration(durationMs: number): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_duration", duration_ms: durationMs } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_duration", duration_ms: durationMs },
+  }
 }
 
 function agentTurnError(message: string): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_error", message } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_error", message },
+  }
 }
 
 function agentTurnCanceled(): ConversationEntry {
-  return { type: "agent_event", entry_id: newEntryId("ae"), event: { type: "turn_canceled" } }
+  return {
+    type: "agent_event",
+    entry_id: newEntryId("ae"),
+    created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+    event: { type: "turn_canceled" },
+  }
 }
 
 function queuedPrompt(args: {
@@ -171,7 +191,17 @@ function queuedPrompt(args: {
 function systemEvent(args: {
   id: string
   createdAtUnixMs: number
-  event: { event_type: "task_created" } | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
+  event:
+    | { event_type: "task_created" }
+    | { event_type: "task_archived" }
+    | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
+    | {
+        event_type: "task_status_suggestion"
+        from: TaskStatus
+        to: TaskStatus
+        title: string
+        explanation_markdown: string
+      }
 }): ConversationEntry {
   return {
     type: "system_event",
@@ -269,8 +299,6 @@ export function defaultMockFixtures(): MockFixtures {
   const task9: WorkspaceThreadId = 9
   const task10: WorkspaceThreadId = 10
   const task11: WorkspaceThreadId = 11
-  const task12: WorkspaceThreadId = 12
-  const task13: WorkspaceThreadId = 13
 
   const project1: ProjectId = "mock-project-1"
   const project2: ProjectId = "mock-project-2"
@@ -407,17 +435,9 @@ export function defaultMockFixtures(): MockFixtures {
     },
   }
 
-  const tabs1: WorkspaceTabsSnapshot = {
-    open_tabs: [task1, task9, task7, task4, task2, task8, task5, task6],
-    archived_tabs: [],
-    active_tab: task1,
-  }
+  const tabs1: WorkspaceTabsSnapshot = { open_tabs: [task1, task9, task7, task4, task2, task8, task5, task6], archived_tabs: [], active_tab: task1 }
   const tabs2: WorkspaceTabsSnapshot = { open_tabs: [task3, task10], archived_tabs: [], active_tab: task3 }
-  const tabs3: WorkspaceTabsSnapshot = {
-    open_tabs: [task1, task9, task7, task4, task8, task5, task6],
-    archived_tabs: [],
-    active_tab: task1,
-  }
+  const tabs3: WorkspaceTabsSnapshot = { open_tabs: [task1, task9, task7, task4, task8, task5, task6], archived_tabs: [], active_tab: task1 }
 
   const threadsByWorkspace: Record<number, ThreadsSnapshot> = {
     [workdir1]: {
@@ -425,116 +445,15 @@ export function defaultMockFixtures(): MockFixtures {
       workdir_id: workdir1,
       tabs: tabs1,
       tasks: [
-        {
-          task_id: task1,
-          remote_thread_id: null,
-          title: "Mock task 1",
-          created_at_unix_seconds: unixSeconds(-30),
-          updated_at_unix_seconds: unixSeconds(-30),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task2,
-          remote_thread_id: null,
-          title: "Mock task 2",
-          created_at_unix_seconds: unixSeconds(-10),
-          updated_at_unix_seconds: unixSeconds(-10),
-          task_status: "backlog" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task11,
-          remote_thread_id: null,
-          title: "Mock: Long conversation",
-          created_at_unix_seconds: unixSeconds(-2),
-          updated_at_unix_seconds: unixSeconds(-2),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task12,
-          remote_thread_id: null,
-          title: "Mock: 10 days old",
-          created_at_unix_seconds: nowUnixSeconds(-10 * 24 * 60 * 60),
-          updated_at_unix_seconds: nowUnixSeconds(-10 * 24 * 60 * 60),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task13,
-          remote_thread_id: null,
-          title: "Mock: 45 days old",
-          created_at_unix_seconds: nowUnixSeconds(-45 * 24 * 60 * 60),
-          updated_at_unix_seconds: nowUnixSeconds(-45 * 24 * 60 * 60),
-          task_status: "backlog" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task4,
-          remote_thread_id: null,
-          title: "Validating: awaiting feedback",
-          created_at_unix_seconds: unixSeconds(-8),
-          updated_at_unix_seconds: unixSeconds(-8),
-          task_status: "validating" as TaskStatus,
-          turn_status: "awaiting" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task5,
-          remote_thread_id: null,
-          title: "Done: completed successfully",
-          created_at_unix_seconds: unixSeconds(-20),
-          updated_at_unix_seconds: unixSeconds(-20),
-          task_status: "done" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task6,
-          remote_thread_id: null,
-          title: "Canceled: aborted by user",
-          created_at_unix_seconds: unixSeconds(-15),
-          updated_at_unix_seconds: unixSeconds(-15),
-          task_status: "canceled" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task7,
-          remote_thread_id: null,
-          title: "Iterating: queue paused",
-          created_at_unix_seconds: unixSeconds(-12),
-          updated_at_unix_seconds: unixSeconds(-12),
-          task_status: "iterating" as TaskStatus,
-          turn_status: "paused" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task8,
-          remote_thread_id: null,
-          title: "Todo: last turn failed",
-          created_at_unix_seconds: unixSeconds(-18),
-          updated_at_unix_seconds: unixSeconds(-18),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "failed" as TurnResult,
-        },
-        {
-          task_id: task9,
-          remote_thread_id: null,
-          title: "Mock: Turn states",
-          created_at_unix_seconds: unixSeconds(-1),
-          updated_at_unix_seconds: unixSeconds(-1),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
+        { task_id: task1, remote_thread_id: null, title: "Mock task 1", created_at_unix_seconds: unixSeconds(-30), updated_at_unix_seconds: unixSeconds(-30), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task2, remote_thread_id: null, title: "Mock task 2", created_at_unix_seconds: unixSeconds(-10), updated_at_unix_seconds: unixSeconds(-10), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
+        { task_id: task11, remote_thread_id: null, title: "Mock: Long conversation", created_at_unix_seconds: unixSeconds(-2), updated_at_unix_seconds: unixSeconds(-2), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task4, remote_thread_id: null, title: "Validating: awaiting feedback", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task5, remote_thread_id: null, title: "Done: completed successfully", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task6, remote_thread_id: null, title: "Canceled: aborted by user", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
+        { task_id: task7, remote_thread_id: null, title: "Iterating: queue paused", created_at_unix_seconds: unixSeconds(-12), updated_at_unix_seconds: unixSeconds(-12), task_status: "iterating" as TaskStatus, turn_status: "paused" as TurnStatus, last_turn_result: null },
+        { task_id: task8, remote_thread_id: null, title: "Todo: last turn failed", created_at_unix_seconds: unixSeconds(-18), updated_at_unix_seconds: unixSeconds(-18), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "failed" as TurnResult },
+        { task_id: task9, remote_thread_id: null, title: "Mock: Turn states", created_at_unix_seconds: unixSeconds(-1), updated_at_unix_seconds: unixSeconds(-1), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
       ],
     },
     [workdir2]: {
@@ -542,26 +461,8 @@ export function defaultMockFixtures(): MockFixtures {
       workdir_id: workdir2,
       tabs: tabs2,
       tasks: [
-        {
-          task_id: task3,
-          remote_thread_id: null,
-          title: "PR: pending",
-          created_at_unix_seconds: unixSeconds(-5),
-          updated_at_unix_seconds: unixSeconds(-5),
-          task_status: "iterating" as TaskStatus,
-          turn_status: "running" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task10,
-          remote_thread_id: null,
-          title: "Todo: awaiting ack",
-          created_at_unix_seconds: unixSeconds(-3),
-          updated_at_unix_seconds: unixSeconds(-3),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
+        { task_id: task3, remote_thread_id: null, title: "PR: pending", created_at_unix_seconds: unixSeconds(-5), updated_at_unix_seconds: unixSeconds(-5), task_status: "iterating" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null },
+        { task_id: task10, remote_thread_id: null, title: "Todo: awaiting ack", created_at_unix_seconds: unixSeconds(-3), updated_at_unix_seconds: unixSeconds(-3), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
       ],
     },
     [workdir3]: {
@@ -569,76 +470,13 @@ export function defaultMockFixtures(): MockFixtures {
       workdir_id: workdir3,
       tabs: tabs3,
       tasks: [
-        {
-          task_id: task1,
-          remote_thread_id: null,
-          title: "Local task",
-          created_at_unix_seconds: unixSeconds(-120),
-          updated_at_unix_seconds: unixSeconds(-120),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "failed" as TurnResult,
-        },
-        {
-          task_id: task4,
-          remote_thread_id: null,
-          title: "Local: validating",
-          created_at_unix_seconds: unixSeconds(-8),
-          updated_at_unix_seconds: unixSeconds(-8),
-          task_status: "validating" as TaskStatus,
-          turn_status: "awaiting" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task5,
-          remote_thread_id: null,
-          title: "Local: done",
-          created_at_unix_seconds: unixSeconds(-20),
-          updated_at_unix_seconds: unixSeconds(-20),
-          task_status: "done" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
-        {
-          task_id: task6,
-          remote_thread_id: null,
-          title: "Local: canceled",
-          created_at_unix_seconds: unixSeconds(-15),
-          updated_at_unix_seconds: unixSeconds(-15),
-          task_status: "canceled" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task7,
-          remote_thread_id: null,
-          title: "Local: paused queue",
-          created_at_unix_seconds: unixSeconds(-12),
-          updated_at_unix_seconds: unixSeconds(-12),
-          task_status: "iterating" as TaskStatus,
-          turn_status: "paused" as TurnStatus,
-          last_turn_result: null,
-        },
-        {
-          task_id: task8,
-          remote_thread_id: null,
-          title: "Local: failed turn",
-          created_at_unix_seconds: unixSeconds(-18),
-          updated_at_unix_seconds: unixSeconds(-18),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "failed" as TurnResult,
-        },
-        {
-          task_id: task9,
-          remote_thread_id: null,
-          title: "Local: turn states",
-          created_at_unix_seconds: unixSeconds(-1),
-          updated_at_unix_seconds: unixSeconds(-1),
-          task_status: "todo" as TaskStatus,
-          turn_status: "idle" as TurnStatus,
-          last_turn_result: "completed" as TurnResult,
-        },
+        { task_id: task1, remote_thread_id: null, title: "Local task", created_at_unix_seconds: unixSeconds(-120), updated_at_unix_seconds: unixSeconds(-120), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "failed" as TurnResult },
+        { task_id: task4, remote_thread_id: null, title: "Local: validating", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task5, remote_thread_id: null, title: "Local: done", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task6, remote_thread_id: null, title: "Local: canceled", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
+        { task_id: task7, remote_thread_id: null, title: "Local: paused queue", created_at_unix_seconds: unixSeconds(-12), updated_at_unix_seconds: unixSeconds(-12), task_status: "iterating" as TaskStatus, turn_status: "paused" as TurnStatus, last_turn_result: null },
+        { task_id: task8, remote_thread_id: null, title: "Local: failed turn", created_at_unix_seconds: unixSeconds(-18), updated_at_unix_seconds: unixSeconds(-18), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "failed" as TurnResult },
+        { task_id: task9, remote_thread_id: null, title: "Local: turn states", created_at_unix_seconds: unixSeconds(-1), updated_at_unix_seconds: unixSeconds(-1), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
       ],
     },
   }
@@ -665,67 +503,38 @@ export function defaultMockFixtures(): MockFixtures {
         userMessage("Please help me refactor the authentication module."),
         // First agent turn with many activities (should fully collapse between cards)
         agentActivity("reasoning", { text: "Analyzing the authentication module structure" }),
-        agentActivity("command_execution", {
-          command: "find src -name '*auth*'",
-          status: "completed",
-          aggregated_output: "src/auth/index.ts\nsrc/auth/jwt.ts",
-        }),
+        agentActivity("command_execution", { command: "find src -name '*auth*'", status: "completed", aggregated_output: "src/auth/index.ts\nsrc/auth/jwt.ts" }),
         agentActivity("file_change", { changes: [{ path: "src/auth/index.ts", kind: "update" }] }),
-        agentActivity("command_execution", {
-          command: "pnpm run typecheck",
-          status: "completed",
-          aggregated_output: "No errors",
-        }),
+        agentActivity("command_execution", { command: "pnpm run typecheck", status: "completed", aggregated_output: "No errors" }),
         agentActivity("reasoning", { text: "Reviewing the JWT implementation" }),
         agentActivity("file_change", { changes: [{ path: "src/auth/jwt.ts", kind: "update" }] }),
-        agentMessage(
-          "I've refactored the authentication module. The main changes include:\n\n1. Extracted JWT logic into a separate utility\n2. Added proper error handling\n3. Improved type safety"
-        ),
+        agentMessage("I've refactored the authentication module. The main changes include:\n\n1. Extracted JWT logic into a separate utility\n2. Added proper error handling\n3. Improved type safety"),
         // Second user message
         userMessage("Can you also add unit tests for the changes?"),
         // Second agent turn with many activities (should fully collapse between cards)
         agentActivity("reasoning", { text: "Planning test coverage for auth module" }),
         agentActivity("file_change", { changes: [{ path: "src/auth/__tests__/index.test.ts", kind: "create" }] }),
         agentActivity("file_change", { changes: [{ path: "src/auth/__tests__/jwt.test.ts", kind: "create" }] }),
-        agentActivity("command_execution", {
-          command: "pnpm run test src/auth",
-          status: "completed",
-          aggregated_output: "Test Suites: 2 passed\nTests: 8 passed",
-        }),
+        agentActivity("command_execution", { command: "pnpm run test src/auth", status: "completed", aggregated_output: "Test Suites: 2 passed\nTests: 8 passed" }),
         agentActivity("reasoning", { text: "All tests passing, adding edge case tests" }),
         agentActivity("file_change", { changes: [{ path: "src/auth/__tests__/jwt.test.ts", kind: "update" }] }),
-        agentActivity("command_execution", {
-          command: "pnpm run test src/auth",
-          status: "completed",
-          aggregated_output: "Test Suites: 2 passed\nTests: 12 passed",
-        }),
-        agentMessage(
-          "I've added comprehensive unit tests for the authentication module:\n\n- `index.test.ts`: Tests for the main auth flow\n- `jwt.test.ts`: Tests for JWT token handling including edge cases\n\nAll 12 tests are passing."
-        ),
+        agentActivity("command_execution", { command: "pnpm run test src/auth", status: "completed", aggregated_output: "Test Suites: 2 passed\nTests: 12 passed" }),
+        agentMessage("I've added comprehensive unit tests for the authentication module:\n\n- `index.test.ts`: Tests for the main auth flow\n- `jwt.test.ts`: Tests for JWT token handling including edge cases\n\nAll 12 tests are passing."),
         // Third user message (latest turn - should keep last 3 visible)
         userMessage("Great! Now please update the documentation."),
         // Third agent turn - in progress (should keep last 3 visible)
         agentActivity("reasoning", { text: "Reviewing existing documentation" }),
-        agentActivity("command_execution", {
-          command: "cat docs/auth.md",
-          status: "completed",
-          aggregated_output: "# Authentication\n...",
-        }),
+        agentActivity("command_execution", { command: "cat docs/auth.md", status: "completed", aggregated_output: "# Authentication\n..." }),
         agentActivity("file_change", { changes: [{ path: "docs/auth.md", kind: "update" }] }),
         agentActivity("reasoning", { text: "Adding API reference section" }),
         agentActivity("file_change", { changes: [{ path: "docs/api/auth.md", kind: "create" }] }),
-        agentActivity("command_execution", {
-          command: "pnpm run docs:build",
-          status: "completed",
-          aggregated_output: "Documentation built successfully",
-        }),
-        agentMessage(
-          "I've updated the documentation:\n\n1. Updated `docs/auth.md` with the new refactored API\n2. Created `docs/api/auth.md` with detailed API reference\n\nThe documentation has been built successfully."
-        ),
+        agentActivity("command_execution", { command: "pnpm run docs:build", status: "completed", aggregated_output: "Documentation built successfully" }),
+        agentMessage("I've updated the documentation:\n\n1. Updated `docs/auth.md` with the new refactored API\n2. Created `docs/api/auth.md` with detailed API reference\n\nThe documentation has been built successfully."),
         // Tool / activity updates with the same id should collapse to the latest state.
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_dedupe",
@@ -736,6 +545,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_dedupe",
@@ -746,6 +556,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -756,6 +567,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -766,6 +578,7 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "tail_progress",
@@ -816,11 +629,7 @@ export function defaultMockFixtures(): MockFixtures {
         }),
         userMessage("Please review the changes and suggest improvements."),
         agentActivity("reasoning", { text: "Reviewing the diff and checking for edge cases" }),
-        agentActivity("command_execution", {
-          command: 'rg -n "TODO" web',
-          status: "completed",
-          aggregated_output: "web/lib/mock/fixtures.ts:1:...",
-        }),
+        agentActivity("command_execution", { command: "rg -n \"TODO\" web", status: "completed", aggregated_output: "web/lib/mock/fixtures.ts:1:..." }),
         agentMessage("Review completed. Left a few actionable suggestions and questions."),
         agentTurnDuration(18_500),
       ],
@@ -849,17 +658,8 @@ export function defaultMockFixtures(): MockFixtures {
         }),
         userMessage("Implement the requested change and make sure tests pass."),
         agentActivity("reasoning", { text: "Implementing the change and validating behavior" }),
-        agentActivity("file_change", {
-          changes: [
-            { path: "src/main.rs", kind: "update" },
-            { path: "src/lib.rs", kind: "update" },
-          ],
-        }),
-        agentActivity("command_execution", {
-          command: "just fmt && just lint && just test",
-          status: "completed",
-          aggregated_output: "All checks passed",
-        }),
+        agentActivity("file_change", { changes: [{ path: "src/main.rs", kind: "update" }, { path: "src/lib.rs", kind: "update" }] }),
+        agentActivity("command_execution", { command: "just fmt && just lint && just test", status: "completed", aggregated_output: "All checks passed" }),
         agentMessage("Implemented the change and verified tests locally."),
         agentTurnDuration(62_000),
       ],
@@ -911,13 +711,7 @@ export function defaultMockFixtures(): MockFixtures {
             event: { event_type: "task_status_changed", from: "todo", to: "iterating" },
           }),
           userMessage("Queue a few prompts and then pause the queue."),
-          agentActivity("todo_list", {
-            items: [
-              { text: "Analyze", completed: true },
-              { text: "Implement", completed: false },
-              { text: "Verify", completed: false },
-            ],
-          }),
+          agentActivity("todo_list", { items: [{ text: "Analyze", completed: true }, { text: "Implement", completed: false }, { text: "Verify", completed: false }] }),
           agentMessage("Queued work; waiting to resume."),
         ],
       }),
@@ -940,11 +734,7 @@ export function defaultMockFixtures(): MockFixtures {
           event: { event_type: "task_created" },
         }),
         userMessage("Try to run the command and handle failures gracefully."),
-        agentActivity("command_execution", {
-          command: "just lint",
-          status: "completed",
-          aggregated_output: "error: clippy::some_lint\n...",
-        }),
+        agentActivity("command_execution", { command: "just lint", status: "completed", aggregated_output: "error: clippy::some_lint\n..." }),
         agentTurnError("Command failed: clippy reported errors (mock)."),
       ],
     }),
@@ -961,11 +751,28 @@ export function defaultMockFixtures(): MockFixtures {
           event: { event_type: "task_created" },
         }),
         userMessage("Show a completed turn."),
-        agentActivity("command_execution", {
-          command: 'rg -n "FIXME" -S',
-          status: "completed",
-          aggregated_output: "No matches",
-        }),
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "turn_duration_smoke_command",
+            kind: "command_execution",
+            payload: { command: "rg -n \"FIXME\" -S", status: "in_progress", aggregated_output: "" },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(3_200),
+          event: {
+            type: "item",
+            id: "turn_duration_smoke_command",
+            kind: "command_execution",
+            payload: { command: "rg -n \"FIXME\" -S", status: "completed", aggregated_output: "No matches" },
+          },
+        },
         agentTurnDuration(2_400),
         agentMessage("Done."),
         userMessage("Show a failed turn."),
@@ -990,17 +797,18 @@ export function defaultMockFixtures(): MockFixtures {
           createdAtUnixMs: unixMs(-30 * 60 * 1000),
           event: { event_type: "task_created" },
         }),
-        systemEvent({
-          id: "sys_2",
-          createdAtUnixMs: unixMs(-25 * 60 * 1000),
-          event: { event_type: "task_status_changed", from: "backlog", to: "iterating" },
-        }),
-        userMessage("Please open a PR."),
-        agentMessage("Ok. I'll open a PR and share the link."),
-        {
-          type: "agent_event",
-          entry_id: newEntryId("ae"),
-          event: {
+	        systemEvent({
+	          id: "sys_2",
+	          createdAtUnixMs: unixMs(-25 * 60 * 1000),
+	          event: { event_type: "task_status_changed", from: "backlog", to: "iterating" },
+	        }),
+	        userMessage("Please open a PR."),
+	        agentMessage("Ok. I'll open a PR and share the link."),
+	        {
+	          type: "agent_event",
+	          entry_id: newEntryId("ae"),
+            created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+	          event: {
             type: "item",
             id: "prog_1",
             kind: "reasoning",
@@ -1010,20 +818,18 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_2",
             kind: "command_execution",
-            payload: {
-              command: "git status",
-              status: "completed",
-              aggregated_output: "On branch main\nnothing to commit",
-            },
+            payload: { command: "git status", status: "completed", aggregated_output: "On branch main\nnothing to commit" },
           },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_3",
@@ -1034,59 +840,46 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_4",
             kind: "command_execution",
-            payload: {
-              command: "pnpm run lint",
-              status: "completed",
-              aggregated_output: "✓ No ESLint warnings or errors",
-            },
+            payload: { command: "pnpm run lint", status: "completed", aggregated_output: "✓ No ESLint warnings or errors" },
           },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
-          event: {
-            type: "item",
-            id: "prog_5",
-            kind: "web_search",
-            payload: { query: "TypeScript best practices for error handling" },
-          },
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: { type: "item", id: "prog_5", kind: "web_search", payload: { query: "TypeScript best practices for error handling" } },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_6",
             kind: "file_change",
-            payload: {
-              changes: [
-                { path: "src/lib/api.ts", kind: "update" },
-                { path: "src/lib/types.ts", kind: "create" },
-              ],
-            },
+            payload: { changes: [{ path: "src/lib/api.ts", kind: "update" }, { path: "src/lib/types.ts", kind: "create" }] },
           },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_7",
             kind: "command_execution",
-            payload: {
-              command: "pnpm run test",
-              status: "completed",
-              aggregated_output: "Test Suites: 12 passed\nTests: 48 passed",
-            },
+            payload: { command: "pnpm run test", status: "completed", aggregated_output: "Test Suites: 12 passed\nTests: 48 passed" },
           },
         },
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
             type: "item",
             id: "prog_8",
@@ -1097,16 +890,17 @@ export function defaultMockFixtures(): MockFixtures {
         {
           type: "agent_event",
           entry_id: newEntryId("ae"),
-          event: {
-            type: "item",
-            id: "prog_9",
-            kind: "command_execution",
-            payload: { command: "git add -A && git commit -m 'feat: add new API endpoints'", status: "in_progress" },
-          },
-        },
-        userMessage("Also include tests."),
-      ],
-    }),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+	          event: {
+	            type: "item",
+	            id: "prog_9",
+	            kind: "command_execution",
+	            payload: { command: "git add -A && git commit -m 'feat: add new API endpoints'", status: "in_progress" },
+	          },
+	        },
+	        userMessage("Also include tests."),
+	      ],
+	    }),
     [key(workdir2, task10)]: conversationBase({
       workdirId: workdir2,
       taskId: task10,
@@ -1217,7 +1011,9 @@ export function defaultMockFixtures(): MockFixtures {
         ],
       }),
       queue_paused: true,
-      pending_prompts: [queuedPrompt({ id: 1, text: "Local queued prompt (mock)" })],
+      pending_prompts: [
+        queuedPrompt({ id: 1, text: "Local queued prompt (mock)" }),
+      ],
     },
     [key(workdir3, task8)]: conversationBase({
       workdirId: workdir3,
@@ -1310,22 +1106,12 @@ export function defaultMockFixtures(): MockFixtures {
 
   const mentionIndex: MentionItemSnapshot[] = [
     { id: "file:web/app/page.tsx", name: "page.tsx", path: "web/app/page.tsx", kind: "file" as MentionItemKind },
-    {
-      id: "file:web/lib/luban-http.ts",
-      name: "luban-http.ts",
-      path: "web/lib/luban-http.ts",
-      kind: "file" as MentionItemKind,
-    },
+    { id: "file:web/lib/luban-http.ts", name: "luban-http.ts", path: "web/lib/luban-http.ts", kind: "file" as MentionItemKind },
     { id: "folder:web/lib/mock", name: "mock", path: "web/lib/mock", kind: "folder" as MentionItemKind },
   ]
 
   const codexConfigTree: CodexConfigEntrySnapshot[] = [
-    {
-      path: "prompts",
-      name: "prompts",
-      kind: "folder",
-      children: [{ path: "prompts/default.md", name: "default.md", kind: "file", children: [] }],
-    },
+    { path: "prompts", name: "prompts", kind: "folder", children: [{ path: "prompts/default.md", name: "default.md", kind: "file", children: [] }] },
   ]
 
   const ampConfigTree: AmpConfigEntrySnapshot[] = [

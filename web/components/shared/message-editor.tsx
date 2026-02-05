@@ -74,6 +74,7 @@ export function MessageEditor({
   messageHistory,
   onCommand,
   placeholder = "Let's chart the cosmos of ideas...",
+  attachmentsEnabled = true,
   disabled,
   autoFocus,
   agentSelector,
@@ -95,6 +96,7 @@ export function MessageEditor({
   messageHistory?: string[]
   onCommand?: (commandId: string) => void
   placeholder?: string
+  attachmentsEnabled?: boolean
   disabled: boolean
   autoFocus?: boolean
   agentSelector?: React.ReactNode
@@ -164,6 +166,7 @@ export function MessageEditor({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     if (disabled) return
+    if (!attachmentsEnabled) return
     setIsDragging(false)
 
     const raw = e.dataTransfer.getData("luban-context-attachment")
@@ -511,11 +514,13 @@ export function MessageEditor({
       )}
       style={style}
       onDragOver={(e) => {
+        if (!attachmentsEnabled) return
         e.preventDefault()
         if (disabled) return
         setIsDragging(true)
       }}
       onDragLeave={(e) => {
+        if (!attachmentsEnabled) return
         e.preventDefault()
         setIsDragging(false)
       }}
@@ -774,25 +779,29 @@ export function MessageEditor({
       </div>
 
       <div className="flex items-center px-2 pb-2 pt-1">
-        <input
-          ref={fileInputRef}
-          data-testid={testIds.attachInput}
-          type="file"
-          multiple
-          accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.yaml,.yml"
-          className="hidden"
-          onChange={(e) => onFileSelect(e.target.files)}
-        />
-        <button
-          data-testid={testIds.attachButton}
-          onClick={() => fileInputRef.current?.click()}
-          onMouseDown={(e) => e.preventDefault()}
-          className="inline-flex items-center gap-1 p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
-          title="Attach files (images, documents)"
-          disabled={disabled}
-        >
-          <Paperclip className="w-4 h-4" />
-        </button>
+        {attachmentsEnabled && (
+          <>
+            <input
+              ref={fileInputRef}
+              data-testid={testIds.attachInput}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.yaml,.yml"
+              className="hidden"
+              onChange={(e) => onFileSelect(e.target.files)}
+            />
+            <button
+              data-testid={testIds.attachButton}
+              onClick={() => fileInputRef.current?.click()}
+              onMouseDown={(e) => e.preventDefault()}
+              className="inline-flex items-center gap-1 p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Attach files (images, documents)"
+              disabled={disabled}
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+          </>
+        )}
 
         {agentSelector ? (
           <>

@@ -16,7 +16,6 @@ web/
 │   ├── chat-panel.tsx     # Traditional chat/conversation component
 │   ├── task-activity-view.tsx  # Linear-style activity view component
 │   ├── task-activity-panel.tsx # Activity view with input composer
-│   ├── right-sidebar.tsx  # Properties sidebar
 │   ├── settings-panel.tsx # Full-screen settings
 │   └── shared/
 │       └── task-header.tsx # Reusable header component
@@ -66,7 +65,7 @@ LubanIDE
 │   └── Content Panel
 │       ├── InboxView (split: list + preview)
 │       ├── TaskListView (grouped list)
-│       └── TaskDetailView (chat + sidebar)
+│       └── TaskDetailView (activity view)
 └── SettingsPanel (full-screen overlay)
 ```
 

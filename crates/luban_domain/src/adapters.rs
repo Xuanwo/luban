@@ -1,7 +1,7 @@
 use crate::{
-    AgentRunnerKind, AgentThreadEvent, AttachmentRef, ContextItem, ConversationSnapshot,
-    ConversationThreadMeta, PersistedAppState, QueuedPrompt, SystemTaskKind, TaskStatus,
-    ThinkingEffort,
+    AgentRunnerKind, AgentThreadEvent, AttachmentRef, ContextItem, ConversationEntry,
+    ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt, SystemTaskKind,
+    TaskStatus, ThinkingEffort,
 };
 use std::collections::HashMap;
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
@@ -169,6 +169,7 @@ pub struct TaskStatusAutoUpdateSuggestion {
     pub task_status: TaskStatus,
     pub validation_pr_number: Option<u64>,
     pub validation_pr_url: Option<String>,
+    pub explanation_markdown: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -274,6 +275,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         &self,
         project_path: PathBuf,
         worktree_path: PathBuf,
+        branch_name: String,
     ) -> Result<(), String>;
 
     fn rename_workspace_branch(
@@ -310,6 +312,16 @@ pub trait ProjectWorkspaceService: Send + Sync {
         before: Option<u64>,
         limit: u64,
     ) -> Result<ConversationSnapshot, String>;
+
+    fn append_conversation_entries(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+        _entries: Vec<ConversationEntry>,
+    ) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
 
     fn delete_conversation_thread(
         &self,
@@ -378,7 +390,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         Ok(())
     }
 
-    fn mark_conversation_tasks_done_for_merged_pr(
+    fn list_conversation_tasks_for_merged_pr(
         &self,
         _project_slug: String,
         _workspace_name: String,
@@ -597,6 +609,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
             task_status,
             validation_pr_number: None,
             validation_pr_url: None,
+            explanation_markdown: None,
         })
     }
 

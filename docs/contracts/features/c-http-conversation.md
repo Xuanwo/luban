@@ -32,7 +32,7 @@ Paginated read for a single conversation thread.
 `snapshot.entries` is an ordered timeline. Each element is a `ConversationEntry` tagged by `type` and includes a stable `entry_id` (unique per entry):
 
 - `system_event`: provider-appended lifecycle transitions (task created, status changes, etc.)
-- `user_event`: user-originated events (today: `event.type=message`)
+- `user_event`: user-originated events (for example: messages, terminal commands)
 - `agent_event`: agent-originated events (messages, tool steps, turn lifecycle events)
 
 Streaming/tool updates are represented as additional appended `agent_event` entries; clients may fold by `AgentEvent.id` if desired.
@@ -47,7 +47,22 @@ The event payload is structured:
 - `type`: `system_event`
 - `entry_id`: stable string identifier (unique within the conversation)
 - `created_at_unix_ms`: millisecond timestamp
-- `event.event_type`: `task_created` | `task_status_changed`
+- `event.event_type`: `task_created` | `task_archived` | `task_status_changed` | `task_status_suggestion`
+  - `task_archived` indicates the provider has completed archival cleanup for a closed task (for
+    example: removing the worktree and deleting the local `luban/*` branch). Clients should treat
+    archived tasks as read-only.
+
+For `event.event_type=task_status_suggestion`:
+
+- `event.from`: `TaskStatus`
+- `event.to`: `TaskStatus`
+- `event.title`: string (may be empty)
+- `event.explanation_markdown`: string (may be empty; markdown is allowed)
+
+Semantics:
+
+- The provider emits this when it has analyzed the conversation progress and recommends updating the explicit `snapshot.task_status`.
+- The provider does not apply the change automatically; the client may apply it via `ClientAction::TaskStatusSet`.
 
 ### User events
 
@@ -55,9 +70,27 @@ User events are structured:
 
 - `type`: `user_event`
 - `entry_id`: stable string identifier (unique within the conversation)
-- `event.type`: `message`
+- `created_at_unix_ms`: millisecond timestamp
+- `event.type`: `message` | `terminal_command_started` | `terminal_command_finished`
+
+For `event.type=message`:
+
 - `event.text`: string
 - `event.attachments`: array of `AttachmentRef`
+
+For `event.type=terminal_command_started`:
+
+- `event.id`: stable identifier for folding start/finish
+- `event.command`: string
+- `event.reconnect`: string (see `C-WS-PTY`)
+
+For `event.type=terminal_command_finished`:
+
+- `event.id`: stable identifier for folding start/finish
+- `event.command`: string
+- `event.reconnect`: string
+- `event.output_byte_len`: integer
+- `event.output_base64`: base64-encoded bytes (may be empty when `output_byte_len=0`)
 
 ### Agent events
 
@@ -65,6 +98,7 @@ Agent events are structured:
 
 - `type`: `agent_event`
 - `entry_id`: stable string identifier (unique within the conversation)
+- `created_at_unix_ms`: millisecond timestamp
 - `event.type`: `message` | `item` | `turn_usage` | `turn_duration` | `turn_canceled` | `turn_error`
 
 For `event.type=message`:

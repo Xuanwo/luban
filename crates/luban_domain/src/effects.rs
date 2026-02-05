@@ -129,4 +129,12 @@ pub enum Effect {
     LoadWorkspaceThreads {
         workspace_id: WorkspaceId,
     },
+
+    /// After a task is moved to a closed state (`done`/`canceled`), the provider may be able to
+    /// cleanup the workspace worktree/branch and mark the workdir as archived.
+    ///
+    /// The engine decides whether cleanup is safe (for example: all threads are closed + idle).
+    MaybeAutoArchiveWorkspace {
+        workspace_id: WorkspaceId,
+    },
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, type CSSProperties } from "react"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
@@ -20,6 +20,19 @@ function encodeBinaryString(value: string): Uint8Array {
   const out = new Uint8Array(value.length)
   for (let i = 0; i < value.length; i++) out[i] = value.charCodeAt(i) & 0xff
   return out
+}
+
+function decodeBase64ToBytes(value: string): Uint8Array {
+  const trimmed = value.trim()
+  if (!trimmed) return new Uint8Array()
+  try {
+    const binary = atob(trimmed)
+    const out = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i) & 0xff
+    return out
+  } catch {
+    return new Uint8Array()
+  }
 }
 
 function encodePtyInputText(encoder: TextEncoder, text: string): Uint8Array {
@@ -344,8 +357,50 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
   return Number.isFinite(cols) && Number.isFinite(rows) && cols >= 2 && rows >= 2
 }
 
-export function PtyTerminal() {
+export function PtyTerminal({ autoFocus = false }: { autoFocus?: boolean } = {}) {
   const { activeWorkdirId: activeWorkspaceId, activeWorkdir: activeWorkspace } = useLuban()
+  const ptyThreadId = 1
+  const reconnectToken = activeWorkspaceId != null ? getOrCreateReconnectToken(activeWorkspaceId, ptyThreadId) : null
+  const mockWorkspaceLabel = activeWorkspace?.workdir_name ?? (activeWorkspaceId != null ? `workdir-${activeWorkspaceId}` : "")
+  const mockCwd = activeWorkspace?.workdir_path ?? (activeWorkspaceId != null ? `/mock/workdirs/${activeWorkspaceId}` : "")
+
+  return (
+    <PtyTerminalSession
+      workspaceId={activeWorkspaceId}
+      threadId={ptyThreadId}
+      reconnectToken={reconnectToken}
+      autoFocus={autoFocus}
+      mockWorkspaceLabel={mockWorkspaceLabel}
+      mockCwd={mockCwd}
+    />
+  )
+}
+
+export function PtyTerminalSession({
+  workspaceId,
+  threadId,
+  reconnectToken,
+  readOnly = false,
+  autoFocus = false,
+  initialBase64,
+  mockWorkspaceLabel,
+  mockCwd,
+  testId = "pty-terminal",
+  className,
+  style,
+}: {
+  workspaceId: number | null | undefined
+  threadId: number
+  reconnectToken?: string | null
+  readOnly?: boolean
+  autoFocus?: boolean
+  initialBase64?: string | null
+  mockWorkspaceLabel?: string | null
+  mockCwd?: string | null
+  testId?: string
+  className?: string
+  style?: CSSProperties
+}) {
   const { fonts } = useAppearance()
   const fontsRef = useRef(fonts)
   const { resolvedTheme } = useTheme()
@@ -355,6 +410,7 @@ export function PtyTerminal() {
   const fitAddonRef = useRef<FitAddon | null>(null)
   const webglAddonRef = useRef<WebglAddon | null>(null)
   const lastThemeDigestRef = useRef<string | null>(null)
+  const fallbackReconnectTokenRef = useRef<string | null>(null)
 
   useEffect(() => {
     fontsRef.current = fonts
@@ -417,16 +473,16 @@ export function PtyTerminal() {
 
     const isMock = isMockMode()
 
-    if (activeWorkspaceId == null) {
+    if (workspaceId == null) {
       container.textContent = "Select a workspace to start a terminal."
       return
     }
 
     container.innerHTML = ""
 
-    const ptyThreadId = 1
-    const mockWorkspaceLabel = activeWorkspace?.workdir_name ?? `workdir-${activeWorkspaceId}`
-    const mockCwd = activeWorkspace?.workdir_path ?? `/mock/workdirs/${activeWorkspaceId}`
+    const resolvedMockWorkspaceLabel =
+      (mockWorkspaceLabel ?? "").trim() || `workdir-${workspaceId}`
+    const resolvedMockCwd = (mockCwd ?? "").trim() || `/mock/workdirs/${workspaceId}`
 
     let disposed = false
     const fitAddon = new FitAddon()
@@ -435,16 +491,17 @@ export function PtyTerminal() {
     const webglAddon = look.useWebgl ? new WebglAddon() : null
     webglAddonRef.current = webglAddon
 
-    const term = new Terminal({
-      fontFamily: terminalFontFamily(fontsRef.current.terminalFont),
-      fontSize: look.fontSize,
-      lineHeight: look.lineHeight,
-      letterSpacing: look.letterSpacing,
-      cursorBlink: true,
-      allowTransparency: look.allowTransparency,
-      theme: terminalThemeFromCss(outer),
-      scrollback: 5000,
-    })
+	    const term = new Terminal({
+	      fontFamily: terminalFontFamily(fontsRef.current.terminalFont),
+	      fontSize: look.fontSize,
+	      lineHeight: look.lineHeight,
+	      letterSpacing: look.letterSpacing,
+	      cursorBlink: !readOnly,
+	      disableStdin: readOnly,
+	      allowTransparency: look.allowTransparency,
+	      theme: terminalThemeFromCss(outer),
+	      scrollback: 5000,
+	    })
     termRef.current = term
 
     term.loadAddon(fitAddon)
@@ -494,11 +551,12 @@ export function PtyTerminal() {
       })
     }
 
-    function sendInput(text: string) {
-      if (isMock) {
-        mockHandleInputText(text)
-        return
-      }
+	    function sendInput(text: string) {
+	      if (readOnly) return
+	      if (isMock) {
+	        mockHandleInputText(text)
+	        return
+	      }
       const socket = ws
       if (!socket) return
       const bytes = encodePtyInputText(encoder, text)
@@ -511,11 +569,12 @@ export function PtyTerminal() {
       }
     }
 
-    function sendBinaryInput(value: string) {
-      if (isMock) {
-        mockHandleInputBinary(value)
-        return
-      }
+	    function sendBinaryInput(value: string) {
+	      if (readOnly) return
+	      if (isMock) {
+	        mockHandleInputBinary(value)
+	        return
+	      }
       const socket = ws
       if (!socket) return
       const bytes = encodeBinaryString(value)
@@ -528,11 +587,12 @@ export function PtyTerminal() {
       }
     }
 
-    function sendResizeIfReady(cols: number, rows: number) {
-      if (!isValidTerminalSize(cols, rows)) return
-      if (ws?.readyState !== WebSocket.OPEN) return
-      ws.send(JSON.stringify({ type: "resize", cols, rows }))
-    }
+	    function sendResizeIfReady(cols: number, rows: number) {
+	      if (readOnly) return
+	      if (!isValidTerminalSize(cols, rows)) return
+	      if (ws?.readyState !== WebSocket.OPEN) return
+	      ws.send(JSON.stringify({ type: "resize", cols, rows }))
+	    }
 
     function scheduleFitAndResizeSync() {
       let attempts = 0
@@ -554,33 +614,47 @@ export function PtyTerminal() {
       window.requestAnimationFrame(tick)
     }
 
-    try {
-      term.open(container)
-    } catch (err) {
-      container.textContent = `Terminal init failed: ${String(err)}`
-      return
-    }
+	    try {
+	      term.open(container)
+	    } catch (err) {
+	      container.textContent = `Terminal init failed: ${String(err)}`
+	      return
+	    }
 
-    let mockLine = ""
-    let mockShownBanner = false
+	    if (readOnly) {
+	      const bytes = decodeBase64ToBytes(initialBase64 ?? "")
+	      const chunkSize = 8 * 1024
+	      let offset = 0
+	      const writeNext = () => {
+	        if (disposed) return
+	        if (offset >= bytes.length) return
+	        const next = bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize))
+	        offset += next.length
+	        term.write(next, writeNext)
+	      }
+	      writeNext()
+	    }
 
-    function writeMockPrompt() {
-      term.write(`${mockWorkspaceLabel} $ `)
-    }
+	    let mockLine = ""
+	    let mockShownBanner = false
 
-    function writeMockBannerIfNeeded() {
-      if (mockShownBanner) return
-      mockShownBanner = true
-      term.writeln("Mock PTY (local) - not connected to server")
-      term.writeln(`Workspace: ${mockCwd}`)
-      writeMockPrompt()
-    }
+	    function writeMockPrompt() {
+	      term.write(`${resolvedMockWorkspaceLabel} $ `)
+	    }
+
+	    function writeMockBannerIfNeeded() {
+	      if (mockShownBanner) return
+	      mockShownBanner = true
+	      term.writeln("Mock PTY (local) - not connected to server")
+	      term.writeln(`Workspace: ${resolvedMockCwd}`)
+	      writeMockPrompt()
+	    }
 
     function mockWriteOutput(lines: string[]) {
       for (const line of lines) term.writeln(line)
     }
 
-    function mockRunCommand(commandLine: string): void {
+	    function mockRunCommand(commandLine: string): void {
       const trimmed = commandLine.trim()
       if (trimmed.length === 0) {
         writeMockPrompt()
@@ -604,11 +678,11 @@ export function PtyTerminal() {
         return
       }
 
-      if (cmd === "pwd") {
-        mockWriteOutput([mockCwd])
-        writeMockPrompt()
-        return
-      }
+	      if (cmd === "pwd") {
+	        mockWriteOutput([resolvedMockCwd])
+	        writeMockPrompt()
+	        return
+	      }
 
       if (cmd === "ls") {
         mockWriteOutput(["crates/", "docs/", "web/"])
@@ -704,6 +778,13 @@ export function PtyTerminal() {
       } catch {
         // ignore
       }
+    }
+
+    if (autoFocus && !readOnly) {
+      window.requestAnimationFrame(() => {
+        if (disposed) return
+        focusCapture?.()
+      })
     }
 
     keydownCapture = (ev: KeyboardEvent) => {
@@ -808,21 +889,30 @@ export function PtyTerminal() {
     })
     resizeObserver.observe(container)
 
-    scheduleFitAndResizeSync()
+	    scheduleFitAndResizeSync()
 
-    if (isMock) {
-      writeMockBannerIfNeeded()
-    } else {
-      const reconnectToken = getOrCreateReconnectToken(activeWorkspaceId, ptyThreadId)
+	    if (isMock) {
+	      if (readOnly) {
+	        // Mock mode has no provider-backed PTY; read-only output is rendered from `initialBase64`.
+	      } else {
+	      writeMockBannerIfNeeded()
+	      }
+	    } else if (!readOnly) {
+	      const effectiveReconnectToken = (() => {
+	        const trimmed = (reconnectToken ?? "").trim()
+	        if (trimmed.length > 0) return trimmed
+	        if (!fallbackReconnectTokenRef.current) fallbackReconnectTokenRef.current = generateReconnectToken()
+	        return fallbackReconnectTokenRef.current
+	      })()
 
-      const connect = () => {
-        const url = new URL(`/api/pty/${activeWorkspaceId}/${ptyThreadId}`, window.location.href)
-        url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
-        url.searchParams.set("reconnect", reconnectToken)
+	      const connect = () => {
+	        const url = new URL(`/api/pty/${workspaceId}/${threadId}`, window.location.href)
+	        url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+	        url.searchParams.set("reconnect", effectiveReconnectToken)
 
-        const socket = new WebSocket(url.toString())
-        socket.binaryType = "arraybuffer"
-        ws = socket
+	        const socket = new WebSocket(url.toString())
+	        socket.binaryType = "arraybuffer"
+	        ws = socket
 
         socket.onmessage = (ev) => {
           if (disposed) return
@@ -860,11 +950,13 @@ export function PtyTerminal() {
         }
       }
 
-      connect()
-    }
+	      connect()
+	    }
 
-    dataDisposable = term.onData((data: string) => sendInput(data))
-    binaryDisposable = term.onBinary((data: string) => sendBinaryInput(data))
+	    if (!readOnly) {
+	      dataDisposable = term.onData((data: string) => sendInput(data))
+	      binaryDisposable = term.onBinary((data: string) => sendBinaryInput(data))
+	    }
 
     return () => {
       disposed = true
@@ -885,19 +977,19 @@ export function PtyTerminal() {
       webglAddon?.dispose()
       term.dispose()
     }
-  }, [activeWorkspaceId, activeWorkspace?.workdir_name, activeWorkspace?.workdir_path])
+	  }, [workspaceId, threadId, reconnectToken, readOnly, autoFocus, initialBase64, mockWorkspaceLabel, mockCwd])
 
-  return (
-    <div
-      data-testid="pty-terminal"
-      ref={outerRef}
-      tabIndex={0}
-      className="luban-terminal h-full w-full p-0 font-mono text-xs overflow-hidden focus:outline-none flex"
-      style={{ backgroundColor: '#fcfcfc' }}
-    >
-      <div className="flex-1 min-h-0 min-w-0 overflow-hidden px-3 py-2">
-        <div ref={containerRef} className="h-full w-full overflow-hidden" />
-      </div>
-    </div>
-  )
-}
+	  return (
+	    <div
+	      data-testid={testId}
+	      ref={outerRef}
+	      tabIndex={0}
+	      className={`luban-terminal h-full w-full p-0 font-mono text-xs overflow-hidden focus:outline-none flex ${className ?? ""}`}
+	      style={{ backgroundColor: "#fcfcfc", ...(style ?? {}) }}
+	    >
+	      <div className="flex-1 min-h-0 min-w-0 overflow-hidden px-3 py-2">
+	        <div ref={containerRef} className="h-full w-full overflow-hidden" />
+	      </div>
+	    </div>
+	  )
+	}

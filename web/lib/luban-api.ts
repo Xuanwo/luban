@@ -238,7 +238,15 @@ export type ConversationSnapshot = {
 
 export type ConversationSystemEvent =
   | { event_type: "task_created" }
+  | { event_type: "task_archived" }
   | { event_type: "task_status_changed"; from: TaskStatus; to: TaskStatus }
+  | {
+      event_type: "task_status_suggestion"
+      from: TaskStatus
+      to: TaskStatus
+      title: string
+      explanation_markdown: string
+    }
 
 export type ConversationSystemEventEntry = {
   entry_id: string
@@ -380,10 +388,20 @@ export type AgentItem = {
 
 export type ConversationEntry =
   | { type: "system_event"; entry_id: string; created_at_unix_ms: number; event: ConversationSystemEvent }
-  | { type: "user_event"; entry_id: string; event: UserEvent }
-  | { type: "agent_event"; entry_id: string; event: AgentEvent }
+  | { type: "user_event"; entry_id: string; created_at_unix_ms: number; event: UserEvent }
+  | { type: "agent_event"; entry_id: string; created_at_unix_ms: number; event: AgentEvent }
 
-export type UserEvent = { type: "message"; text: string; attachments: AttachmentRef[] }
+export type UserEvent =
+  | { type: "message"; text: string; attachments: AttachmentRef[] }
+  | { type: "terminal_command_started"; id: string; command: string; reconnect: string }
+  | {
+      type: "terminal_command_finished"
+      id: string
+      command: string
+      reconnect: string
+      output_base64: string
+      output_byte_len: number
+    }
 
 export type AgentEvent =
   | { type: "message"; id: string; text: string }
@@ -437,6 +455,7 @@ export type ClientAction =
       task_id: WorkspaceThreadId
       thinking_effort: ThinkingEffort
     }
+  | { type: "terminal_command_start"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; command: string }
   | {
       type: "send_agent_message"
       workdir_id: WorkspaceId

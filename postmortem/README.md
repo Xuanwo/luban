@@ -10,6 +10,7 @@ This directory contains engineering postmortems for user-visible bugs, CI regres
 - **Sev-4 (Low)**: cosmetic or low-impact papercut.
 
 ## Index (by incident)
+- `2026-02-startup-blocked-by-auto-archive.md`
 
 - `2026-02-duplicate-thread-1-backlog-task.md`
 - `2026-02-task-list-project-avatar-inconsistency.md`

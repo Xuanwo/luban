@@ -2,12 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
-  CheckCircle2,
-  AlertCircle,
-  MessageSquare,
   Loader2,
-  Circle,
-  PauseCircle,
   MoreHorizontal,
   Filter,
   SlidersHorizontal,
@@ -16,26 +11,13 @@ import {
 import { cn } from "@/lib/utils"
 import { TaskActivityPanel } from "./task-activity-panel"
 import { TaskHeader } from "./shared/task-header"
-import { TaskStatusSelector } from "./shared/task-status-selector"
-import type { ChangedFile } from "./right-sidebar"
-import { InboxFilterPopover } from "./inbox-filter-popover"
+import { TaskStatusIcon, TaskStatusSelector, taskStatusConfig } from "./shared/task-status-selector"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchConversation, fetchTasks } from "@/lib/luban-http"
-import type {
-  ConversationSnapshot,
-  OperationStatus,
-  TaskStatus,
-  TasksSnapshot,
-  TurnResult,
-  TurnStatus,
-} from "@/lib/luban-api"
+import type { ConversationSnapshot, OperationStatus, TaskStatus, TasksSnapshot, TurnResult, TurnStatus } from "@/lib/luban-api"
 import { isMockMode } from "@/lib/luban-mode"
-import { applyInboxFilters, DEFAULT_INBOX_FILTERS, inboxFiltersEqual, type InboxFilters } from "@/lib/inbox-filters"
-import type { NewTaskDraft } from "@/lib/new-task-drafts"
-import { NEW_TASK_DRAFTS_CHANGED_EVENT, deleteNewTaskDraft, loadNewTaskDrafts } from "@/lib/new-task-drafts"
-import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
 
 export interface InboxNotification {
   id: string
@@ -43,20 +25,18 @@ export interface InboxNotification {
   taskId: number
   taskTitle: string
   workdir: string
-  projectId: string
   projectName: string
   projectAvatarUrl: string
   projectFallbackAvatarUrl: string
   projectColor: string
   type: TurnResult | null
-  status: TaskStatus
+  taskLifecycleStatus: TaskStatus
   taskStatus: {
     agentRunStatus: OperationStatus
     turnStatus: TurnStatus
     lastTurnResult: TurnResult | null
     hasUnreadCompletion: boolean
   }
-  updatedAtUnixSeconds: number
   timestamp: string
   read: boolean
   isStarred: boolean
@@ -64,7 +44,7 @@ export interface InboxNotification {
 
 interface InboxViewProps {
   onOpenFullView?: (notification: InboxNotification) => void
-  onOpenDraft?: (draft: NewTaskDraft) => void
+  refreshSeq?: number
 }
 
 function escapeXmlText(raw: string): string {
@@ -86,14 +66,6 @@ function buildFallbackAvatarUrl(displayName: string, size: number): string {
     `</svg>`,
   ].join("")
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
-}
-
-function cloneInboxFilters(filters: InboxFilters): InboxFilters {
-  return {
-    projectIds: [...filters.projectIds],
-    statuses: [...filters.statuses],
-    updated: filters.updated,
-  }
 }
 
 function extractLatestAgentResponsePreviewLine(conversation: ConversationSnapshot): string | null {
@@ -129,28 +101,74 @@ function firstNonEmptyLine(text: string): string | null {
   return null
 }
 
-function InboxTaskStatusIcon({ status }: { status: InboxNotification["taskStatus"] }) {
-  if (status.agentRunStatus === "running" || status.turnStatus === "running") {
-    return <Loader2 className="w-[14px] h-[14px] animate-spin" style={{ color: "#5e6ad2" }} />
+function stableTaskKey(task: { workdir_id: number; task_id: number }): string {
+  return `${task.workdir_id}:${task.task_id}`
+}
+
+function buildStableUpdatedAtMap(tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const t of tasks) {
+    out.set(stableTaskKey(t), t.updated_at_unix_seconds)
   }
-  if (status.turnStatus === "paused") {
-    return <PauseCircle className="w-[14px] h-[14px]" style={{ color: "#9b9b9b" }} />
+  return out
+}
+
+function ensureStableUpdatedAtForNewTasks(args: {
+  stable: Map<string, number>
+  tasks: { workdir_id: number; task_id: number; updated_at_unix_seconds: number }[]
+}): void {
+  for (const t of args.tasks) {
+    const key = stableTaskKey(t)
+    if (!args.stable.has(key)) args.stable.set(key, t.updated_at_unix_seconds)
   }
-  if (status.turnStatus === "awaiting") {
-    return <MessageSquare className="w-[14px] h-[14px]" style={{ color: "#f2994a" }} />
-  }
-  if (status.lastTurnResult === "failed") {
-    return <AlertCircle className="w-[14px] h-[14px]" style={{ color: "#eb5757" }} />
-  }
-  if (status.lastTurnResult === "completed") {
+}
+
+function InboxTaskStatusIndicator({
+  lifecycleStatus,
+  isRunning,
+  hasUnreadCompletion,
+}: {
+  lifecycleStatus: TaskStatus
+  isRunning: boolean
+  hasUnreadCompletion: boolean
+}) {
+  const label = taskStatusConfig[lifecycleStatus]?.label ?? lifecycleStatus
+
+  if (isRunning) {
     return (
-      <CheckCircle2
-        className="w-[14px] h-[14px]"
-        style={{ color: status.hasUnreadCompletion ? "#5e6ad2" : "#27ae60" }}
-      />
+      <div
+        className="flex items-center justify-end"
+        title="Agent: running"
+        data-testid="inbox-notification-status-indicator"
+      >
+        <Loader2
+          className="w-[14px] h-[14px] animate-spin"
+          style={{ color: "#5e6ad2" }}
+          data-testid="inbox-notification-runner-spinner"
+          aria-label="Agent running"
+        />
+      </div>
     )
   }
-  return <Circle className="w-[14px] h-[14px]" style={{ color: "#9b9b9b" }} />
+
+  return (
+    <div
+      className="flex items-center justify-end gap-1"
+      title={`Task status: ${label}`}
+      data-testid="inbox-notification-status-indicator"
+    >
+      <TaskStatusIcon status={lifecycleStatus} size="xs" className="w-[14px] h-[14px]" />
+      {hasUnreadCompletion ? (
+        <span
+          className="w-[6px] h-[6px] rounded-full"
+          style={{ backgroundColor: "#5e6ad2" }}
+          data-testid="inbox-notification-unread-indicator"
+          aria-label="Unread completion"
+          title="Unread completion"
+        />
+      ) : null}
+    </div>
+  )
 }
 
 interface NotificationRowProps {
@@ -163,15 +181,10 @@ interface NotificationRowProps {
   onDoubleClick?: () => void
 }
 
-function NotificationRow({
-  notification,
-  previewText,
-  timestampText,
-  testId,
-  selected,
-  onClick,
-  onDoubleClick,
-}: NotificationRowProps) {
+function NotificationRow({ notification, previewText, timestampText, testId, selected, onClick, onDoubleClick }: NotificationRowProps) {
+  const isRunning =
+    notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
+
   return (
     <div
       data-testid={testId}
@@ -180,9 +193,9 @@ function NotificationRow({
       onDoubleClick={onDoubleClick}
       className={cn(
         "group flex items-start gap-2 px-3 py-2.5 cursor-pointer transition-colors",
-        selected ? "bg-[#f0f0f0]" : "hover:bg-[#f7f7f7]"
+        selected ? "bg-[#f0f0f0]" : "hover:bg-[#f7f7f7]",
       )}
-      style={{ borderBottom: "1px solid #ebebeb" }}
+      style={{ borderBottom: '1px solid #ebebeb' }}
     >
       {/* Content */}
       <div className="flex-1 min-w-0">
@@ -195,22 +208,23 @@ function NotificationRow({
             className="w-[14px] h-[14px] rounded-[3px] flex-shrink-0"
             loading="lazy"
             decoding="async"
-            onError={e => {
+            onError={(e) => {
               const img = e.currentTarget
               if (img.src !== notification.projectFallbackAvatarUrl) {
                 img.src = notification.projectFallbackAvatarUrl
               }
             }}
           />
-          <span className="text-[12px]" style={{ color: "#6b6b6b" }}>
+          <span className="text-[12px]" style={{ color: '#6b6b6b' }}>
             {notification.projectName}
           </span>
-          <span className="text-[12px]" style={{ color: "#9b9b9b" }}>
-            ›
-          </span>
+          <span className="text-[12px]" style={{ color: '#9b9b9b' }}>›</span>
           <span
-            className={cn("text-[13px] truncate", !notification.read ? "font-medium" : "font-normal")}
-            style={{ color: "#1b1b1b" }}
+            className={cn(
+              "text-[13px] truncate",
+              !notification.read ? "font-medium" : "font-normal"
+            )}
+            style={{ color: '#1b1b1b' }}
             data-testid="inbox-notification-task-title"
           >
             {notification.taskTitle}
@@ -219,7 +233,7 @@ function NotificationRow({
         <div
           data-testid="inbox-notification-preview"
           className="text-[12px] mt-0.5 truncate"
-          style={{ color: "#6b6b6b" }}
+          style={{ color: '#6b6b6b' }}
         >
           {previewText}
         </div>
@@ -228,9 +242,17 @@ function NotificationRow({
       {/* Status + Timestamp (vertical stack) */}
       <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
         <span data-testid="inbox-notification-task-status-icon">
-          <InboxTaskStatusIcon status={notification.taskStatus} />
+          <InboxTaskStatusIndicator
+            lifecycleStatus={notification.taskLifecycleStatus}
+            isRunning={isRunning}
+            hasUnreadCompletion={notification.taskStatus.hasUnreadCompletion}
+          />
         </span>
-        <span data-testid="inbox-notification-timestamp" className="text-[11px]" style={{ color: "#9b9b9b" }}>
+        <span
+          data-testid="inbox-notification-timestamp"
+          className="text-[11px]"
+          style={{ color: '#9b9b9b' }}
+        >
           {timestampText}
         </span>
       </div>
@@ -241,24 +263,20 @@ function NotificationRow({
 // Empty state component
 function EmptyState({ unreadCount }: { unreadCount: number }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center" style={{ color: "#9b9b9b" }}>
+    <div className="flex-1 flex flex-col items-center justify-center" style={{ color: '#9b9b9b' }}>
       <InboxIcon className="w-16 h-16 mb-4" strokeWidth={1} />
       <span className="text-[14px]">
-        {unreadCount > 0 ? `${unreadCount} unread notifications` : "No notifications"}
+        {unreadCount > 0 ? `${unreadCount} unread notifications` : 'No notifications'}
       </span>
     </div>
   )
 }
 
-export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
-  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } =
-    useLuban()
+export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
+  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
-  const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
   const [nowMs, setNowMs] = useState<number | null>(null)
-  const [filterOpen, setFilterOpen] = useState(false)
-  const [filters, setFilters] = useState<InboxFilters>(() => cloneInboxFilters(DEFAULT_INBOX_FILTERS))
   const [previewByNotificationId, setPreviewByNotificationId] = useState<
     Record<string, { userLine: string | null; agentLine: string | null; runStartedAtUnixMs: number | null } | null>
   >({})
@@ -266,23 +284,6 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
   const previewInFlightRef = useRef<Set<string>>(new Set())
   const prevWsConnectedRef = useRef(false)
   const stableUpdatedAtByTaskRef = useRef<Map<string, number>>(new Map())
-  const [drafts, setDrafts] = useState<NewTaskDraft[]>([])
-  const [draftsOpen, setDraftsOpen] = useState(false)
-
-  useEffect(() => {
-    const refresh = () => {
-      void (async () => {
-        try {
-          setDrafts(await loadNewTaskDrafts())
-        } catch (err) {
-          console.warn("loadNewTaskDrafts failed", err)
-        }
-      })()
-    }
-    refresh()
-    window.addEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
-    return () => window.removeEventListener(NEW_TASK_DRAFTS_CHANGED_EVENT, refresh)
-  }, [])
 
   useEffect(() => {
     previewByNotificationIdRef.current = previewByNotificationId
@@ -292,19 +293,16 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     const hasApp = app != null
     if (!hasApp) {
       setTasksSnapshot(null)
+      stableUpdatedAtByTaskRef.current = new Map()
       return
     }
 
     let cancelled = false
     void (async () => {
       try {
-        const snap = await fetchTasks()
+        const snap = await fetchTasks({ workdirStatus: "active" })
         if (cancelled) return
-        const stable = stableUpdatedAtByTaskRef.current
-        for (const t of snap.tasks ?? []) {
-          const key = `${t.workdir_id}:${t.task_id}`
-          if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-        }
+        stableUpdatedAtByTaskRef.current = buildStableUpdatedAtMap(snap.tasks ?? [])
         setTasksSnapshot(snap)
       } catch (err) {
         console.warn("fetchTasks failed", err)
@@ -314,17 +312,13 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [app != null])
+  }, [app != null, refreshSeq])
 
   const refreshTasks = useCallback(async () => {
     if (!app) return
     try {
-      const snap = await fetchTasks()
-      const stable = stableUpdatedAtByTaskRef.current
-      for (const t of snap.tasks ?? []) {
-        const key = `${t.workdir_id}:${t.task_id}`
-        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-      }
+      const snap = await fetchTasks({ workdirStatus: "active" })
+      ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: snap.tasks ?? [] })
       setTasksSnapshot(snap)
     } catch (err) {
       console.warn("fetchTasks failed", err)
@@ -339,37 +333,33 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
   }, [refreshTasks, wsConnected])
 
   useEffect(() => {
-    return subscribeServerEvents(event => {
+    return subscribeServerEvents((event) => {
       if (event.type !== "task_summaries_changed") return
-      const stable = stableUpdatedAtByTaskRef.current
-      for (const t of event.tasks ?? []) {
-        const key = `${t.workdir_id}:${t.task_id}`
-        if (!stable.has(key)) stable.set(key, t.updated_at_unix_seconds)
-      }
-      setTasksSnapshot(prev => {
+      setTasksSnapshot((prev) => {
         if (!prev) return prev
-        const nextTasks = [...prev.tasks.filter(t => t.workdir_id !== event.workdir_id), ...event.tasks]
+        ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: event.tasks ?? [] })
+        const nextTasks = [
+          ...prev.tasks.filter((t) => t.workdir_id !== event.workdir_id),
+          ...event.tasks,
+        ]
         return { ...prev, tasks: nextTasks, rev: prev.rev + 1 }
       })
     })
   }, [subscribeServerEvents])
 
-  const applyLocalTaskLifecycleStatus = useCallback(
-    (args: { workdirId: number; taskId: number; status: TaskStatus }) => {
-      setTasksSnapshot(prev => {
-        if (!prev) return prev
-        let changed = false
-        const nextTasks = prev.tasks.map(t => {
-          if (t.workdir_id !== args.workdirId || t.task_id !== args.taskId) return t
-          if (t.task_status === args.status) return t
-          changed = true
-          return { ...t, task_status: args.status }
-        })
-        return changed ? { ...prev, tasks: nextTasks, rev: prev.rev + 1 } : prev
+  const applyLocalTaskLifecycleStatus = useCallback((args: { workdirId: number; taskId: number; status: TaskStatus }) => {
+    setTasksSnapshot((prev) => {
+      if (!prev) return prev
+      let changed = false
+      const nextTasks = prev.tasks.map((t) => {
+        if (t.workdir_id !== args.workdirId || t.task_id !== args.taskId) return t
+        if (t.task_status === args.status) return t
+        changed = true
+        return { ...t, task_status: args.status }
       })
-    },
-    []
-  )
+      return changed ? { ...prev, tasks: nextTasks, rev: prev.rev + 1 } : prev
+    })
+  }, [])
 
   const handleTaskLifecycleStatusChange = useCallback(
     (args: { workdirId: number; taskId: number; status: TaskStatus }) => {
@@ -377,7 +367,7 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
       setTaskStatus(args.workdirId, args.taskId, args.status)
       window.setTimeout(() => void refreshTasks(), 200)
     },
-    [applyLocalTaskLifecycleStatus, refreshTasks, setTaskStatus]
+    [applyLocalTaskLifecycleStatus, refreshTasks, setTaskStatus],
   )
 
   useEffect(() => {
@@ -387,55 +377,25 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return () => window.clearInterval(id)
   }, [])
 
-  const formatTimestamp = useCallback(
-    (updatedAtUnixSeconds: number): string => {
-      const date = new Date(updatedAtUnixSeconds * 1000)
-      const now = nowMs ?? date.getTime()
-      const diffMs = Math.max(0, now - date.getTime())
-      const diffMinutes = Math.floor(diffMs / 60_000)
-      if (diffMinutes < 60) return `${diffMinutes}m`
-      const diffHours = Math.floor(diffMinutes / 60)
-      if (diffHours < 24) return `${diffHours}h`
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, "0")
-      const day = String(date.getDate()).padStart(2, "0")
-      return `${year}-${month}-${day}`
-    },
-    [nowMs]
-  )
+  const formatTimestamp = useCallback((updatedAtUnixSeconds: number): string => {
+    const date = new Date(updatedAtUnixSeconds * 1000)
+    const now = nowMs ?? date.getTime()
+    const diffMs = Math.max(0, now - date.getTime())
+    const diffMinutes = Math.floor(diffMs / 60_000)
+    if (diffMinutes < 60) return `${diffMinutes}m`
+    const diffHours = Math.floor(diffMinutes / 60)
+    if (diffHours < 24) return `${diffHours}h`
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
+  }, [nowMs])
 
-  const nowUnixSeconds = useMemo(() => Math.floor((nowMs ?? Date.now()) / 1000), [nowMs])
-
-  const projectOptions = useMemo(() => {
-    if (!app) return [] as Array<{ id: string; name: string; avatarUrl: string; fallbackAvatarUrl: string }>
-    const displayNames = computeProjectDisplayNames(app.projects.map(p => ({ path: p.path, name: p.name })))
-    const out = app.projects.map(p => {
-      const name = displayNames.get(p.path) ?? p.slug
-      const fallbackAvatarUrl = buildFallbackAvatarUrl(name, 14)
-      const avatarUrl = p.is_git
-        ? isMockMode()
-          ? fallbackAvatarUrl
-          : `/api/projects/avatar?project_id=${encodeURIComponent(p.id)}`
-        : fallbackAvatarUrl
-      return {
-        id: p.id,
-        name,
-        avatarUrl,
-        fallbackAvatarUrl,
-      }
-    })
-    out.sort((a, b) => a.name.localeCompare(b.name))
-    return out
-  }, [app])
-
-  const allNotifications = useMemo(() => {
+  const notifications = useMemo(() => {
     if (!app || !tasksSnapshot) return [] as InboxNotification[]
 
-    const displayNames = computeProjectDisplayNames(app.projects.map(p => ({ path: p.path, name: p.name })))
-    const workdirById = new Map<
-      number,
-      { projectPath: string; workdirName: string; workdirPath: string; status: string }
-    >()
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    const workdirById = new Map<number, { projectPath: string; workdirName: string; workdirPath: string; status: string }>()
     for (const p of app.projects) {
       for (const w of p.workdirs) {
         workdirById.set(w.id, {
@@ -447,10 +407,7 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
       }
     }
 
-    const projectInfoById = new Map<
-      string,
-      { name: string; color: string; avatarUrl: string; fallbackAvatarUrl: string }
-    >()
+    const projectInfoById = new Map<string, { name: string; color: string; avatarUrl: string; fallbackAvatarUrl: string }>()
     for (const p of app.projects) {
       const name = displayNames.get(p.path) ?? p.slug
       const fallbackAvatarUrl = buildFallbackAvatarUrl(name, 14)
@@ -468,10 +425,11 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     }
 
     const out: InboxNotification[] = []
-    const filtered = tasksSnapshot.tasks.filter(t => {
+    const filtered = tasksSnapshot.tasks.filter((t) => {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
+      if (t.task_status === "done" || t.task_status === "canceled") return false
       return true
     })
 
@@ -500,20 +458,18 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
         taskId: t.task_id,
         taskTitle: t.title,
         workdir: t.workdir_name || t.branch_name,
-        projectId: t.project_id,
         projectName: projectInfo.name,
         projectAvatarUrl: projectInfo.avatarUrl,
         projectFallbackAvatarUrl: projectInfo.fallbackAvatarUrl,
         projectColor: projectInfo.color,
         type: t.last_turn_result,
-        status: t.task_status,
+        taskLifecycleStatus: t.task_status,
         taskStatus: {
           agentRunStatus: t.agent_run_status,
           turnStatus: t.turn_status,
           lastTurnResult: t.last_turn_result,
           hasUnreadCompletion: t.has_unread_completion,
         },
-        updatedAtUnixSeconds: t.updated_at_unix_seconds,
         timestamp: formatTimestamp(t.updated_at_unix_seconds),
         read: !t.has_unread_completion,
         isStarred: t.is_starred,
@@ -522,22 +478,13 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return out
   }, [app, formatTimestamp, tasksSnapshot])
 
-  const visibleNotifications = useMemo(() => {
-    return applyInboxFilters(allNotifications, filters, nowUnixSeconds)
-  }, [allNotifications, filters, nowUnixSeconds])
-
-  const projectsInInbox = useMemo(() => {
-    const ids = new Set(allNotifications.map(n => n.projectId))
-    return projectOptions.filter(p => ids.has(p.id))
-  }, [allNotifications, projectOptions])
-
   useEffect(() => {
-    if (visibleNotifications.length === 0) return
+    if (notifications.length === 0) return
 
     const concurrency = 4
-    const queue = visibleNotifications
-      .map(n => ({ id: n.id, workdirId: n.workdirId, taskId: n.taskId }))
-      .filter(n => previewByNotificationIdRef.current[n.id] === undefined && !previewInFlightRef.current.has(n.id))
+    const queue = notifications
+      .map((n) => ({ id: n.id, workdirId: n.workdirId, taskId: n.taskId }))
+      .filter((n) => previewByNotificationIdRef.current[n.id] === undefined && !previewInFlightRef.current.has(n.id))
 
     if (queue.length === 0) return
 
@@ -558,13 +505,13 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
           const agentLine = extractLatestAgentResponsePreviewLine(convo)
           const userLine = extractLatestUserMessagePreviewLine(convo)
           const runStartedAtUnixMs = convo.run_started_at_unix_ms ?? null
-          setPreviewByNotificationId(prev => {
+          setPreviewByNotificationId((prev) => {
             if (prev[item.id] !== undefined) return prev
             return { ...prev, [item.id]: { agentLine, userLine, runStartedAtUnixMs } }
           })
         } catch (err) {
           if (cancelled) return
-          setPreviewByNotificationId(prev => {
+          setPreviewByNotificationId((prev) => {
             if (prev[item.id] !== undefined) return prev
             return { ...prev, [item.id]: null }
           })
@@ -581,71 +528,49 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [visibleNotifications])
+  }, [notifications])
 
   const selectedNotification = useMemo(() => {
     if (!selectedNotificationId) return null
-    return visibleNotifications.find(n => n.id === selectedNotificationId) ?? null
-  }, [selectedNotificationId, visibleNotifications])
+    return notifications.find((n) => n.id === selectedNotificationId) ?? null
+  }, [notifications, selectedNotificationId])
 
-  const unreadCount = visibleNotifications.filter(n => !n.read).length
-  const filtersActive = !inboxFiltersEqual(filters, DEFAULT_INBOX_FILTERS)
+  const unreadCount = notifications.filter((n) => !n.read).length
 
   return (
     <div className="h-full flex" data-testid="inbox-view">
       {/* Left: Notification List */}
-      <div className="flex flex-col border-r" style={{ width: "400px", borderColor: "#ebebeb" }}>
+      <div
+        className="flex flex-col border-r"
+        style={{ width: '400px', borderColor: '#ebebeb' }}
+      >
         {/* List Header */}
         <div
           className="flex items-center justify-between h-[39px] flex-shrink-0 px-3"
-          style={{ borderBottom: "1px solid #ebebeb" }}
+          style={{ borderBottom: '1px solid #ebebeb' }}
         >
           <div className="flex items-center gap-1">
-            <span className="text-[13px] font-medium" style={{ color: "#1b1b1b" }}>
+            <span className="text-[13px] font-medium" style={{ color: '#1b1b1b' }}>
               Inbox
             </span>
-            {drafts.length > 0 && (
-              <button
-                type="button"
-                data-testid="inbox-drafts-button"
-                className="h-6 px-2 text-[12px] rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-                style={{ color: "#6b6b6b", fontWeight: 500 }}
-                title="Drafts"
-                onClick={() => setDraftsOpen(true)}
-              >
-                Drafts
-              </button>
-            )}
             <button
               className="w-5 h-5 flex items-center justify-center rounded hover:bg-[#eeeeee] transition-colors"
-              style={{ color: "#9b9b9b" }}
+              style={{ color: '#9b9b9b' }}
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </button>
           </div>
           <div className="flex items-center gap-0.5">
-            <InboxFilterPopover
-              open={filterOpen}
-              onOpenChange={setFilterOpen}
-              projects={projectsInInbox}
-              filters={filters}
-              onFiltersChange={setFilters}
-              onClear={() => setFilters(cloneInboxFilters(DEFAULT_INBOX_FILTERS))}
-            >
-              <button
-                type="button"
-                data-testid="inbox-filter-button"
-                aria-pressed={filterOpen || filtersActive}
-                className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-                style={{ color: filtersActive ? "#5e6ad2" : "#9b9b9b" }}
-                title="Filter"
-              >
-                <Filter className="w-4 h-4" />
-              </button>
-            </InboxFilterPopover>
             <button
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-              style={{ color: "#9b9b9b" }}
+              style={{ color: '#9b9b9b' }}
+              title="Filter"
+            >
+              <Filter className="w-4 h-4" />
+            </button>
+            <button
+              className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
+              style={{ color: '#9b9b9b' }}
               title="Display options"
             >
               <SlidersHorizontal className="w-4 h-4" />
@@ -655,105 +580,58 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
 
         {/* Notification List */}
         <div className="flex-1 overflow-y-auto">
-          {visibleNotifications.length === 0 ? (
-            <div className="flex items-center justify-center h-full px-6" style={{ color: "#9b9b9b" }}>
-              <div className="flex flex-col items-center gap-2">
-                <span className="text-[13px]">
-                  {allNotifications.length === 0
-                    ? "No notifications"
-                    : filtersActive
-                      ? "No matching notifications"
-                      : "No notifications (Done is hidden by default)"}
-                </span>
-                {allNotifications.length > 0 ? (
-                  <button
-                    type="button"
-                    data-testid="inbox-filter-empty-action"
-                    className="h-7 px-2.5 rounded-md hover:bg-[#eeeeee] transition-colors text-[12px] font-medium"
-                    style={{ color: "#6b6b6b" }}
-                    onClick={() => {
-                      if (filtersActive) {
-                        setFilters(cloneInboxFilters(DEFAULT_INBOX_FILTERS))
-                        return
-                      }
-                      setFilters(prev => {
-                        if (prev.statuses.includes("done")) return prev
-                        return { ...prev, statuses: [...prev.statuses, "done"] }
-                      })
-                    }}
-                  >
-                    {filtersActive ? "Clear filters" : "Show done"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            visibleNotifications.map((notification, idx) => {
-              const preview = previewByNotificationId[notification.id]
-              const isRunning =
-                notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
+          {notifications.map((notification, idx) => {
+            const preview = previewByNotificationId[notification.id]
+            const isRunning =
+              notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
 
-              let previewText = "Loading response..."
-              if (preview !== undefined) {
-                if (preview == null) {
-                  previewText = "No agent response yet."
-                } else {
-                  const selected = isRunning
-                    ? (preview.userLine ?? preview.agentLine)
-                    : (preview.agentLine ?? preview.userLine)
-                  previewText = selected ?? "No agent response yet."
-                }
+            let previewText = "Loading response..."
+            if (preview !== undefined) {
+              if (preview == null) {
+                previewText = "No agent response yet."
+              } else {
+                const selected = isRunning ? preview.userLine ?? preview.agentLine : preview.agentLine ?? preview.userLine
+                previewText = selected ?? "No agent response yet."
               }
+            }
 
-              const timestampText =
-                isRunning && preview && preview.runStartedAtUnixMs != null
-                  ? formatTimestamp(Math.floor(preview.runStartedAtUnixMs / 1000))
-                  : notification.timestamp
+            const timestampText =
+              isRunning && preview && preview.runStartedAtUnixMs != null
+                ? formatTimestamp(Math.floor(preview.runStartedAtUnixMs / 1000))
+                : notification.timestamp
 
-              return (
-                <NotificationRow
-                  key={notification.id}
-                  notification={notification}
-                  previewText={previewText}
-                  timestampText={timestampText}
-                  testId={`inbox-notification-row-${idx}`}
-                  selected={selectedNotification?.id === notification.id}
-                  onClick={() => {
-                    setSelectedNotificationId(notification.id)
-                    setTasksSnapshot(prev => {
-                      if (!prev) return prev
-                      return {
-                        ...prev,
-                        tasks: prev.tasks.map(t =>
-                          t.workdir_id === notification.workdirId && t.task_id === notification.taskId
-                            ? { ...t, has_unread_completion: false }
-                            : t
-                        ),
-                      }
-                    })
-                    void (async () => {
-                      await openWorkdir(notification.workdirId)
-                      await activateTask(notification.taskId)
-                    })()
-                  }}
-                  onDoubleClick={() => onOpenFullView?.(notification)}
-                />
-              )
-            })
-          )}
+            return (
+              <NotificationRow
+                key={notification.id}
+                notification={notification}
+                previewText={previewText}
+                timestampText={timestampText}
+                testId={`inbox-notification-row-${idx}`}
+                selected={selectedNotification?.id === notification.id}
+                onClick={() => {
+                  setSelectedNotificationId(notification.id)
+                  setTasksSnapshot((prev) => {
+                    if (!prev) return prev
+                    return {
+                      ...prev,
+                      tasks: prev.tasks.map((t) =>
+                        t.workdir_id === notification.workdirId && t.task_id === notification.taskId
+                          ? { ...t, has_unread_completion: false }
+                          : t,
+                      ),
+                    }
+                  })
+                  void (async () => {
+                    await openWorkdir(notification.workdirId)
+                    await activateTask(notification.taskId)
+                  })()
+                }}
+                onDoubleClick={() => onOpenFullView?.(notification)}
+              />
+            )
+          })}
         </div>
       </div>
-
-      <NewTaskDraftsDialog
-        open={draftsOpen}
-        onOpenChange={setDraftsOpen}
-        drafts={drafts}
-        onOpenDraft={draft => {
-          setDraftsOpen(false)
-          onOpenDraft?.(draft)
-        }}
-        onDeleteDraft={draftId => deleteNewTaskDraft(draftId)}
-      />
 
       {/* Right: Preview Panel */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -763,12 +641,16 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
             <TaskHeader
               title={selectedNotification.taskTitle}
               workdir={selectedNotification.workdir}
-              project={{ name: selectedNotification.projectName, color: selectedNotification.projectColor }}
+              project={{
+                name: selectedNotification.projectName,
+                color: selectedNotification.projectColor,
+                avatarUrl: selectedNotification.projectAvatarUrl,
+              }}
               actionBar={
                 <div className="flex items-center gap-2 min-w-0">
                   <TaskStatusSelector
-                    status={selectedNotification.status}
-                    onStatusChange={status =>
+                    status={selectedNotification.taskLifecycleStatus}
+                    onStatusChange={(status) =>
                       handleTaskLifecycleStatusChange({
                         workdirId: selectedNotification.workdirId,
                         taskId: selectedNotification.taskId,
@@ -778,21 +660,25 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
                     variant="pill"
                     size="sm"
                     triggerTestId="inbox-task-status-trigger"
+                    disabled={
+                      selectedNotification.taskLifecycleStatus === "done" ||
+                      selectedNotification.taskLifecycleStatus === "canceled"
+                    }
                   />
                 </div>
               }
               showFullActions
               isStarred={selectedNotification.isStarred}
-              onToggleStar={nextStarred => {
+              onToggleStar={(nextStarred) => {
                 setTaskStarred(selectedNotification.workdirId, selectedNotification.taskId, nextStarred)
-                setTasksSnapshot(prev => {
+                setTasksSnapshot((prev) => {
                   if (!prev) return prev
                   return {
                     ...prev,
-                    tasks: prev.tasks.map(t =>
+                    tasks: prev.tasks.map((t) =>
                       t.workdir_id === selectedNotification.workdirId && t.task_id === selectedNotification.taskId
                         ? { ...t, is_starred: nextStarred }
-                        : t
+                        : t,
                     ),
                   }
                 })
@@ -801,7 +687,7 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
 
             {/* Chat Preview */}
             <div className="flex-1 min-h-0 flex">
-              <TaskActivityPanel pendingDiffFile={pendingDiffFile} onDiffFileOpened={() => setPendingDiffFile(null)} />
+              <TaskActivityPanel />
             </div>
           </>
         ) : (

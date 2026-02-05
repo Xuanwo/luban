@@ -18,6 +18,12 @@ const MAX_OUTPUT_HISTORY_BYTES: usize = 512 * 1024;
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const LIVE_BUFFER_CAPACITY: usize = 64;
 
+#[derive(Clone, Debug)]
+enum PtyProgram {
+    Shell,
+    ShellCommand { command: String },
+}
+
 fn trace_bytes(label: &str, bytes: &[u8]) {
     if std::env::var_os("LUBAN_PTY_TRACE").is_none() {
         return;
@@ -56,6 +62,31 @@ impl PtyManager {
         reconnect: String,
         cwd: PathBuf,
     ) -> anyhow::Result<Arc<PtySession>> {
+        self.get_or_create_with_program(workspace_id, reconnect, cwd, PtyProgram::Shell)
+    }
+
+    pub fn spawn_command(
+        &self,
+        workspace_id: u64,
+        reconnect: String,
+        cwd: PathBuf,
+        command: String,
+    ) -> anyhow::Result<Arc<PtySession>> {
+        self.get_or_create_with_program(
+            workspace_id,
+            reconnect,
+            cwd,
+            PtyProgram::ShellCommand { command },
+        )
+    }
+
+    fn get_or_create_with_program(
+        &self,
+        workspace_id: u64,
+        reconnect: String,
+        cwd: PathBuf,
+        program: PtyProgram,
+    ) -> anyhow::Result<Arc<PtySession>> {
         let mut guard = self.inner.lock().expect("pty manager lock poisoned");
         if let Some(existing) = guard.get(&(workspace_id, reconnect.clone())) {
             if !existing.is_terminated() {
@@ -66,6 +97,7 @@ impl PtyManager {
 
         let session = Arc::new(PtySession::spawn(
             cwd,
+            program,
             self.idle_timeout,
             Arc::downgrade(&self.inner),
             (workspace_id, reconnect.clone()),
@@ -113,6 +145,17 @@ impl OutputHistory {
     fn snapshot_chunks(&self) -> Vec<Bytes> {
         self.chunks.iter().map(|c| c.bytes.clone()).collect()
     }
+
+    fn snapshot_bytes(&self) -> (Vec<u8>, usize) {
+        if self.total_bytes == 0 {
+            return (Vec::new(), 0);
+        }
+        let mut out = Vec::with_capacity(self.total_bytes);
+        for chunk in &self.chunks {
+            out.extend_from_slice(&chunk.bytes);
+        }
+        (out, self.total_bytes)
+    }
 }
 
 #[derive(Clone)]
@@ -142,6 +185,7 @@ struct ActiveConnection {
 impl PtySession {
     fn spawn(
         cwd: PathBuf,
+        program: PtyProgram,
         idle_timeout: Duration,
         manager: std::sync::Weak<Mutex<PtySessions>>,
         key: PtyKey,
@@ -156,16 +200,19 @@ impl PtySession {
             })
             .context("openpty failed")?;
 
-        let shell = std::env::var_os("SHELL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
-        let mut cmd = CommandBuilder::new(shell);
+        let shell = default_shell_path();
+        let mut cmd = CommandBuilder::new(&shell);
         cmd.cwd(cwd);
         if std::env::var_os("TERM").is_none() {
             cmd.env("TERM", "xterm-256color");
         }
         if std::env::var_os("COLORTERM").is_none() {
             cmd.env("COLORTERM", "truecolor");
+        }
+
+        if let PtyProgram::ShellCommand { command } = program {
+            let args = shell_command_args(shell.as_path(), &command);
+            cmd.args(args);
         }
 
         let child = pair.slave.spawn_command(cmd).context("spawn pty command")?;
@@ -386,6 +433,47 @@ impl PtySession {
             .context("pty resize")?;
         Ok(())
     }
+
+    pub fn output_snapshot(&self) -> (Vec<u8>, u64) {
+        let guard = self.state.lock().expect("pty session lock poisoned");
+        let (bytes, len) = guard.history.snapshot_bytes();
+        (bytes, len as u64)
+    }
+}
+
+fn default_shell_path() -> PathBuf {
+    if let Some(shell) = std::env::var_os("SHELL")
+        && !shell.to_string_lossy().trim().is_empty()
+    {
+        return PathBuf::from(shell);
+    }
+
+    let candidates = ["/bin/zsh", "/bin/bash", "/bin/sh"];
+    for cand in candidates {
+        let path = PathBuf::from(cand);
+        if path.exists() {
+            return path;
+        }
+    }
+    PathBuf::from("/bin/sh")
+}
+
+fn shell_command_args(shell_path: &std::path::Path, command: &str) -> Vec<String> {
+    let name = shell_path
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if name.contains("zsh") || name.contains("bash") {
+        return vec![
+            "-l".to_owned(),
+            "-i".to_owned(),
+            "-c".to_owned(),
+            command.to_owned(),
+        ];
+    }
+    vec!["-c".to_owned(), command.to_owned()]
 }
 
 #[derive(serde::Deserialize)]

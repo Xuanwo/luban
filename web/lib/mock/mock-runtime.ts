@@ -19,6 +19,7 @@ import type {
   NewTaskStashSnapshot,
   ProjectId,
   ServerEvent,
+  TaskStatus,
   TaskExecuteMode,
   TaskExecuteResult,
   TasksSnapshot,
@@ -207,15 +208,27 @@ export async function mockFetchApp(): Promise<AppSnapshot> {
   return clone(getRuntime().app)
 }
 
-export async function mockFetchTasks(args: { projectId?: string } = {}): Promise<TasksSnapshot> {
+export async function mockFetchTasks(args: {
+  projectId?: string
+  workdirStatus?: "active" | "archived" | "all"
+  taskStatus?: TaskStatus[]
+} = {}): Promise<TasksSnapshot> {
   const state = getRuntime()
   const tasks: TaskSummarySnapshot[] = []
+  const statusFilter = args.taskStatus && args.taskStatus.length > 0 ? new Set(args.taskStatus) : null
   for (const project of state.app.projects) {
     if (args.projectId && project.id !== args.projectId) continue
     for (const workdir of project.workdirs) {
+      const shouldIncludeWorkdir = (() => {
+        const filter = args.workdirStatus ?? "active"
+        if (filter === "all") return true
+        return workdir.status === filter
+      })()
+      if (!shouldIncludeWorkdir) continue
       const snap = state.threadsByWorkdir.get(workdir.id) ?? null
       if (!snap) continue
       for (const t of snap.tasks) {
+        if (statusFilter && !statusFilter.has(t.task_status)) continue
         tasks.push({
           project_id: project.id,
           workdir_id: workdir.id,
@@ -248,6 +261,9 @@ export async function mockCreateNewTaskDraft(args: {
   project_id: string | null
   workdir_id: number | null
 }): Promise<NewTaskDraftSnapshot> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   const now = Date.now()
   const draft: NewTaskDraftSnapshot = {
@@ -266,6 +282,9 @@ export async function mockUpdateNewTaskDraft(
   draftId: string,
   args: { text: string; project_id: string | null; workdir_id: number | null },
 ): Promise<NewTaskDraftSnapshot> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   const idx = state.newTaskDrafts.findIndex((d) => d.id === draftId)
   if (idx < 0) throw new Error(`mock: unknown draft id: ${draftId}`)
@@ -299,6 +318,9 @@ export async function mockSaveNewTaskStash(args: {
   workdir_id: number | null
   editing_draft_id: string | null
 }): Promise<void> {
+  if (args.workdir_id != null && (!Number.isInteger(args.workdir_id) || args.workdir_id < 0)) {
+    throw new Error(`mock: invalid workdir_id: ${args.workdir_id}`)
+  }
   const state = getRuntime()
   state.newTaskStash = {
     text: args.text,
@@ -721,6 +743,63 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     return
   }
 
+  if (a.type === "terminal_command_start") {
+    const key = workdirTaskKey(a.workdir_id, a.task_id)
+    const convo = state.conversationsByWorkdirTask.get(key) ?? null
+    if (!convo) return
+
+    const command = a.command.trim()
+    if (!command) return
+
+    const commandId = newEntryId("cmd")
+    const reconnect = newEntryId("reconnect")
+
+    const startedEntry: ConversationEntry = {
+      type: "user_event",
+      entry_id: newEntryId("ue"),
+      event: { type: "terminal_command_started", id: commandId, command, reconnect },
+    }
+
+    const startedEntries = [...convo.entries, startedEntry]
+    const rev = bumpRev(state)
+    state.conversationsByWorkdirTask.set(key, { ...convo, entries: startedEntries, entries_total: startedEntries.length, rev })
+    emitConversationChanged({ state, workdirId: a.workdir_id, taskId: a.task_id, onEvent: args.onEvent })
+
+    const workdirId = a.workdir_id
+    const taskId = a.task_id
+    const onEvent = args.onEvent
+    window.setTimeout(() => {
+      const state = getRuntime()
+      const key = workdirTaskKey(workdirId, taskId)
+      const convo = state.conversationsByWorkdirTask.get(key) ?? null
+      if (!convo) return
+
+      const noOutput = /^(?:true|:|sleep)(?:\\s|$)/.test(command)
+      const outputText = noOutput ? "" : `mock: ${command}\\r\\n`
+      const outputBase64 = outputText ? btoa(outputText) : ""
+      const outputByteLen = outputText ? outputText.length : 0
+
+      const finishedEntry: ConversationEntry = {
+        type: "user_event",
+        entry_id: newEntryId("ue"),
+        event: {
+          type: "terminal_command_finished",
+          id: commandId,
+          command,
+          reconnect,
+          output_base64: outputBase64,
+          output_byte_len: outputByteLen,
+        },
+      }
+
+      const nextEntries = [...convo.entries, finishedEntry]
+      const rev = bumpRev(state)
+      state.conversationsByWorkdirTask.set(key, { ...convo, entries: nextEntries, entries_total: nextEntries.length, rev })
+      emitConversationChanged({ state, workdirId, taskId, onEvent })
+    }, 250)
+    return
+  }
+
   if (a.type === "queue_agent_message") {
     const key = workdirTaskKey(a.workdir_id, a.task_id)
     const convo = state.conversationsByWorkdirTask.get(key) ?? null
@@ -805,14 +884,73 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       ) + 1
     snap.tasks = snap.tasks.map((t) =>
       t.task_id === a.task_id
-        ? { ...t, task_status: a.task_status, updated_at_unix_seconds: bumpedNow }
+        ? {
+            ...t,
+            task_status: a.task_status,
+            updated_at_unix_seconds: bumpedNow,
+            turn_status: a.task_status === "canceled" ? "idle" : t.turn_status,
+            last_turn_result: a.task_status === "canceled" ? "failed" : t.last_turn_result,
+          }
         : t,
     )
 
     const key = workdirTaskKey(a.workdir_id, a.task_id)
     const convo = state.conversationsByWorkdirTask.get(key) ?? null
     if (convo) {
-      state.conversationsByWorkdirTask.set(key, { ...convo, task_status: a.task_status })
+      const shouldCancel = a.task_status === "canceled" && convo.run_status === "running"
+      const nextEntries = (() => {
+        if (!shouldCancel) return convo.entries
+        const alreadyCanceled = convo.entries.some((e) => e.type === "agent_event" && e.event?.type === "turn_canceled")
+        if (alreadyCanceled) return convo.entries
+        return [
+          ...convo.entries,
+          {
+            type: "agent_event",
+            entry_id: newEntryId("ae"),
+            event: { type: "turn_canceled" },
+          },
+        ] satisfies ConversationEntry[]
+      })()
+
+      state.conversationsByWorkdirTask.set(key, {
+        ...convo,
+        task_status: a.task_status,
+        run_status: shouldCancel ? "idle" : convo.run_status,
+        run_finished_at_unix_ms: shouldCancel ? Date.now() : convo.run_finished_at_unix_ms,
+        queue_paused: shouldCancel ? true : convo.queue_paused,
+        entries: nextEntries,
+      })
+    }
+
+    const shouldArchive =
+      (a.task_status === "done" || a.task_status === "canceled") &&
+      snap.tasks.every((t) => t.task_status === "done" || t.task_status === "canceled")
+    if (shouldArchive) {
+      state.app.projects = state.app.projects.map((p) => ({
+        ...p,
+        workdirs: p.workdirs.map((w) => (w.id === a.workdir_id ? { ...w, status: "archived" } : w)),
+      }))
+
+      const updatedConvo = state.conversationsByWorkdirTask.get(key) ?? null
+      if (updatedConvo) {
+        const alreadyArchived = updatedConvo.entries.some(
+          (e) => e.type === "system_event" && e.event?.event_type === "task_archived",
+        )
+        if (!alreadyArchived) {
+          state.conversationsByWorkdirTask.set(key, {
+            ...updatedConvo,
+            entries: [
+              ...updatedConvo.entries,
+              {
+                type: "system_event",
+                entry_id: newEntryId("se"),
+                created_at_unix_ms: Date.now(),
+                event: { event_type: "task_archived" },
+              },
+            ],
+          })
+        }
+      }
     }
 
     const rev = bumpRev(state)

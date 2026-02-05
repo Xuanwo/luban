@@ -20,6 +20,9 @@ export function ChatComposer({
   commands,
   messageHistory,
   onCommand,
+  placeholder,
+  attachmentsEnabled = true,
+  agentSelectorEnabled = true,
   disabled,
   agentModelId,
   agentThinkingEffort,
@@ -35,6 +38,7 @@ export function ChatComposer({
   onChangeRunner,
   onChangeAmpMode,
   onSend,
+  secondaryAction,
   canSend,
   codexEnabled = true,
   ampEnabled = true,
@@ -51,6 +55,9 @@ export function ChatComposer({
   commands: CodexCustomPromptSnapshot[]
   messageHistory: string[]
   onCommand: (commandId: string) => void
+  placeholder?: string
+  attachmentsEnabled?: boolean
+  agentSelectorEnabled?: boolean
   disabled: boolean
   agentModelId: string | null | undefined
   agentThinkingEffort: ThinkingEffort | null | undefined
@@ -66,6 +73,12 @@ export function ChatComposer({
   onChangeRunner: (runner: AgentRunnerKind) => void
   onChangeAmpMode: (mode: AmpMode) => void
   onSend: () => void
+  secondaryAction?: {
+    onClick: () => void
+    ariaLabel: string
+    icon: React.ReactNode
+    testId?: string
+  }
   canSend: boolean
   codexEnabled?: boolean
   ampEnabled?: boolean
@@ -78,6 +91,29 @@ export function ChatComposer({
     borderRadius: '8px',
     boxShadow: 'rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px',
   } : undefined
+
+  const agentSelectorNode = agentSelectorEnabled ? (
+    <AgentSelector
+      testId="agent-selector"
+      dropdownPosition="top"
+      disabled={disabled}
+      modelId={agentModelId}
+      thinkingEffort={agentThinkingEffort}
+      defaultModelId={defaultModelId}
+      defaultThinkingEffort={defaultThinkingEffort}
+      defaultAmpMode={defaultAmpMode}
+      onOpenAgentSettings={onOpenAgentSettings}
+      onChangeModelId={onChangeModelId}
+      onChangeThinkingEffort={onChangeThinkingEffort}
+      defaultRunner={defaultRunner}
+      runner={runner}
+      ampMode={ampMode}
+      onChangeRunner={onChangeRunner}
+      onChangeAmpMode={onChangeAmpMode}
+      codexEnabled={codexEnabled}
+      ampEnabled={ampEnabled}
+    />
+  ) : null
 
   const content = (
         <MessageEditor
@@ -92,29 +128,11 @@ export function ChatComposer({
           commands={commands}
           messageHistory={messageHistory}
           onCommand={onCommand}
-          placeholder="Let's chart the cosmos of ideas..."
+          placeholder={placeholder ?? "Let's chart the cosmos of ideas..."}
+          attachmentsEnabled={attachmentsEnabled}
           disabled={disabled}
           agentSelector={
-            <AgentSelector
-              testId="agent-selector"
-              dropdownPosition="top"
-              disabled={disabled}
-              modelId={agentModelId}
-              thinkingEffort={agentThinkingEffort}
-              defaultModelId={defaultModelId}
-              defaultThinkingEffort={defaultThinkingEffort}
-              defaultAmpMode={defaultAmpMode}
-              onOpenAgentSettings={onOpenAgentSettings}
-              onChangeModelId={onChangeModelId}
-              onChangeThinkingEffort={onChangeThinkingEffort}
-              defaultRunner={defaultRunner}
-              runner={runner}
-              ampMode={ampMode}
-              onChangeRunner={onChangeRunner}
-              onChangeAmpMode={onChangeAmpMode}
-              codexEnabled={codexEnabled}
-              ampEnabled={ampEnabled}
-            />
+            agentSelectorNode
           }
           primaryAction={{
             onClick: onSend,
@@ -123,6 +141,7 @@ export function ChatComposer({
             icon: <Send className="w-3.5 h-3.5" />,
             testId: "chat-send",
           }}
+          secondaryAction={secondaryAction}
           testIds={{
             textInput: "chat-input",
             attachInput: "chat-attach-input",

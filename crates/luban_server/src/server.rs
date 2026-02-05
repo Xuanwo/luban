@@ -12,6 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
+use base64::Engine as _;
 use luban_api::AppSnapshot;
 use luban_api::{
     CodexCustomPromptSnapshot, PROTOCOL_VERSION, WorkspaceChangesSnapshot, WorkspaceDiffSnapshot,
@@ -19,6 +20,7 @@ use luban_api::{
 };
 use luban_domain::paths;
 use luban_domain::{ContextImage, ProjectWorkspaceService};
+use rand::RngCore as _;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
@@ -362,6 +364,8 @@ async fn get_codex_prompts() -> impl IntoResponse {
 #[derive(serde::Deserialize)]
 struct TasksQuery {
     project_id: Option<String>,
+    workdir_status: Option<String>,
+    task_status: Option<String>,
 }
 
 async fn get_tasks(
@@ -392,6 +396,74 @@ async fn get_tasks(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum WorkdirStatusFilter {
+        Active,
+        Archived,
+        All,
+    }
+
+    let workdir_status_filter = match query
+        .workdir_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => WorkdirStatusFilter::Active,
+        Some("active") => WorkdirStatusFilter::Active,
+        Some("archived") => WorkdirStatusFilter::Archived,
+        Some("all") => WorkdirStatusFilter::All,
+        Some(other) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("invalid workdir_status: {other}"),
+            )
+                .into_response();
+        }
+    };
+
+    fn parse_task_status(value: &str) -> Option<luban_api::TaskStatus> {
+        match value {
+            "backlog" => Some(luban_api::TaskStatus::Backlog),
+            "todo" => Some(luban_api::TaskStatus::Todo),
+            "iterating" | "in_progress" => Some(luban_api::TaskStatus::Iterating),
+            "validating" | "in_review" => Some(luban_api::TaskStatus::Validating),
+            "done" => Some(luban_api::TaskStatus::Done),
+            "canceled" => Some(luban_api::TaskStatus::Canceled),
+            _ => None,
+        }
+    }
+
+    let task_status_filter: Option<Vec<luban_api::TaskStatus>> = match query
+        .task_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some("all") => None,
+        Some(raw) => {
+            let mut out = Vec::new();
+            for part in raw.split(',') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let Some(status) = parse_task_status(trimmed) else {
+                    return (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        format!("invalid task_status: {trimmed}"),
+                    )
+                        .into_response();
+                };
+                if !out.contains(&status) {
+                    out.push(status);
+                }
+            }
+            Some(out)
+        }
+    };
+
     for p in &app.projects {
         if let Some(selected) = selected_project_id
             && p.id.0 != selected
@@ -400,8 +472,18 @@ async fn get_tasks(
         }
 
         for w in &p.workspaces {
-            if w.status != luban_api::WorkspaceStatus::Active {
-                continue;
+            match workdir_status_filter {
+                WorkdirStatusFilter::Active => {
+                    if w.status != luban_api::WorkspaceStatus::Active {
+                        continue;
+                    }
+                }
+                WorkdirStatusFilter::Archived => {
+                    if w.status != luban_api::WorkspaceStatus::Archived {
+                        continue;
+                    }
+                }
+                WorkdirStatusFilter::All => {}
             }
 
             let snap = match state.engine.threads_snapshot(w.id).await {
@@ -411,6 +493,12 @@ async fn get_tasks(
 
             let active_task_id = snap.tabs.active_tab;
             for t in snap.threads {
+                if let Some(filter) = task_status_filter.as_ref()
+                    && !filter.contains(&t.task_status)
+                {
+                    continue;
+                }
+
                 let agent_run_status = if t.thread_id == active_task_id
                     && w.agent_run_status == luban_api::OperationStatus::Running
                 {
@@ -553,7 +641,7 @@ async fn ws_events_task(mut socket: axum::extract::ws::WebSocket, state: AppStat
         tokio::select! {
             incoming = socket.recv() => {
                 let Some(Ok(msg)) = incoming else { break };
-                if handle_ws_incoming(msg, &engine, &mut socket).await.is_err() {
+                if handle_ws_incoming(msg, &state, &mut socket).await.is_err() {
                     break;
                 }
             }
@@ -582,12 +670,14 @@ fn json_text<T: serde::Serialize>(value: &T) -> axum::extract::ws::Message {
 
 async fn handle_ws_incoming(
     msg: axum::extract::ws::Message,
-    engine: &EngineHandle,
+    state: &AppStateHolder,
     socket: &mut axum::extract::ws::WebSocket,
 ) -> anyhow::Result<()> {
     let axum::extract::ws::Message::Text(text) = msg else {
         return Ok(());
     };
+
+    let engine = &state.engine;
 
     let client: WsClientMessage = match serde_json::from_str(&text) {
         Ok(v) => v,
@@ -611,21 +701,148 @@ async fn handle_ws_incoming(
             socket.send(json_text(&WsServerMessage::Pong)).await?;
             Ok(())
         }
-        WsClientMessage::Action { request_id, action } => {
-            let ack = engine
-                .apply_client_action(request_id.clone(), *action)
-                .await;
-            let msg = match ack {
-                Ok(rev) => WsServerMessage::Ack { request_id, rev },
-                Err(message) => WsServerMessage::Error {
-                    request_id: Some(request_id),
-                    message,
-                },
-            };
-            socket.send(json_text(&msg)).await?;
-            Ok(())
-        }
+        WsClientMessage::Action { request_id, action } => match *action {
+            luban_api::ClientAction::TerminalCommandStart {
+                workspace_id,
+                thread_id,
+                command,
+            } => {
+                handle_terminal_command_start(
+                    request_id,
+                    workspace_id,
+                    thread_id,
+                    command,
+                    state,
+                    socket,
+                )
+                .await
+            }
+            other => {
+                let ack = engine.apply_client_action(request_id.clone(), other).await;
+                let msg = match ack {
+                    Ok(rev) => WsServerMessage::Ack { request_id, rev },
+                    Err(message) => WsServerMessage::Error {
+                        request_id: Some(request_id),
+                        message,
+                    },
+                };
+                socket.send(json_text(&msg)).await?;
+                Ok(())
+            }
+        },
     }
+}
+
+async fn handle_terminal_command_start(
+    request_id: String,
+    workspace_id: luban_api::WorkspaceId,
+    thread_id: luban_api::WorkspaceThreadId,
+    command: String,
+    state: &AppStateHolder,
+    socket: &mut axum::extract::ws::WebSocket,
+) -> anyhow::Result<()> {
+    let command = command.trim().to_owned();
+    if command.is_empty() {
+        socket
+            .send(json_text(&WsServerMessage::Error {
+                request_id: Some(request_id),
+                message: "command is empty".to_owned(),
+            }))
+            .await?;
+        return Ok(());
+    }
+
+    let cwd = match state.engine.workspace_worktree_path(workspace_id).await {
+        Ok(Some(path)) => path,
+        _ => std::env::current_dir().unwrap_or_default(),
+    };
+
+    let mut id_bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut id_bytes);
+    let command_id = format!(
+        "cmd_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(id_bytes)
+    );
+
+    let mut reconnect_bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut reconnect_bytes);
+    let reconnect = format!(
+        "reconnect_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(reconnect_bytes)
+    );
+
+    state
+        .engine
+        .dispatch_domain_action(luban_domain::Action::TerminalCommandStarted {
+            workspace_id: luban_domain::WorkspaceId::from_u64(workspace_id.0),
+            thread_id: luban_domain::WorkspaceThreadId::from_u64(thread_id.0),
+            command_id: command_id.clone(),
+            command: command.clone(),
+            reconnect: reconnect.clone(),
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+
+    let session =
+        match state
+            .pty
+            .spawn_command(workspace_id.0, reconnect.clone(), cwd, command.clone())
+        {
+            Ok(session) => session,
+            Err(err) => {
+                tracing::error!(error = %err, "failed to create terminal command pty session");
+                let _ = state
+                    .engine
+                    .dispatch_domain_action(luban_domain::Action::TerminalCommandFinished {
+                        workspace_id: luban_domain::WorkspaceId::from_u64(workspace_id.0),
+                        thread_id: luban_domain::WorkspaceThreadId::from_u64(thread_id.0),
+                        command_id: command_id.clone(),
+                        command: command.clone(),
+                        reconnect: reconnect.clone(),
+                        output_base64: String::new(),
+                        output_byte_len: 0,
+                    })
+                    .await;
+
+                socket
+                    .send(json_text(&WsServerMessage::Error {
+                        request_id: Some(request_id),
+                        message: "failed to create terminal session".to_owned(),
+                    }))
+                    .await?;
+                return Ok(());
+            }
+        };
+
+    let engine = state.engine.clone();
+    tokio::spawn(async move {
+        let mut terminated = session.subscribe_terminated();
+        let _ = terminated.recv().await;
+        let (bytes, output_byte_len) = session.output_snapshot();
+        let output_base64 = if output_byte_len > 0 {
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        } else {
+            String::new()
+        };
+
+        let _ = engine
+            .dispatch_domain_action(luban_domain::Action::TerminalCommandFinished {
+                workspace_id: luban_domain::WorkspaceId::from_u64(workspace_id.0),
+                thread_id: luban_domain::WorkspaceThreadId::from_u64(thread_id.0),
+                command_id,
+                command,
+                reconnect,
+                output_base64,
+                output_byte_len,
+            })
+            .await;
+    });
+
+    let rev = state.engine.current_rev().await.unwrap_or(0);
+    socket
+        .send(json_text(&WsServerMessage::Ack { request_id, rev }))
+        .await?;
+    Ok(())
 }
 
 async fn send_app_snapshot_if_needed(

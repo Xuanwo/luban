@@ -124,9 +124,9 @@ const systemTaskTypes: TaskTypeConfig[] = [
   { id: "auto-title-thread", label: "Auto Title Thread", icon: Type, description: "Generate a short thread title from the first user message" },
   {
     id: "auto-update-task-status",
-    label: "Auto Update Task Status",
+    label: "Suggest Task Status",
     icon: CheckCircle2,
-    description: "Update task status based on the latest agent progress",
+    description: "Suggest task status based on the latest agent progress (manual apply)",
   },
 ]
 

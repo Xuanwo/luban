@@ -111,6 +111,7 @@ export type LubanActions = {
     attachments?: AttachmentRef[],
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
+  runTerminalCommand: (command: string) => void
   removeQueuedPrompt: (workspaceId: WorkspaceId, taskId: WorkspaceThreadId, promptId: number) => void
   reorderQueuedPrompt: (
     workspaceId: WorkspaceId,
@@ -677,6 +678,17 @@ export function createLubanActions(args: {
     })
   }
 
+  function runTerminalCommand(command: string) {
+    const ids = activeWorkspaceThread()
+    if (!ids) return
+    args.sendAction({
+      type: "terminal_command_start",
+      workdir_id: ids.workspaceId,
+      task_id: ids.threadId,
+      command,
+    })
+  }
+
   function removeQueuedPrompt(workspaceId: WorkspaceId, threadId: WorkspaceThreadId, promptId: number) {
     store.setConversation((prev) => {
       if (!prev) return prev
@@ -906,6 +918,7 @@ export function createLubanActions(args: {
     sendAgentMessage,
     queueAgentMessage,
     sendAgentMessageTo,
+    runTerminalCommand,
     removeQueuedPrompt,
     reorderQueuedPrompt,
     updateQueuedPrompt,

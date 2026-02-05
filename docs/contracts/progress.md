@@ -37,7 +37,7 @@ Legend:
 | C-HTTP-NEW-TASK-DRAFT | `DELETE /api/new_task/drafts/{draft_id}` | `crates/luban_server/src/server.rs:delete_new_task_draft` | `web/lib/luban-http.ts:deleteNewTaskDraft` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-NEW-TASK-STASH | `GET /api/new_task/stash` | `crates/luban_server/src/server.rs:get_new_task_stash` | `web/lib/luban-http.ts:fetchNewTaskStash` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONVERSATION | `GET /api/workdirs/{workdir_id}/conversations/{task_id}` | `crates/luban_server/src/server.rs:get_conversation` | `web/lib/luban-http.ts:fetchConversation` | Draft | ✅ | ✅ | ✅ |
-| C-HTTP-CHANGES | `GET /api/workdirs/{workdir_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | `web/lib/luban-http.ts:fetchWorkspaceChanges` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CHANGES | `GET /api/workdirs/{workdir_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | n/a (right sidebar removed) | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-DIFF | `GET /api/workdirs/{workdir_id}/diff` | `crates/luban_server/src/server.rs:get_diff` | `web/lib/luban-http.ts:fetchWorkspaceDiff` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONTEXT | `GET /api/workdirs/{workdir_id}/context` | `crates/luban_server/src/server.rs:get_context` | n/a (web context UI removed) | Draft | n/a | ✅ | ✅ |
 | C-HTTP-CONTEXT-DELETE | `DELETE /api/workdirs/{workdir_id}/context/{context_id}` | `crates/luban_server/src/server.rs:delete_context_item` | n/a (web context UI removed) | Draft | n/a | ✅ | ✅ |
@@ -64,9 +64,14 @@ Legend:
 - `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.
-- `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
+- `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id` and `created_at_unix_ms`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
+- `C-HTTP-CONVERSATION`: `ConversationEntry.type=system_event` may include `event_type=task_status_suggestion` to recommend a status change; clients apply via `ClientAction::TaskStatusSet`.
+- `C-HTTP-CONVERSATION`: `ConversationEntry.type=system_event` may include `event_type=task_archived` after provider cleanup for a closed task.
+- `C-HTTP-CONVERSATION`: `ConversationEntry.type=user_event` supports `event.type=message`, `terminal_command_started`, and `terminal_command_finished`.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.title` matches `ThreadMeta.title` and may be updated after the first user message.
 - `C-HTTP-TASKS`: `TaskSummarySnapshot` includes `is_starred` for rendering Favorites and in-view star toggles.
+- `C-HTTP-TASKS`: `GET /api/tasks` supports `workdir_status=active|archived|all` to control whether archived workdirs are included.
+- `C-HTTP-TASKS`: `GET /api/tasks` supports `task_status=...` (comma-separated) to filter by `TaskStatus` (use `all` or omit to disable filtering).
 - `C-HTTP-TASKS` / `C-HTTP-WORKDIR-TASKS`: thread metadata includes `created_at_unix_seconds` for stable creation-time sorting.
 - `C-HTTP-TASKS` / `C-HTTP-WORKDIR-TASKS`: thread metadata includes `task_status`, `turn_status`, and `last_turn_result` (see `docs/task-and-turn-status.md`).
 - `C-HTTP-WORKDIR-TASKS`: a workdir may start with zero tasks, and providers must not seed placeholder tasks on read; when legacy conversation storage exists, providers may perform a one-time migration to make tasks visible.

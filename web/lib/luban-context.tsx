@@ -112,6 +112,7 @@ type LubanContextValue = {
     attachments?: AttachmentRef[],
     runConfig?: { runner?: AgentRunnerKind | null; amp_mode?: string | null },
   ) => void
+  runTerminalCommand: (command: string) => void
   removeQueuedPrompt: (workspaceId: WorkspaceId, threadId: WorkspaceThreadId, promptId: number) => void
   reorderQueuedPrompt: (
     workspaceId: WorkspaceId,
@@ -417,6 +418,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     sendAgentMessage: actions.sendAgentMessage,
     queueAgentMessage: actions.queueAgentMessage,
     sendAgentMessageTo: actions.sendAgentMessageTo,
+    runTerminalCommand: actions.runTerminalCommand,
     removeQueuedPrompt: actions.removeQueuedPrompt,
     reorderQueuedPrompt: actions.reorderQueuedPrompt,
     updateQueuedPrompt: actions.updateQueuedPrompt,

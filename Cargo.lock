@@ -2261,6 +2261,7 @@ version = "42.7.20"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "blake3",
  "futures",
  "luban_api",

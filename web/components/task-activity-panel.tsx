@@ -3,12 +3,11 @@
 import type React from "react"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Clock, X } from "lucide-react"
+import { Clock, MessageSquare, Terminal, X } from "lucide-react"
 import { useLuban } from "@/lib/luban-context"
-import { cn } from "@/lib/utils"
 import { buildMessages, type Message } from "@/lib/conversation-ui"
 import { TaskActivityView } from "@/components/task-activity-view"
-import { fetchCodexCustomPrompts, fetchWorkspaceDiff, uploadAttachment } from "@/lib/luban-http"
+import { fetchCodexCustomPrompts, uploadAttachment } from "@/lib/luban-http"
 import type {
   AttachmentRef,
   CodexCustomPromptSnapshot,
@@ -16,18 +15,16 @@ import type {
 import { attachmentHref } from "@/lib/attachment-href"
 import {
   draftKey,
-  followTailKey,
   loadJson,
   saveJson,
 } from "@/lib/ui-prefs"
-import type { ChangedFile } from "./right-sidebar"
 import { type ComposerAttachment as EditorComposerAttachment } from "@/components/shared/message-editor"
 import { openSettingsPanel } from "@/lib/open-settings"
 import { focusChatInput } from "@/lib/focus-chat-input"
 import { useAgentCancelHotkey } from "@/lib/use-agent-cancel-hotkey"
 import { EscCancelHint } from "@/components/esc-cancel-hint"
 import { ChatComposer } from "@/components/chat-composer"
-import { DiffTabPanel, type DiffFileData, type DiffStyle } from "@/components/diff-tab-panel"
+import { PtyTerminal } from "@/components/pty-terminal"
 
 type ComposerAttachment = EditorComposerAttachment
 
@@ -36,13 +33,7 @@ type PersistedChatDraft = {
   attachments?: AttachmentRef[]
 }
 
-export function TaskActivityPanel({
-  pendingDiffFile,
-  onDiffFileOpened,
-}: {
-  pendingDiffFile?: ChangedFile | null
-  onDiffFileOpened?: () => void
-}) {
+export function TaskActivityPanel() {
   const [codexCustomPrompts, setCodexCustomPrompts] = useState<CodexCustomPromptSnapshot[]>([])
 
   const {
@@ -62,7 +53,7 @@ export function TaskActivityPanel({
   } = useLuban()
 
   const [draftText, setDraftText] = useState("")
-  const [followTail, setFollowTail] = useState(true)
+  const [composerMode, setComposerMode] = useState<"chat" | "shell">("chat")
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const attachmentScopeRef = useRef<string>("")
   const attachmentScope = `${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`
@@ -89,19 +80,19 @@ export function TaskActivityPanel({
 
   const messages = useMemo(() => buildMessages(conversation, { agentTurns: "grouped" }), [conversation])
   const queuedPrompts = useMemo(() => conversation?.pending_prompts ?? [], [conversation?.pending_prompts])
+  const activeTaskStatus = useMemo(() => {
+    if (conversation?.task_status) return conversation.task_status
+    if (activeThreadId == null) return null
+    return threads.find((t) => t.task_id === activeThreadId)?.task_status ?? null
+  }, [activeThreadId, conversation?.task_status, threads])
+  const isArchivedTask = activeTaskStatus === "done" || activeTaskStatus === "canceled"
 
   const messageHistory = useMemo(() => {
     return messages.filter((m) => m.type === "user").map((m) => m.content)
   }, [messages])
 
   const isAgentRunning = conversation?.run_status === "running"
-
-  const [activePanel, setActivePanel] = useState<"activity" | "diff">("activity")
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("split")
-  const [diffFiles, setDiffFiles] = useState<DiffFileData[]>([])
-  const [diffActiveFileId, setDiffActiveFileId] = useState<string | undefined>(undefined)
-  const [isDiffLoading, setIsDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
+  const canInteract = !isArchivedTask && activeWorkspaceId != null && activeThreadId != null
 
   const ESC_TIMEOUT_MS = 3000
   const { escHintVisible } = useAgentCancelHotkey({
@@ -127,7 +118,6 @@ export function TaskActivityPanel({
     const saved = loadJson<PersistedChatDraft>(draftKey(activeWorkspaceId, activeThreadId))
     setDraftText(saved?.text ?? "")
     setAttachments(attachmentsFromRefs(activeWorkspaceId, saved?.attachments ?? []))
-    setFollowTail(localStorage.getItem(followTailKey(activeWorkspaceId, activeThreadId)) !== "false")
   }, [attachmentScope, activeWorkspaceId, activeThreadId, attachmentsFromRefs])
 
   useEffect(() => {
@@ -226,54 +216,19 @@ export function TaskActivityPanel({
   }
 
   const handleSend = () => {
-    if (activeWorkspaceId == null || activeThreadId == null) return
+    if (!canInteract) return
     const text = draftText.trim()
+    if (text.length === 0) return
+
     const readyAttachments = attachments.filter((a) => a.status === "ready" && a.attachment)
     const refs = readyAttachments.map((a) => a.attachment as AttachmentRef)
     if (text.length === 0 && refs.length === 0) return
 
-    if (isAgentRunning) {
-      queueAgentMessage(text, refs.length > 0 ? refs : undefined)
-    } else {
-      sendAgentMessage(text, refs.length > 0 ? refs : undefined)
-    }
+    if (isAgentRunning) queueAgentMessage(text, refs.length > 0 ? refs : undefined)
+    else sendAgentMessage(text, refs.length > 0 ? refs : undefined)
     setDraftText("")
     setAttachments([])
   }
-
-  const openDiffTab = useCallback(
-    async (targetFile: ChangedFile) => {
-      if (activeWorkspaceId == null) return
-      setActivePanel("diff")
-      setDiffActiveFileId(targetFile.id)
-      setIsDiffLoading(true)
-      setDiffError(null)
-
-      try {
-        const snap = await fetchWorkspaceDiff(activeWorkspaceId)
-        const files: DiffFileData[] = (snap.files ?? []).map((file) => ({
-          file: file.file,
-          oldFile: { name: file.old_file.name, contents: file.old_file.contents },
-          newFile: { name: file.new_file.name, contents: file.new_file.contents },
-        }))
-        setDiffFiles(files)
-      } catch (err) {
-        setDiffError(err instanceof Error ? err.message : String(err))
-        setDiffFiles([])
-      } finally {
-        setIsDiffLoading(false)
-      }
-    },
-    [activeWorkspaceId],
-  )
-
-  useEffect(() => {
-    if (!pendingDiffFile) return
-    void (async () => {
-      await openDiffTab(pendingDiffFile)
-      onDiffFileOpened?.()
-    })()
-  }, [onDiffFileOpened, openDiffTab, pendingDiffFile])
 
   const taskTitle = useMemo(() => {
     if (activeThreadId == null) return "Untitled Task"
@@ -282,22 +237,30 @@ export function TaskActivityPanel({
   }, [threads, activeThreadId])
 
   const canSend = useMemo(() => {
-    if (activeWorkspaceId == null || activeThreadId == null) return false
+    if (!canInteract) return false
     const hasUploading = attachments.some((a) => a.status === "uploading")
     if (hasUploading) return false
     const hasReady = attachments.some((a) => a.status === "ready" && a.attachment != null)
     return draftText.trim().length > 0 || hasReady
-  }, [activeWorkspaceId, activeThreadId, attachments, draftText])
+  }, [attachments, canInteract, draftText])
 
   const handleCancelQueuedPrompt = useCallback(
     (promptId: number) => {
-      if (activeWorkspaceId == null || activeThreadId == null) return
+      if (!canInteract) return
       removeQueuedPrompt(activeWorkspaceId, activeThreadId, promptId)
     },
-    [activeWorkspaceId, activeThreadId, removeQueuedPrompt],
+    [activeWorkspaceId, activeThreadId, canInteract, removeQueuedPrompt],
   )
 
-  const inputComponent = (
+  const inputComponent = isArchivedTask ? (
+    <div
+      className="text-[12px] px-3 py-2 rounded border"
+      style={{ borderColor: "#ebebeb", color: "#6b6b6b", backgroundColor: "#fcfcfc" }}
+      data-testid="archived-task-banner"
+    >
+      This task is archived. New messages are disabled.
+    </div>
+  ) : (
     <div className="relative">
       <EscCancelHint visible={escHintVisible} timeoutMs={ESC_TIMEOUT_MS} />
       {queuedPrompts.length > 0 && (
@@ -371,69 +334,140 @@ export function TaskActivityPanel({
           ))}
         </div>
       )}
-      <ChatComposer
-        value={draftText}
-        onChange={setDraftText}
-        attachments={attachments}
-        onRemoveAttachment={removeAttachment}
-        onFileSelect={handleFileSelect}
-        onPaste={handlePaste}
-        onAddAttachmentRef={(attachment) => {
-          const isImage = attachment.kind === "image"
-          const previewUrl =
-            isImage && activeWorkspaceId != null
-              ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined
-              : undefined
-          setAttachments((prev) => [
-            ...prev,
-            {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              type: isImage ? "image" : "file",
-              name: attachment.name,
-              size: attachment.byte_len,
-              previewUrl,
-              status: "ready",
-              attachment,
+      {composerMode === "chat" ? (
+        <ChatComposer
+          value={draftText}
+          onChange={setDraftText}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
+          onFileSelect={handleFileSelect}
+          onPaste={handlePaste}
+          onAddAttachmentRef={(attachment) => {
+            const isImage = attachment.kind === "image"
+            const previewUrl =
+              isImage && activeWorkspaceId != null
+                ? attachmentHref({ workspaceId: activeWorkspaceId, attachment }) ?? undefined
+                : undefined
+            setAttachments((prev) => [
+              ...prev,
+              {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                type: isImage ? "image" : "file",
+                name: attachment.name,
+                size: attachment.byte_len,
+                previewUrl,
+                status: "ready",
+                attachment,
+              },
+            ])
+          }}
+          workspaceId={activeWorkspaceId}
+          commands={codexCustomPrompts}
+          messageHistory={messageHistory}
+          onCommand={handleCommand}
+          attachmentsEnabled
+          agentSelectorEnabled
+          disabled={!canInteract}
+          agentModelId={conversation?.agent_model_id}
+          agentThinkingEffort={conversation?.thinking_effort}
+          defaultModelId={app?.agent.default_model_id ?? null}
+          defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
+          defaultAmpMode={app?.agent.amp_mode ?? null}
+          defaultRunner={app?.agent.default_runner ?? null}
+          runner={conversation?.agent_runner ?? null}
+          ampMode={conversation?.amp_mode ?? null}
+          onChangeRunner={(runner) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setChatRunner(activeWorkspaceId, activeThreadId, runner)
+          }}
+          onChangeAmpMode={(mode) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            if (mode == null) return
+            setChatAmpMode(activeWorkspaceId, activeThreadId, mode)
+          }}
+          onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
+          onChangeModelId={(modelId) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setChatModel(activeWorkspaceId, activeThreadId, modelId)
+          }}
+          onChangeThinkingEffort={(effort) => {
+            if (activeWorkspaceId == null || activeThreadId == null) return
+            setThinkingEffort(activeWorkspaceId, activeThreadId, effort)
+          }}
+          secondaryAction={{
+            onClick: () => {
+              setComposerMode("shell")
+              setDraftText("")
+              setAttachments([])
             },
-          ])
-        }}
-        workspaceId={activeWorkspaceId}
-        commands={codexCustomPrompts}
-        messageHistory={messageHistory}
-        onCommand={handleCommand}
-        disabled={activeWorkspaceId == null || activeThreadId == null}
-        agentModelId={conversation?.agent_model_id}
-        agentThinkingEffort={conversation?.thinking_effort}
-        defaultModelId={app?.agent.default_model_id ?? null}
-        defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
-        defaultAmpMode={app?.agent.amp_mode ?? null}
-        defaultRunner={app?.agent.default_runner ?? null}
-        runner={conversation?.agent_runner ?? null}
-        ampMode={conversation?.amp_mode ?? null}
-        onChangeRunner={(runner) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setChatRunner(activeWorkspaceId, activeThreadId, runner)
-        }}
-        onChangeAmpMode={(mode) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          if (mode == null) return
-          setChatAmpMode(activeWorkspaceId, activeThreadId, mode)
-        }}
-        onOpenAgentSettings={(agentId, agentFilePath) => openSettingsPanel("agent", { agentId, agentFilePath })}
-        onChangeModelId={(modelId) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setChatModel(activeWorkspaceId, activeThreadId, modelId)
-        }}
-        onChangeThinkingEffort={(effort) => {
-          if (activeWorkspaceId == null || activeThreadId == null) return
-          setThinkingEffort(activeWorkspaceId, activeThreadId, effort)
-        }}
-        onSend={handleSend}
-        canSend={canSend}
-        codexEnabled={app?.agent.codex_enabled ?? true}
-        ampEnabled={app?.agent.amp_enabled ?? true}
-        compact
-      />
+            ariaLabel: "Switch to shell",
+            icon: <Terminal className="w-3.5 h-3.5" />,
+            testId: "chat-mode-toggle",
+          }}
+          onSend={handleSend}
+          canSend={canSend}
+          codexEnabled={app?.agent.codex_enabled ?? true}
+          ampEnabled={app?.agent.amp_enabled ?? true}
+          compact
+        />
+      ) : (
+        <div
+          className="group/activity"
+          data-testid="shell-composer"
+          style={{
+            border: "1px solid #e8e8e8",
+            borderRadius: "8px",
+            backgroundColor: "#ffffff",
+            boxShadow: "rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px",
+            padding: "12px 16px",
+            marginLeft: "-6px",
+            marginRight: "-6px",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="flex items-center justify-center flex-shrink-0"
+              style={{ width: "20px", height: "20px" }}
+            >
+              <div
+                className="flex items-center justify-center"
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  borderRadius: "50%",
+                  backgroundColor: "#5e6ad2",
+                  color: "#ffffff",
+                }}
+              >
+                <Terminal className="w-3 h-3" />
+              </div>
+            </div>
+            <span style={{ fontSize: "13px", fontWeight: 500, color: "#1b1b1b" }}>Shell</span>
+            <button
+              type="button"
+              onClick={() => setComposerMode("chat")}
+              className="ml-auto inline-flex items-center justify-center h-7 w-7 rounded border border-border bg-background hover:bg-black/[0.03]"
+              aria-label="Switch to chat mode"
+              data-testid="chat-mode-toggle"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div
+            data-testid="shell-terminal-container"
+            style={{
+              height: "260px",
+              border: "1px solid #e8e8e8",
+              borderRadius: "8px",
+              overflow: "hidden",
+              backgroundColor: "#fcfcfc",
+            }}
+          >
+            <PtyTerminal autoFocus />
+          </div>
+        </div>
+      )}
     </div>
   )
 
@@ -441,48 +475,18 @@ export function TaskActivityPanel({
 
   return (
     <div className="flex-1 min-w-0 flex flex-col">
-      {activePanel === "diff" ? (
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          <div
-            className="flex items-center gap-2 h-[39px] flex-shrink-0"
-            style={{ padding: "0 20px", borderBottom: "1px solid #ebebeb" }}
-          >
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 text-[13px] rounded px-2 py-1 hover:bg-black/[0.03]"
-              style={{ color: "#1b1b1b" }}
-              onClick={() => setActivePanel("activity")}
-            >
-              <ArrowLeft className="w-3.5 h-3.5" style={{ color: "#6b6b6b" }} />
-              Back
-            </button>
-            <span className="text-[13px]" style={{ color: "#1b1b1b", fontWeight: 500 }}>
-              Diff
-            </span>
-          </div>
-
-          <DiffTabPanel
-            isLoading={isDiffLoading}
-            error={diffError}
-            files={diffFiles}
-            activeFileId={diffActiveFileId}
-            diffStyle={diffStyle}
-            onStyleChange={setDiffStyle}
-          />
-        </div>
-      ) : (
-	        <TaskActivityView
-	          listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
-	          title={taskTitle}
-	          description={taskDescription}
-	          workspaceId={activeWorkspaceId ?? undefined}
-	          messages={messages}
-          isLoading={isAgentRunning}
-          onCancelAgentTurn={isAgentRunning ? () => cancelAgentTurn() : undefined}
-          inputComponent={inputComponent}
-          className="flex-1 min-w-0"
-        />
-      )}
+      <TaskActivityView
+        listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
+        title={taskTitle}
+        description={taskDescription}
+        workspaceId={activeWorkspaceId ?? undefined}
+        taskId={activeThreadId ?? undefined}
+        messages={messages}
+        isLoading={isAgentRunning}
+        onCancelAgentTurn={isAgentRunning ? () => cancelAgentTurn() : undefined}
+        inputComponent={inputComponent}
+        className="flex-1 min-w-0"
+      />
     </div>
   )
 }

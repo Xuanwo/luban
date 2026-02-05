@@ -215,16 +215,15 @@ pub enum EngineCommand {
     DispatchAction {
         action: Box<Action>,
     },
+    AutoArchiveWorkspace {
+        workspace_id: WorkspaceId,
+    },
     RefreshPullRequests {
         workspace_id: Option<WorkspaceId>,
     },
     PullRequestInfoUpdated {
         workspace_id: WorkspaceId,
         info: Option<PullRequestInfo>,
-    },
-    TaskStatusAutoUpdateBackfillFinished {
-        workspace_id: WorkspaceId,
-        thread_id: WorkspaceThreadId,
     },
     PruneArchivedTasks,
     WorkspaceThreadsInvalidated {
@@ -256,9 +255,6 @@ const PULL_REQUEST_REFRESH_INTERVAL_OPEN_CI_UNKNOWN: Duration = Duration::from_s
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_INITIAL: Duration = Duration::from_secs(60);
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MEDIUM: Duration = Duration::from_secs(3 * 60);
 const PULL_REQUEST_REFRESH_INTERVAL_EMPTY_MAX: Duration = Duration::from_secs(10 * 60);
-
-const TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT: usize = 20;
-const TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT: u64 = 250;
 
 const TASK_ARCHIVE_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
 const TASK_PURGE_AFTER_SECONDS: u64 = 2 * TASK_ARCHIVE_AFTER_SECONDS;
@@ -321,107 +317,6 @@ fn pull_request_next_refresh_at(
     (next_refresh_at, consecutive_empty)
 }
 
-fn truncate_for_system_task(input: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    let mut out = String::new();
-    for ch in input.chars().take(max_chars) {
-        out.push(ch);
-    }
-    out
-}
-
-fn task_status_auto_update_input_from_entries(
-    task_status: luban_domain::TaskStatus,
-    entries: &[luban_domain::ConversationEntry],
-    turn_outcome: &str,
-) -> String {
-    const MAX_TEXT_CHARS: usize = 1800;
-
-    let mut recent_user_messages: Vec<String> = Vec::with_capacity(5);
-    let mut recent_agent_messages: Vec<String> = Vec::with_capacity(5);
-    let mut last_turn_error: Option<String> = None;
-
-    for entry in entries.iter().rev() {
-        match entry {
-            luban_domain::ConversationEntry::UserEvent { event, .. } => match event {
-                luban_domain::UserEvent::Message { text, .. } => {
-                    if recent_user_messages.len() < 5 {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            recent_user_messages.push(trimmed.to_owned());
-                        }
-                    }
-                }
-            },
-            luban_domain::ConversationEntry::AgentEvent { event, .. } => match event {
-                luban_domain::AgentEvent::Message { text, .. } => {
-                    if recent_agent_messages.len() < 5 {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            recent_agent_messages.push(trimmed.to_owned());
-                        }
-                    }
-                }
-                luban_domain::AgentEvent::TurnError { message } => {
-                    if last_turn_error.is_none() {
-                        last_turn_error = Some(message.trim().to_owned());
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        if recent_user_messages.len() >= 5
-            && recent_agent_messages.len() >= 5
-            && last_turn_error.is_some()
-        {
-            break;
-        }
-    }
-
-    let mut out = String::new();
-    out.push_str("Current task_status: ");
-    out.push_str(task_status.as_str());
-    out.push('\n');
-    out.push_str("Turn outcome: ");
-    out.push_str(turn_outcome);
-    out.push('\n');
-
-    if !recent_user_messages.is_empty() {
-        out.push_str("\nRecent user messages (newest first):\n");
-        for (idx, message) in recent_user_messages.iter().enumerate() {
-            out.push_str(&format!("{}.\n", idx.saturating_add(1)));
-            out.push_str(&truncate_for_system_task(message, MAX_TEXT_CHARS));
-            out.push('\n');
-            out.push('\n');
-        }
-    }
-
-    if !recent_agent_messages.is_empty() {
-        out.push_str("\nRecent agent messages (newest first):\n");
-        for (idx, message) in recent_agent_messages.iter().enumerate() {
-            out.push_str(&format!("{}.\n", idx.saturating_add(1)));
-            out.push_str(&truncate_for_system_task(message, MAX_TEXT_CHARS));
-            out.push('\n');
-            out.push('\n');
-        }
-    }
-
-    if let Some(message) = last_turn_error {
-        let trimmed = message.trim();
-        if !trimmed.is_empty() {
-            out.push_str("\nLast turn error:\n");
-            out.push_str(&truncate_for_system_task(trimmed, MAX_TEXT_CHARS));
-            out.push('\n');
-        }
-    }
-
-    out
-}
-
 pub struct Engine {
     state: AppState,
     rev: u64,
@@ -432,8 +327,8 @@ pub struct Engine {
     cancel_flags: HashMap<(WorkspaceId, WorkspaceThreadId), CancelFlagEntry>,
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
-    task_status_auto_update_backfill_in_flight: HashSet<(WorkspaceId, WorkspaceThreadId)>,
     workspace_threads_cache: HashMap<WorkspaceId, Vec<ConversationThreadMeta>>,
+    auto_archive_workspaces: HashSet<WorkspaceId>,
     telegram_pairing: Option<TelegramPairingState>,
 }
 
@@ -483,8 +378,8 @@ impl Engine {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -523,6 +418,262 @@ impl Engine {
 
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
+        self.schedule_reconcile_stale_running_turns();
+        self.schedule_auto_archive_closed_workspaces();
+    }
+
+    fn schedule_auto_archive_closed_workspaces(&self) {
+        let mut candidates = Vec::new();
+        for project in &self.state.projects {
+            if !project.is_git {
+                continue;
+            }
+            for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
+                let is_main = workspace.workspace_name == "main";
+                if is_main {
+                    continue;
+                }
+                if workspace.archive_status == luban_domain::OperationStatus::Running {
+                    continue;
+                }
+                candidates.push((
+                    workspace.id,
+                    WorkspaceScope {
+                        project_slug: project.slug.clone(),
+                        workspace_name: workspace.workspace_name.clone(),
+                    },
+                ));
+            }
+        }
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        let services = self.services.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (workspace_id, scope) in candidates {
+                let services = services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let threads =
+                        services.list_conversation_threads(project_slug, workspace_name)?;
+                    if threads.is_empty() {
+                        return Ok(false);
+                    }
+                    let all_closed_and_idle = threads.iter().all(|t| {
+                        matches!(
+                            t.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) && t.turn_status == luban_domain::TurnStatus::Idle
+                    });
+                    Ok(all_closed_and_idle)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("failed to join auto archive scan task".to_owned()));
+
+                let Ok(should_archive) = result else {
+                    continue;
+                };
+                if !should_archive {
+                    continue;
+                }
+
+                let _ = tx
+                    .send(EngineCommand::AutoArchiveWorkspace { workspace_id })
+                    .await;
+            }
+        });
+    }
+
+    fn schedule_reconcile_stale_running_turns(&self) {
+        let mut scopes = Vec::new();
+        for project in &self.state.projects {
+            for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
+                scopes.push(WorkspaceScope {
+                    project_slug: project.slug.clone(),
+                    workspace_name: workspace.workspace_name.clone(),
+                });
+            }
+        }
+
+        if scopes.is_empty() {
+            return;
+        }
+
+        let services = self.services.clone();
+        tokio::spawn(async move {
+            let finished_at_unix_ms = now_unix_ms();
+            for scope in scopes {
+                let services = services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let threads = services
+                        .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                    let mut reconciled = 0usize;
+                    for meta in threads {
+                        if meta.turn_status != luban_domain::TurnStatus::Running {
+                            continue;
+                        }
+
+                        let snapshot = services.load_conversation(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                        )?;
+
+                        if snapshot.run_started_at_unix_ms.is_none()
+                            || snapshot.run_finished_at_unix_ms.is_some()
+                        {
+                            continue;
+                        }
+
+                        services.append_conversation_entries(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            vec![luban_domain::ConversationEntry::AgentEvent {
+                                entry_id: String::new(),
+                                created_at_unix_ms: 0,
+                                event: luban_domain::AgentEvent::TurnError {
+                                    message: "Agent run interrupted by server restart.".to_owned(),
+                                },
+                            }],
+                        )?;
+
+                        services.save_conversation_queue_state(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            true,
+                            snapshot.run_started_at_unix_ms,
+                            Some(finished_at_unix_ms),
+                            snapshot.pending_prompts,
+                        )?;
+                        reconciled += 1;
+                    }
+                    Ok::<_, String>(reconciled)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("failed to join stale run reconcile task".to_owned()));
+
+                let Ok(reconciled) = result else {
+                    continue;
+                };
+                if reconciled == 0 {
+                    continue;
+                }
+
+                tracing::info!(
+                    project_slug = %scope.project_slug,
+                    workspace_name = %scope.workspace_name,
+                    reconciled,
+                    "reconciled stale running turns"
+                );
+            }
+        });
+    }
+
+    #[cfg(test)]
+    async fn reconcile_stale_running_turns(&mut self) {
+        let mut scopes = Vec::new();
+        for project in &self.state.projects {
+            for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
+                scopes.push(WorkspaceScope {
+                    project_slug: project.slug.clone(),
+                    workspace_name: workspace.workspace_name.clone(),
+                });
+            }
+        }
+
+        if scopes.is_empty() {
+            return;
+        }
+
+        let finished_at_unix_ms = now_unix_ms();
+        for scope in scopes {
+            let services = self.services.clone();
+            let project_slug = scope.project_slug.clone();
+            let workspace_name = scope.workspace_name.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let threads = services
+                    .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                let mut reconciled = 0usize;
+                for meta in threads {
+                    if meta.turn_status != luban_domain::TurnStatus::Running {
+                        continue;
+                    }
+
+                    let snapshot = services.load_conversation(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                    )?;
+
+                    if snapshot.run_started_at_unix_ms.is_none()
+                        || snapshot.run_finished_at_unix_ms.is_some()
+                    {
+                        continue;
+                    }
+
+                    services.append_conversation_entries(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                        vec![luban_domain::ConversationEntry::AgentEvent {
+                            entry_id: String::new(),
+                            created_at_unix_ms: 0,
+                            event: luban_domain::AgentEvent::TurnError {
+                                message: "Agent run interrupted by server restart.".to_owned(),
+                            },
+                        }],
+                    )?;
+
+                    services.save_conversation_queue_state(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                        true,
+                        snapshot.run_started_at_unix_ms,
+                        Some(finished_at_unix_ms),
+                        snapshot.pending_prompts,
+                    )?;
+                    reconciled += 1;
+                }
+                Ok::<_, String>(reconciled)
+            })
+            .await
+            .ok()
+            .unwrap_or_else(|| Err("failed to join stale run reconcile task".to_owned()));
+
+            let Ok(reconciled) = result else {
+                continue;
+            };
+            if reconciled == 0 {
+                continue;
+            }
+
+            tracing::info!(
+                project_slug = %scope.project_slug,
+                workspace_name = %scope.workspace_name,
+                reconciled,
+                "reconciled stale running turns"
+            );
+        }
     }
 
     async fn prune_archived_tasks(&mut self) {
@@ -775,13 +926,6 @@ impl Engine {
                 let snapshot = match threads {
                     Ok(mut threads) => {
                         dedup_thread_metas_in_place(&mut threads);
-
-                        self.spawn_task_status_auto_update_backfill_for_threads(
-                            wid,
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            &threads,
-                        );
 
                         let mapped_threads = threads
                             .iter()
@@ -2059,7 +2203,15 @@ impl Engine {
                 let _ = reply.send(Ok(self.rev));
             }
             EngineCommand::DispatchAction { action } => {
+                if let Action::WorkspaceArchived { workspace_id } = action.as_ref() {
+                    self.auto_archive_workspaces.remove(workspace_id);
+                }
                 self.process_action_queue(*action).await;
+            }
+            EngineCommand::AutoArchiveWorkspace { workspace_id } => {
+                self.auto_archive_workspaces.insert(workspace_id);
+                self.process_action_queue(Action::ArchiveWorkspace { workspace_id })
+                    .await;
             }
             EngineCommand::RefreshPullRequests { workspace_id } => match workspace_id {
                 Some(id) => self.maybe_refresh_pull_request(id),
@@ -2100,15 +2252,8 @@ impl Engine {
                         .and_then(|entry| entry.info.as_ref())
                     && pr.state == DomainPullRequestState::Merged
                 {
-                    self.spawn_task_status_mark_done_for_merged_pr(workspace_id, pr.number);
+                    self.spawn_task_status_suggest_done_for_merged_pr(workspace_id, pr.number);
                 }
-            }
-            EngineCommand::TaskStatusAutoUpdateBackfillFinished {
-                workspace_id,
-                thread_id,
-            } => {
-                self.task_status_auto_update_backfill_in_flight
-                    .remove(&(workspace_id, thread_id));
             }
             EngineCommand::PruneArchivedTasks => {
                 self.prune_archived_tasks().await;
@@ -2131,169 +2276,11 @@ impl Engine {
         }
     }
 
-    fn spawn_task_status_auto_update_backfill_for_threads(
-        &mut self,
+    fn spawn_task_status_suggest_done_for_merged_pr(
+        &self,
         workspace_id: WorkspaceId,
-        project_slug: &str,
-        workspace_name: &str,
-        threads: &[ConversationThreadMeta],
+        pr_number: u64,
     ) {
-        let runner_enabled = (
-            self.state.agent_codex_enabled(),
-            self.state.agent_amp_enabled(),
-            self.state.agent_claude_enabled(),
-        );
-        if !(runner_enabled.0 || runner_enabled.1 || runner_enabled.2) {
-            return;
-        }
-
-        let mut scheduled = 0usize;
-        for meta in threads {
-            if scheduled >= TASK_STATUS_AUTO_UPDATE_BACKFILL_MAX_PER_SNAPSHOT {
-                break;
-            }
-            if !matches!(
-                meta.task_status,
-                luban_domain::TaskStatus::Iterating | luban_domain::TaskStatus::Validating
-            ) {
-                continue;
-            }
-            if meta.last_message_seq == 0
-                || meta.last_message_seq <= meta.task_status_last_analyzed_message_seq
-            {
-                continue;
-            }
-            if meta.turn_status != luban_domain::TurnStatus::Idle {
-                continue;
-            }
-
-            let key = (workspace_id, meta.thread_id);
-            if !self.task_status_auto_update_backfill_in_flight.insert(key) {
-                continue;
-            }
-
-            scheduled += 1;
-
-            let services = self.services.clone();
-            let tx = self.tx.clone();
-            let project_slug = project_slug.to_owned();
-            let workspace_name = workspace_name.to_owned();
-            let thread_local_id = meta.thread_id.as_u64();
-            let expected_current_task_status = meta.task_status;
-
-            let default_runner = self.state.agent_default_runner();
-            let default_model_id = self.state.agent_default_model_id().to_owned();
-            let default_thinking_effort = self.state.agent_default_thinking_effort();
-            let default_amp_mode = self.state.agent_amp_mode().to_owned();
-
-            let agent_codex_enabled = self.state.agent_codex_enabled();
-            let agent_amp_enabled = self.state.agent_amp_enabled();
-            let agent_claude_enabled = self.state.agent_claude_enabled();
-
-            tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let snapshot = services.load_conversation_page(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        thread_local_id,
-                        None,
-                        TASK_STATUS_AUTO_UPDATE_BACKFILL_TAIL_LIMIT,
-                    )?;
-
-                    let input = task_status_auto_update_input_from_entries(
-                        expected_current_task_status,
-                        &snapshot.entries,
-                        "stale",
-                    );
-
-                    let runner = snapshot.runner.unwrap_or(default_runner);
-                    let runner_enabled = match runner {
-                        luban_domain::AgentRunnerKind::Codex => agent_codex_enabled,
-                        luban_domain::AgentRunnerKind::Amp => agent_amp_enabled,
-                        luban_domain::AgentRunnerKind::Claude => agent_claude_enabled,
-                    };
-                    if !runner_enabled {
-                        return Ok::<_, String>(());
-                    }
-
-                    let model_id = snapshot
-                        .agent_model_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .unwrap_or(default_model_id.as_str())
-                        .to_owned();
-                    let thinking_effort =
-                        snapshot.thinking_effort.unwrap_or(default_thinking_effort);
-                    let amp_mode = if runner == luban_domain::AgentRunnerKind::Amp {
-                        snapshot
-                            .amp_mode
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(ToOwned::to_owned)
-                            .or(Some(default_amp_mode))
-                    } else {
-                        None
-                    };
-
-                    let suggested = services.task_suggest_task_status_auto_update(
-                        input,
-                        runner,
-                        model_id,
-                        thinking_effort,
-                        amp_mode,
-                    )?;
-                    let suggested_task_status = suggested.task_status;
-
-                    let _ = services.save_conversation_task_status_last_analyzed(
-                        project_slug.clone(),
-                        workspace_name.clone(),
-                        thread_local_id,
-                    );
-
-                    if suggested_task_status == luban_domain::TaskStatus::Validating
-                        && let Some(pr_number) = suggested.validation_pr_number
-                    {
-                        let _ = services.save_conversation_task_validation_pr(
-                            project_slug.clone(),
-                            workspace_name.clone(),
-                            thread_local_id,
-                            pr_number,
-                            suggested.validation_pr_url,
-                        );
-                    }
-
-                    if suggested_task_status != expected_current_task_status {
-                        let _ = services.save_conversation_task_status(
-                            project_slug,
-                            workspace_name,
-                            thread_local_id,
-                            suggested_task_status,
-                        );
-                    }
-
-                    Ok(())
-                })
-                .await
-                .ok()
-                .unwrap_or_else(|| {
-                    Err("failed to join task status auto update backfill".to_owned())
-                });
-
-                let _ = result;
-
-                let _ = tx
-                    .send(EngineCommand::TaskStatusAutoUpdateBackfillFinished {
-                        workspace_id,
-                        thread_id: WorkspaceThreadId::from_u64(thread_local_id),
-                    })
-                    .await;
-            });
-        }
-    }
-
-    fn spawn_task_status_mark_done_for_merged_pr(&self, workspace_id: WorkspaceId, pr_number: u64) {
         let Some(scope) = workspace_scope(&self.state, workspace_id) else {
             return;
         };
@@ -2305,7 +2292,7 @@ impl Engine {
 
         tokio::spawn(async move {
             let thread_ids = tokio::task::spawn_blocking(move || {
-                services.mark_conversation_tasks_done_for_merged_pr(
+                services.list_conversation_tasks_for_merged_pr(
                     project_slug.clone(),
                     workspace_name.clone(),
                     pr_number,
@@ -2320,19 +2307,21 @@ impl Engine {
                 for thread_local_id in thread_ids {
                     let _ = tx
                         .send(EngineCommand::DispatchAction {
-                            action: Box::new(Action::TaskStatusAutoUpdateSuggested {
+                            action: Box::new(Action::TaskStatusSuggestionCreated {
                                 workspace_id,
                                 thread_id: WorkspaceThreadId::from_u64(thread_local_id),
                                 expected_current_task_status: luban_domain::TaskStatus::Validating,
                                 suggested_task_status: luban_domain::TaskStatus::Done,
+                                title: format!("Suggest moving to done (PR #{pr_number} merged)"),
+                                explanation_markdown: format!(
+                                    "- PR #{pr_number} is merged.\n- Consider marking this task as done."
+                                ),
                             }),
                         })
                         .await;
                 }
 
-                let _ = tx
-                    .send(EngineCommand::WorkspaceThreadsInvalidated { workspace_id })
-                    .await;
+                // No automatic status updates: keep thread metadata stable until the user applies.
             }
         });
     }
@@ -2489,9 +2478,16 @@ impl Engine {
         while let Some(action) = actions.pop_front() {
             self.rev = self.rev.saturating_add(1);
 
+            let should_persist_latest_conversation_entry = matches!(
+                &action,
+                Action::TerminalCommandStarted { .. }
+                    | Action::TerminalCommandFinished { .. }
+                    | Action::TaskStatusSuggestionCreated { .. }
+            );
             let should_sync_branch_watchers = should_sync_branch_watchers(&action);
             let mut conversation_keys = Vec::<(WorkspaceId, WorkspaceThreadId)>::new();
-            if let Some(key) = conversation_key_for_action(&action) {
+            let action_conversation_key = conversation_key_for_action(&action);
+            if let Some(key) = action_conversation_key {
                 conversation_keys.push(key);
             }
             let queue_state_key = queue_state_key_for_action(&action);
@@ -2525,6 +2521,11 @@ impl Engine {
             if let Some((wid, tid)) = queue_state_key {
                 self.persist_queue_state(wid, tid).await;
             }
+            if should_persist_latest_conversation_entry
+                && let Some((wid, tid)) = action_conversation_key
+            {
+                self.persist_latest_conversation_entry(wid, tid).await;
+            }
 
             effects.extend(new_effects);
 
@@ -2535,6 +2536,50 @@ impl Engine {
                         tracing::error!(error = %err, "effect failed");
                     }
                 }
+            }
+        }
+    }
+
+    async fn persist_latest_conversation_entry(
+        &self,
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+    ) {
+        let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+            return;
+        };
+        let Some(conversation) = self
+            .state
+            .workspace_thread_conversation(workspace_id, thread_id)
+        else {
+            return;
+        };
+        let Some(entry) = conversation.entries.last() else {
+            return;
+        };
+
+        let services = self.services.clone();
+        let project_slug = scope.project_slug;
+        let workspace_name = scope.workspace_name;
+        let thread_local_id = thread_id.as_u64();
+        let entry = entry.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            services.append_conversation_entries(
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                vec![entry],
+            )
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(message)) => {
+                tracing::error!(message = %message, "failed to persist conversation entry");
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to join conversation persistence task");
             }
         }
     }
@@ -3150,7 +3195,7 @@ impl Engine {
                             );
                         }
 
-                        Ok::<_, String>(suggested.task_status)
+                        Ok::<_, String>(suggested)
                     })
                     .await
                     .ok()
@@ -3158,17 +3203,23 @@ impl Engine {
                         Err("failed to join auto update task status task".to_owned())
                     });
 
-                    let Ok(suggested_task_status) = result else {
+                    let Ok(suggested) = result else {
                         return;
                     };
 
+                    let suggested_task_status = suggested.task_status;
+                    let title = format!("Suggest moving to {}", suggested_task_status.as_str());
+                    let explanation_markdown = suggested.explanation_markdown.unwrap_or_default();
+
                     let _ = tx
                         .send(EngineCommand::DispatchAction {
-                            action: Box::new(Action::TaskStatusAutoUpdateSuggested {
+                            action: Box::new(Action::TaskStatusSuggestionCreated {
                                 workspace_id,
                                 thread_id,
                                 expected_current_task_status,
                                 suggested_task_status,
+                                title,
+                                explanation_markdown,
                             }),
                         })
                         .await;
@@ -3191,19 +3242,10 @@ impl Engine {
                 .ok()
                 .unwrap_or_else(|| Err("failed to join list threads task".to_owned()));
                 let action = match result {
-                    Ok(threads) => {
-                        self.spawn_task_status_auto_update_backfill_for_threads(
-                            workspace_id,
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            &threads,
-                        );
-
-                        Action::WorkspaceThreadsLoaded {
-                            workspace_id,
-                            threads,
-                        }
-                    }
+                    Ok(threads) => Action::WorkspaceThreadsLoaded {
+                        workspace_id,
+                        threads,
+                    },
                     Err(message) => Action::WorkspaceThreadsLoadFailed {
                         workspace_id,
                         message,
@@ -4035,27 +4077,34 @@ impl Engine {
                 }
             }
             Effect::ArchiveWorkspace { workspace_id } => {
-                if let Some(scope) = workspace_scope(&self.state, workspace_id) {
+                let scope = workspace_scope(&self.state, workspace_id);
+                let should_emit_task_archived_events =
+                    self.auto_archive_workspaces.contains(&workspace_id);
+
+                let mut claude_cleanup_threads = Vec::new();
+                let (project_slug, workspace_name) = scope
+                    .as_ref()
+                    .map(|s| (s.project_slug.clone(), s.workspace_name.clone()))
+                    .unwrap_or_default();
+                if !project_slug.is_empty() && !workspace_name.is_empty() {
                     for (wid, thread_id) in self.state.conversations.keys() {
                         if *wid != workspace_id {
                             continue;
                         }
-                        self.services.cleanup_claude_process(
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            thread_id.as_u64(),
-                        );
+                        claude_cleanup_threads.push(thread_id.as_u64());
                     }
                 }
 
                 let mut project_path: Option<PathBuf> = None;
                 let mut worktree_path: Option<PathBuf> = None;
+                let mut branch_name: Option<String> = None;
 
                 for project in &self.state.projects {
                     for workspace in &project.workspaces {
                         if workspace.id == workspace_id {
                             project_path = Some(project.path.clone());
                             worktree_path = Some(workspace.worktree_path.clone());
+                            branch_name = Some(workspace.branch_name.clone());
                             break;
                         }
                     }
@@ -4064,7 +4113,8 @@ impl Engine {
                     }
                 }
 
-                let (Some(project_path), Some(worktree_path)) = (project_path, worktree_path)
+                let (Some(project_path), Some(worktree_path), Some(branch_name)) =
+                    (project_path, worktree_path, branch_name)
                 else {
                     return Ok(VecDeque::from([Action::WorkspaceArchiveFailed {
                         workspace_id,
@@ -4073,22 +4123,142 @@ impl Engine {
                 };
 
                 let services = self.services.clone();
+                let tx = self.tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    for thread_id in claude_cleanup_threads {
+                        services.cleanup_claude_process(&project_slug, &workspace_name, thread_id);
+                    }
+
+                    let result: Result<(), String> = (|| {
+                        services.archive_workspace(project_path, worktree_path, branch_name)?;
+                        if !should_emit_task_archived_events {
+                            return Ok(());
+                        }
+                        if project_slug.is_empty() || workspace_name.is_empty() {
+                            return Ok(());
+                        }
+
+                        let threads = services.list_conversation_threads(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                        )?;
+                        for meta in threads {
+                            if !matches!(
+                                meta.task_status,
+                                luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                            ) {
+                                continue;
+                            }
+
+                            let recent = services.load_conversation_page(
+                                project_slug.clone(),
+                                workspace_name.clone(),
+                                meta.thread_id.as_u64(),
+                                None,
+                                32,
+                            )?;
+                            let already_archived = recent.entries.iter().any(|entry| {
+                                matches!(
+                                    entry,
+                                    luban_domain::ConversationEntry::SystemEvent { event, .. }
+                                        if matches!(
+                                            event,
+                                            luban_domain::ConversationSystemEvent::TaskArchived
+                                        )
+                                )
+                            });
+                            if already_archived {
+                                continue;
+                            }
+
+                            services.append_conversation_entries(
+                                project_slug.clone(),
+                                workspace_name.clone(),
+                                meta.thread_id.as_u64(),
+                                vec![luban_domain::ConversationEntry::SystemEvent {
+                                    entry_id: String::new(),
+                                    created_at_unix_ms: now_unix_ms(),
+                                    event: luban_domain::ConversationSystemEvent::TaskArchived,
+                                }],
+                            )?;
+                        }
+                        Ok(())
+                    })();
+
+                    let action = match result {
+                        Ok(()) => Action::WorkspaceArchived { workspace_id },
+                        Err(message) => Action::WorkspaceArchiveFailed {
+                            workspace_id,
+                            message,
+                        },
+                    };
+                    let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                        action: Box::new(action),
+                    });
+                });
+
+                Ok(VecDeque::new())
+            }
+            Effect::MaybeAutoArchiveWorkspace { workspace_id } => {
+                let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+                    return Ok(VecDeque::new());
+                };
+
+                let mut project_is_git = false;
+                let mut workspace_is_main = false;
+                let mut workspace_status = None;
+                let mut archive_status = None;
+                for project in &self.state.projects {
+                    for workspace in &project.workspaces {
+                        if workspace.id != workspace_id {
+                            continue;
+                        }
+                        project_is_git = project.is_git;
+                        workspace_is_main = workspace.workspace_name == "main";
+                        workspace_status = Some(workspace.status);
+                        archive_status = Some(workspace.archive_status);
+                        break;
+                    }
+                }
+
+                if !project_is_git
+                    || workspace_is_main
+                    || workspace_status != Some(luban_domain::WorkspaceStatus::Active)
+                    || archive_status == Some(luban_domain::OperationStatus::Running)
+                {
+                    return Ok(VecDeque::new());
+                }
+
+                let services = self.services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    services.archive_workspace(project_path, worktree_path)
+                    let threads =
+                        services.list_conversation_threads(project_slug, workspace_name)?;
+                    if threads.is_empty() {
+                        return Ok(false);
+                    }
+                    let all_closed_and_idle = threads.iter().all(|t| {
+                        matches!(
+                            t.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) && t.turn_status == luban_domain::TurnStatus::Idle
+                    });
+                    Ok(all_closed_and_idle)
                 })
                 .await
                 .ok()
-                .unwrap_or_else(|| Err("failed to join archive workspace task".to_owned()));
+                .unwrap_or_else(|| Err("failed to join maybe archive workspace task".to_owned()));
 
-                let action = match result {
-                    Ok(()) => Action::WorkspaceArchived { workspace_id },
-                    Err(message) => Action::WorkspaceArchiveFailed {
-                        workspace_id,
-                        message,
-                    },
+                let Ok(should_archive) = result else {
+                    return Ok(VecDeque::new());
                 };
+                if !should_archive {
+                    return Ok(VecDeque::new());
+                }
 
-                Ok(VecDeque::from([action]))
+                self.auto_archive_workspaces.insert(workspace_id);
+                Ok(VecDeque::from([Action::ArchiveWorkspace { workspace_id }]))
             }
         }
     }
@@ -4681,6 +4851,16 @@ fn should_sync_branch_watchers(action: &Action) -> bool {
 
 fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, WorkspaceThreadId)> {
     match action {
+        Action::TerminalCommandStarted {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
+        Action::TerminalCommandFinished {
+            workspace_id,
+            thread_id,
+            ..
+        } => Some((*workspace_id, *thread_id)),
         Action::SendAgentMessage {
             workspace_id,
             thread_id,
@@ -4691,7 +4871,7 @@ fn conversation_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspac
             thread_id,
             ..
         } => Some((*workspace_id, *thread_id)),
-        Action::TaskStatusAutoUpdateSuggested {
+        Action::TaskStatusSuggestionCreated {
             workspace_id,
             thread_id,
             ..
@@ -4876,6 +5056,11 @@ fn queue_state_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspace
         Action::CancelAgentTurn {
             workspace_id,
             thread_id,
+        } => Some((*workspace_id, *thread_id)),
+        Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status: luban_domain::TaskStatus::Canceled | luban_domain::TaskStatus::Done,
         } => Some((*workspace_id, *thread_id)),
         Action::AgentEventReceived {
             workspace_id,
@@ -5112,6 +5297,15 @@ fn now_unix_seconds() -> u64 {
         .as_secs()
 }
 
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(0u64)
+}
+
 fn map_workspace_tabs_snapshot(tabs: &luban_domain::WorkspaceTabs) -> WorkspaceTabsSnapshot {
     WorkspaceTabsSnapshot {
         open_tabs: tabs
@@ -5141,6 +5335,9 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                 luban_domain::ConversationSystemEvent::TaskCreated => {
                     luban_api::ConversationSystemEvent::TaskCreated
                 }
+                luban_domain::ConversationSystemEvent::TaskArchived => {
+                    luban_api::ConversationSystemEvent::TaskArchived
+                }
                 luban_domain::ConversationSystemEvent::TaskStatusChanged { from, to } => {
                     luban_api::ConversationSystemEvent::TaskStatusChanged {
                         from: match from {
@@ -5165,9 +5362,38 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                         },
                     }
                 }
+                luban_domain::ConversationSystemEvent::TaskStatusSuggestion {
+                    from,
+                    to,
+                    title,
+                    explanation_markdown,
+                } => luban_api::ConversationSystemEvent::TaskStatusSuggestion {
+                    from: match from {
+                        luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                        luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                        luban_domain::TaskStatus::Iterating => luban_api::TaskStatus::Iterating,
+                        luban_domain::TaskStatus::Validating => luban_api::TaskStatus::Validating,
+                        luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                        luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+                    },
+                    to: match to {
+                        luban_domain::TaskStatus::Backlog => luban_api::TaskStatus::Backlog,
+                        luban_domain::TaskStatus::Todo => luban_api::TaskStatus::Todo,
+                        luban_domain::TaskStatus::Iterating => luban_api::TaskStatus::Iterating,
+                        luban_domain::TaskStatus::Validating => luban_api::TaskStatus::Validating,
+                        luban_domain::TaskStatus::Done => luban_api::TaskStatus::Done,
+                        luban_domain::TaskStatus::Canceled => luban_api::TaskStatus::Canceled,
+                    },
+                    title: title.clone(),
+                    explanation_markdown: explanation_markdown.clone(),
+                },
             },
         }),
-        ConversationEntry::UserEvent { entry_id, event } => {
+        ConversationEntry::UserEvent {
+            entry_id,
+            created_at_unix_ms,
+            event,
+        } => {
             let event = match event {
                 luban_domain::UserEvent::Message { text, attachments } => {
                     luban_api::UserEvent::Message(luban_api::UserMessage {
@@ -5175,13 +5401,44 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                         attachments: attachments.iter().map(map_attachment_ref).collect(),
                     })
                 }
+                luban_domain::UserEvent::TerminalCommandStarted {
+                    id,
+                    command,
+                    reconnect,
+                } => luban_api::UserEvent::TerminalCommandStarted(
+                    luban_api::TerminalCommandStarted {
+                        id: id.clone(),
+                        command: command.clone(),
+                        reconnect: reconnect.clone(),
+                    },
+                ),
+                luban_domain::UserEvent::TerminalCommandFinished {
+                    id,
+                    command,
+                    reconnect,
+                    output_base64,
+                    output_byte_len,
+                } => luban_api::UserEvent::TerminalCommandFinished(
+                    luban_api::TerminalCommandFinished {
+                        id: id.clone(),
+                        command: command.clone(),
+                        reconnect: reconnect.clone(),
+                        output_base64: output_base64.clone(),
+                        output_byte_len: *output_byte_len,
+                    },
+                ),
             };
             luban_api::ConversationEntry::UserEvent(luban_api::UserEventEntry {
                 entry_id: entry_id.clone(),
+                created_at_unix_ms: *created_at_unix_ms,
                 event,
             })
         }
-        ConversationEntry::AgentEvent { entry_id, event } => {
+        ConversationEntry::AgentEvent {
+            entry_id,
+            created_at_unix_ms,
+            event,
+        } => {
             let event = match event {
                 luban_domain::AgentEvent::Message { id, text } => {
                     luban_api::AgentEvent::Message(luban_api::AgentMessage {
@@ -5210,6 +5467,7 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
             };
             luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
                 entry_id: entry_id.clone(),
+                created_at_unix_ms: *created_at_unix_ms,
                 event,
             })
         }
@@ -5400,6 +5658,7 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
                 luban_api::ThinkingEffort::XHigh => ThinkingEffort::XHigh,
             },
         }),
+        luban_api::ClientAction::TerminalCommandStart { .. } => None,
         luban_api::ClientAction::SendAgentMessage {
             workspace_id,
             thread_id,
@@ -5684,9 +5943,17 @@ mod tests {
         PersistedAppState, PersistedProject, PersistedWorkspace, WorkspaceStatus,
     };
     use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    type SavedQueueState = (
+        bool,
+        Option<u64>,
+        Option<u64>,
+        Vec<luban_domain::QueuedPrompt>,
+    );
 
     struct TestServices;
 
@@ -5716,6 +5983,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -5763,6 +6031,254 @@ mod tests {
             _limit: u64,
         ) -> Result<DomainConversationSnapshot, String> {
             Err("unimplemented".to_owned())
+        }
+
+        fn store_context_image(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _image: ContextImage,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_text(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _text: String,
+            _extension: String,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_file(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _source_path: PathBuf,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn record_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _attachment: AttachmentRef,
+            _created_at_unix_ms: u64,
+        ) -> Result<u64, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_context_items(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ContextItem>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn delete_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _context_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn run_agent_turn_streamed(
+            &self,
+            _request: luban_domain::RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
+            _on_event: Arc<dyn Fn(luban_domain::AgentThreadEvent) + Send + Sync>,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_is_authorized(&self) -> Result<bool, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_pull_request_info(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<Option<PullRequestInfo>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request_failed_action(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+    }
+
+    #[derive(Default)]
+    struct ReconcileRecordingServices {
+        appended_entries: Mutex<Vec<ConversationEntry>>,
+        saved_queue_state: Mutex<Vec<SavedQueueState>>,
+    }
+
+    impl ProjectWorkspaceService for ReconcileRecordingServices {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+            _branch_name_hint: Option<String>,
+        ) -> Result<luban_domain::CreatedWorkspace, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+            _branch_name: String,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn rename_workspace_branch(
+            &self,
+            _worktree_path: PathBuf,
+            _requested_branch_name: String,
+        ) -> Result<String, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn ensure_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_conversation_threads(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ConversationThreadMeta>, String> {
+            Ok(vec![ConversationThreadMeta {
+                thread_id: WorkspaceThreadId::from_u64(1),
+                remote_thread_id: None,
+                title: "t1".to_owned(),
+                created_at_unix_seconds: 1,
+                updated_at_unix_seconds: 2,
+                task_status: luban_domain::TaskStatus::Todo,
+                last_message_seq: 1,
+                task_status_last_analyzed_message_seq: 0,
+                turn_status: luban_domain::TurnStatus::Running,
+                last_turn_result: None,
+            }])
+        }
+
+        fn load_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Ok(DomainConversationSnapshot {
+                title: Some("t1".to_owned()),
+                thread_id: None,
+                task_status: luban_domain::TaskStatus::Todo,
+                runner: None,
+                agent_model_id: None,
+                thinking_effort: None,
+                amp_mode: None,
+                entries: vec![ConversationEntry::UserEvent {
+                    entry_id: "e_1".to_owned(),
+                    created_at_unix_ms: 1,
+                    event: luban_domain::UserEvent::Message {
+                        text: "hi".to_owned(),
+                        attachments: Vec::new(),
+                    },
+                }],
+                entries_total: 1,
+                entries_start: 0,
+                pending_prompts: vec![luban_domain::QueuedPrompt {
+                    id: 1,
+                    text: "queued".to_owned(),
+                    attachments: Vec::new(),
+                    run_config: luban_domain::AgentRunConfig {
+                        runner: luban_domain::AgentRunnerKind::Codex,
+                        model_id: "gpt-5".to_owned(),
+                        thinking_effort: ThinkingEffort::Medium,
+                        amp_mode: None,
+                    },
+                }],
+                queue_paused: false,
+                run_started_at_unix_ms: Some(10),
+                run_finished_at_unix_ms: None,
+            })
+        }
+
+        fn load_conversation_page(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            _before: Option<u64>,
+            _limit: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn append_conversation_entries(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            entries: Vec<ConversationEntry>,
+        ) -> Result<(), String> {
+            self.appended_entries
+                .lock()
+                .map_err(|_| "poisoned mutex".to_owned())?
+                .extend(entries);
+            Ok(())
+        }
+
+        fn save_conversation_queue_state(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            queue_paused: bool,
+            run_started_at_unix_ms: Option<u64>,
+            run_finished_at_unix_ms: Option<u64>,
+            pending_prompts: Vec<luban_domain::QueuedPrompt>,
+        ) -> Result<(), String> {
+            self.saved_queue_state
+                .lock()
+                .map_err(|_| "poisoned mutex".to_owned())?
+                .push((
+                    queue_paused,
+                    run_started_at_unix_ms,
+                    run_finished_at_unix_ms,
+                    pending_prompts,
+                ));
+            Ok(())
         }
 
         fn store_context_image(
@@ -5915,6 +6431,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -6089,8 +6606,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6153,8 +6670,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6277,6 +6794,7 @@ mod tests {
         for i in 0..7000u32 {
             convo.entries.push(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
+                created_at_unix_ms: i as u64,
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(CodexThreadItem::CommandExecution {
                         id: format!("cmd_{i}"),
@@ -6304,8 +6822,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6507,8 +7025,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6605,8 +7123,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6721,8 +7239,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
@@ -6811,8 +7329,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
         engine.workspace_threads_cache.insert(workspace_id, metas);
@@ -6888,8 +7406,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -6945,7 +7463,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_status_auto_update_suggested_emits_conversation_changed() {
+    async fn task_status_suggestion_created_emits_conversation_changed() {
         let mut state = AppState::new();
         let _ = state.apply(Action::AddProject {
             path: PathBuf::from("/tmp/luban-server-test"),
@@ -6981,17 +7499,19 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
         engine
-            .process_action_queue(Action::TaskStatusAutoUpdateSuggested {
+            .process_action_queue(Action::TaskStatusSuggestionCreated {
                 workspace_id,
                 thread_id,
                 expected_current_task_status: luban_domain::TaskStatus::Backlog,
                 suggested_task_status: luban_domain::TaskStatus::Done,
+                title: "Suggest moving to done".to_owned(),
+                explanation_markdown: "- Work appears complete.".to_owned(),
             })
             .await;
 
@@ -7012,21 +7532,21 @@ mod tests {
             {
                 continue;
             }
-            if snapshot.task_status != luban_api::TaskStatus::Done {
+            if snapshot.task_status != luban_api::TaskStatus::Backlog {
                 continue;
             }
-            let has_status_event = snapshot.entries.iter().any(|e| {
+            let has_suggestion_event = snapshot.entries.iter().any(|e| {
                 matches!(
                     e,
                     luban_api::ConversationEntry::SystemEvent(
                         luban_api::ConversationSystemEventEntry {
-                            event: luban_api::ConversationSystemEvent::TaskStatusChanged { .. },
+                            event: luban_api::ConversationSystemEvent::TaskStatusSuggestion { .. },
                             ..
                         }
                     )
                 )
             });
-            if has_status_event {
+            if has_suggestion_event {
                 saw = true;
                 break;
             }
@@ -7034,7 +7554,7 @@ mod tests {
 
         assert!(
             saw,
-            "expected a conversation_changed event reflecting the auto-updated status"
+            "expected a conversation_changed event reflecting the suggestion"
         );
     }
 
@@ -7131,6 +7651,7 @@ mod tests {
             &self,
             project_path: PathBuf,
             worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             if let Some(cancel_flag) = &self.cancel_flag
                 && !cancel_flag.load(Ordering::SeqCst)
@@ -7316,7 +7837,7 @@ mod tests {
             .id;
 
         let (events, _) = broadcast::channel::<WsServerMessage>(16);
-        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let (tx, mut rx) = mpsc::channel::<EngineCommand>(16);
         let mut engine = Engine {
             state,
             rev: 1,
@@ -7327,14 +7848,19 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
         engine
             .process_action_queue(Action::ArchiveWorkspace { workspace_id })
             .await;
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .expect("timed out waiting for archive completion")
+            .expect("engine command channel closed");
+        engine.handle(cmd).await;
 
         let workspace = engine
             .state
@@ -7399,7 +7925,7 @@ mod tests {
         }
 
         let (events, _) = broadcast::channel::<WsServerMessage>(16);
-        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let (tx, mut rx) = mpsc::channel::<EngineCommand>(16);
         let mut engine = Engine {
             state,
             rev: 1,
@@ -7416,14 +7942,19 @@ mod tests {
             )]),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
         engine
             .process_action_queue(Action::ArchiveWorkspace { workspace_id })
             .await;
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .expect("timed out waiting for archive completion")
+            .expect("engine command channel closed");
+        engine.handle(cmd).await;
 
         assert!(cancel_flag.load(Ordering::SeqCst));
 
@@ -7515,6 +8046,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -7694,8 +8226,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7743,8 +8275,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -7827,6 +8359,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -8036,6 +8569,7 @@ mod tests {
             &self,
             _project_path: PathBuf,
             _worktree_path: PathBuf,
+            _branch_name: String,
         ) -> Result<(), String> {
             Err("unimplemented".to_owned())
         }
@@ -8212,8 +8746,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8279,8 +8813,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8338,8 +8872,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8412,8 +8946,8 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
             telegram_pairing: None,
         };
 
@@ -8450,5 +8984,346 @@ mod tests {
 
         assert_eq!(request.runner, luban_domain::AgentRunnerKind::Amp);
         assert_eq!(request.amp_mode.as_deref(), Some("rush"));
+    }
+
+    #[tokio::test]
+    async fn reconcile_stale_running_turns_appends_error_and_sets_finished_at() {
+        let services: Arc<ReconcileRecordingServices> =
+            Arc::new(ReconcileRecordingServices::default());
+        let services_dyn: Arc<dyn ProjectWorkspaceService> = services.clone();
+
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-reconcile-test"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-reconcile-test"),
+        });
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: services_dyn,
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
+            telegram_pairing: None,
+        };
+
+        engine.reconcile_stale_running_turns().await;
+
+        let appended = services.appended_entries.lock().expect("mutex ok").clone();
+        assert!(
+            appended.iter().any(|e| matches!(
+                e,
+                ConversationEntry::AgentEvent {
+                    event: luban_domain::AgentEvent::TurnError { message },
+                    ..
+                } if message == "Agent run interrupted by server restart."
+            )),
+            "expected reconcile to append a turn_error entry"
+        );
+
+        let saved = services.saved_queue_state.lock().expect("mutex ok").clone();
+        assert_eq!(saved.len(), 1);
+        let (queue_paused, run_started, run_finished, pending) = &saved[0];
+        assert!(*queue_paused);
+        assert_eq!(*run_started, Some(10));
+        assert!(run_finished.is_some());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].text, "queued");
+    }
+
+    fn persisted_with_single_git_workspace(workspace_id: u64) -> PersistedAppState {
+        PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                name: "Repo".to_owned(),
+                path: PathBuf::from("/tmp/luban-engine-bootstrap"),
+                slug: "repo".to_owned(),
+                is_git: true,
+                expanded: true,
+                workspaces: vec![PersistedWorkspace {
+                    id: workspace_id,
+                    workspace_name: "dev".to_owned(),
+                    branch_name: "dev".to_owned(),
+                    worktree_path: PathBuf::from("/tmp/luban-engine-bootstrap/dev"),
+                    status: WorkspaceStatus::Active,
+                    last_activity_at_unix_seconds: None,
+                }],
+            }],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            global_zoom_percent: None,
+            appearance_theme: None,
+            appearance_ui_font: None,
+            appearance_chat_font: None,
+            appearance_code_font: None,
+            appearance_terminal_font: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            agent_default_runner: None,
+            agent_amp_mode: None,
+            agent_codex_enabled: Some(true),
+            agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
+            last_open_workspace_id: None,
+            open_button_selection: None,
+            sidebar_project_order: Vec::new(),
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_chat_scroll_anchor: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
+            starred_tasks: HashMap::new(),
+            task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
+        }
+    }
+
+    #[derive(Clone)]
+    struct BootstrapHangServices {
+        persisted: PersistedAppState,
+        list_threads_delay: Duration,
+        archive_delay: Duration,
+    }
+
+    impl ProjectWorkspaceService for BootstrapHangServices {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Ok(self.persisted.clone())
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+            _branch_name_hint: Option<String>,
+        ) -> Result<luban_domain::CreatedWorkspace, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+            _branch_name: String,
+        ) -> Result<(), String> {
+            std::thread::sleep(self.archive_delay);
+            Ok(())
+        }
+
+        fn rename_workspace_branch(
+            &self,
+            _worktree_path: PathBuf,
+            _requested_branch_name: String,
+        ) -> Result<String, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn ensure_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_conversation_threads(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ConversationThreadMeta>, String> {
+            std::thread::sleep(self.list_threads_delay);
+            Ok(vec![ConversationThreadMeta {
+                thread_id: luban_domain::WorkspaceThreadId::from_u64(1),
+                remote_thread_id: None,
+                title: "Done: completed successfully".to_owned(),
+                created_at_unix_seconds: 1,
+                updated_at_unix_seconds: 1,
+                task_status: luban_domain::TaskStatus::Done,
+                last_message_seq: 0,
+                task_status_last_analyzed_message_seq: 0,
+                turn_status: luban_domain::TurnStatus::Idle,
+                last_turn_result: Some(luban_domain::TurnResult::Completed),
+            }])
+        }
+
+        fn load_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn load_conversation_page(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            _before: Option<u64>,
+            _limit: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_image(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _image: ContextImage,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_text(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _text: String,
+            _extension: String,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_file(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _source_path: PathBuf,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn record_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _attachment: AttachmentRef,
+            _created_at_unix_ms: u64,
+        ) -> Result<u64, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_context_items(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ContextItem>, String> {
+            Ok(Vec::new())
+        }
+
+        fn delete_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _context_id: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn run_agent_turn_streamed(
+            &self,
+            _request: luban_domain::RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
+            _on_event: Arc<dyn Fn(luban_domain::AgentThreadEvent) + Send + Sync>,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_is_authorized(&self) -> Result<bool, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_pull_request_info(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<Option<PullRequestInfo>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request_failed_action(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_does_not_block_on_auto_archive_scan() {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(BootstrapHangServices {
+            persisted: persisted_with_single_git_workspace(10),
+            list_threads_delay: Duration::from_secs(2),
+            archive_delay: Duration::from_millis(0),
+        });
+        let (engine, _events) = Engine::start(services);
+
+        let snap = tokio::time::timeout(Duration::from_millis(300), engine.app_snapshot())
+            .await
+            .expect("app snapshot should not be blocked by bootstrap maintenance")
+            .expect("snapshot should succeed");
+        assert_eq!(snap.projects.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn engine_remains_responsive_while_archive_workspace_runs() {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(BootstrapHangServices {
+            persisted: persisted_with_single_git_workspace(10),
+            list_threads_delay: Duration::from_millis(0),
+            archive_delay: Duration::from_secs(2),
+        });
+        let (engine, _events) = Engine::start(services);
+
+        let _ = tokio::time::timeout(Duration::from_secs(1), engine.app_snapshot())
+            .await
+            .expect("bootstrap should complete")
+            .expect("snapshot should succeed");
+
+        engine
+            .dispatch_domain_action(Action::ArchiveWorkspace {
+                workspace_id: WorkspaceId::from_u64(10),
+            })
+            .await
+            .expect("dispatch archive action");
+
+        let snap = tokio::time::timeout(Duration::from_millis(300), engine.app_snapshot())
+            .await
+            .expect("app snapshot should remain responsive during archive")
+            .expect("snapshot should succeed");
+        assert_eq!(snap.projects.len(), 1);
     }
 }
