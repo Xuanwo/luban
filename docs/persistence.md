@@ -59,10 +59,8 @@ browser `localStorage` and is not required to be durable across machines.
 Current keys:
 
 - `luban:active_workspace_id`
-- `luban:ui:right_sidebar_open`
 - `luban:ui:view_mode`
 - `luban:ui:sidebar_width_px`
-- `luban:ui:right_sidebar_width_px`
 - `luban:ui:global_zoom` (Tauri only)
 - `luban:active_thread_id:<workspace_id>`
 - `luban:draft:<workspace_id>:<thread_id>`

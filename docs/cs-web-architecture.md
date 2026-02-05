@@ -147,7 +147,7 @@ The following state is considered UI-only (device-specific) and lives in browser
 
 - draft text and draft attachments (by `attachment_id`)
 - scroll position / follow-tail preference
-- layout widths (sidebar, right sidebar)
+- layout widths (sidebar)
 - active workspace/thread selection
 - other purely presentational toggles
 

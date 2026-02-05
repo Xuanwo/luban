@@ -37,7 +37,7 @@ Legend:
 | C-HTTP-NEW-TASK-DRAFT | `DELETE /api/new_task/drafts/{draft_id}` | `crates/luban_server/src/server.rs:delete_new_task_draft` | `web/lib/luban-http.ts:deleteNewTaskDraft` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-NEW-TASK-STASH | `GET /api/new_task/stash` | `crates/luban_server/src/server.rs:get_new_task_stash` | `web/lib/luban-http.ts:fetchNewTaskStash` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONVERSATION | `GET /api/workdirs/{workdir_id}/conversations/{task_id}` | `crates/luban_server/src/server.rs:get_conversation` | `web/lib/luban-http.ts:fetchConversation` | Draft | ✅ | ✅ | ✅ |
-| C-HTTP-CHANGES | `GET /api/workdirs/{workdir_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | `web/lib/luban-http.ts:fetchWorkspaceChanges` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-CHANGES | `GET /api/workdirs/{workdir_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | n/a (right sidebar removed) | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-DIFF | `GET /api/workdirs/{workdir_id}/diff` | `crates/luban_server/src/server.rs:get_diff` | `web/lib/luban-http.ts:fetchWorkspaceDiff` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONTEXT | `GET /api/workdirs/{workdir_id}/context` | `crates/luban_server/src/server.rs:get_context` | n/a (web context UI removed) | Draft | n/a | ✅ | ✅ |
 | C-HTTP-CONTEXT-DELETE | `DELETE /api/workdirs/{workdir_id}/context/{context_id}` | `crates/luban_server/src/server.rs:delete_context_item` | n/a (web context UI removed) | Draft | n/a | ✅ | ✅ |

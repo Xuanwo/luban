@@ -192,22 +192,22 @@ The activity-based task view follows Linear's issue detail page pattern. Styles 
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│  ← 60px margin →│← max 686px content →│← 60px margin →│ Right Sidebar │
-├─────────────────┼─────────────────────┼───────────────┼────────────────┤
-│                 │ Task Title          │               │                │
-│                 │ Task Description    │               │                │
-│                 ├─────────────────────┤               │                │
-│                 │ Activity            │               │                │
-│                 ├─────────────────────┤               │                │
-│                 │ [18px Avatar] user · 2mo ago        │                │
-│                 │ User message content...             │                │
-│                 ├─────────────────────┤               │                │
-│                 │ [18px Avatar] Agent · 1h ago · 5s   │                │
-│                 │ ▶ Completed 5 steps                 │                │
-│                 │ Agent response content...           │                │
-│                 ├─────────────────────┤               │                │
-│                 │ [Input Composer]    │               │                │
-└─────────────────┴─────────────────────┴───────────────┴────────────────┘
+│  ← 60px margin →│← max 686px content →│← 60px margin →                 │
+├─────────────────┼─────────────────────┼───────────────                 │
+│                 │ Task Title          │                                 │
+│                 │ Task Description    │                                 │
+│                 ├─────────────────────┤                                 │
+│                 │ Activity            │                                 │
+│                 ├─────────────────────┤                                 │
+│                 │ [18px Avatar] user · 2mo ago                          │
+│                 │ User message content...                               │
+│                 ├─────────────────────┤                                 │
+│                 │ [18px Avatar] Agent · 1h ago · 5s                     │
+│                 │ ▶ Completed 5 steps                                   │
+│                 │ Agent response content...                             │
+│                 ├─────────────────────┤                                 │
+│                 │ [Input Composer]                                      │
+└─────────────────┴─────────────────────┴───────────────                 ┘
 ```
 
 ### Layout Dimensions (from Linear)

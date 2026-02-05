@@ -10,7 +10,6 @@ import type {
   NewTaskStashResponse,
   TasksSnapshot,
   ThreadsSnapshot,
-  WorkspaceChangesSnapshot,
   WorkspaceDiffSnapshot,
 } from "./luban-api"
 import { isMockMode } from "./luban-mode"
@@ -21,7 +20,6 @@ import {
   mockFetchMentionItems,
   mockFetchTasks,
   mockFetchThreads,
-  mockFetchWorkspaceChanges,
   mockFetchWorkspaceDiff,
   mockCreateNewTaskDraft,
   mockDeleteNewTaskDraft,
@@ -104,13 +102,6 @@ export async function uploadAttachment(args: {
   }
 
   return (await res.json()) as AttachmentRef
-}
-
-export async function fetchWorkspaceChanges(workspaceId: number): Promise<WorkspaceChangesSnapshot> {
-  if (isMockMode()) return await mockFetchWorkspaceChanges(workspaceId)
-  const res = await fetch(`/api/workdirs/${workspaceId}/changes`)
-  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/changes failed: ${res.status}`)
-  return (await res.json()) as WorkspaceChangesSnapshot
 }
 
 export async function fetchWorkspaceDiff(workspaceId: number): Promise<WorkspaceDiffSnapshot> {

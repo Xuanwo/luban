@@ -3,12 +3,12 @@
 import type React from "react"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Clock, MessageSquare, Terminal, X } from "lucide-react"
+import { Clock, MessageSquare, Terminal, X } from "lucide-react"
 import { useLuban } from "@/lib/luban-context"
 import { cn } from "@/lib/utils"
 import { buildMessages, type Message } from "@/lib/conversation-ui"
 import { TaskActivityView } from "@/components/task-activity-view"
-import { fetchCodexCustomPrompts, fetchWorkspaceDiff, uploadAttachment } from "@/lib/luban-http"
+import { fetchCodexCustomPrompts, uploadAttachment } from "@/lib/luban-http"
 import type {
   AttachmentRef,
   CodexCustomPromptSnapshot,
@@ -20,14 +20,12 @@ import {
   loadJson,
   saveJson,
 } from "@/lib/ui-prefs"
-import type { ChangedFile } from "./right-sidebar"
 import { type ComposerAttachment as EditorComposerAttachment } from "@/components/shared/message-editor"
 import { openSettingsPanel } from "@/lib/open-settings"
 import { focusChatInput } from "@/lib/focus-chat-input"
 import { useAgentCancelHotkey } from "@/lib/use-agent-cancel-hotkey"
 import { EscCancelHint } from "@/components/esc-cancel-hint"
 import { ChatComposer } from "@/components/chat-composer"
-import { DiffTabPanel, type DiffFileData, type DiffStyle } from "@/components/diff-tab-panel"
 
 type ComposerAttachment = EditorComposerAttachment
 
@@ -36,13 +34,7 @@ type PersistedChatDraft = {
   attachments?: AttachmentRef[]
 }
 
-export function TaskActivityPanel({
-  pendingDiffFile,
-  onDiffFileOpened,
-}: {
-  pendingDiffFile?: ChangedFile | null
-  onDiffFileOpened?: () => void
-}) {
+export function TaskActivityPanel() {
   const [codexCustomPrompts, setCodexCustomPrompts] = useState<CodexCustomPromptSnapshot[]>([])
 
   const {
@@ -97,13 +89,6 @@ export function TaskActivityPanel({
   }, [messages])
 
   const isAgentRunning = conversation?.run_status === "running"
-
-  const [activePanel, setActivePanel] = useState<"activity" | "diff">("activity")
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("split")
-  const [diffFiles, setDiffFiles] = useState<DiffFileData[]>([])
-  const [diffActiveFileId, setDiffActiveFileId] = useState<string | undefined>(undefined)
-  const [isDiffLoading, setIsDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
 
   const ESC_TIMEOUT_MS = 3000
   const { escHintVisible } = useAgentCancelHotkey({
@@ -248,40 +233,6 @@ export function TaskActivityPanel({
     setDraftText("")
     setAttachments([])
   }
-
-  const openDiffTab = useCallback(
-    async (targetFile: ChangedFile) => {
-      if (activeWorkspaceId == null) return
-      setActivePanel("diff")
-      setDiffActiveFileId(targetFile.id)
-      setIsDiffLoading(true)
-      setDiffError(null)
-
-      try {
-        const snap = await fetchWorkspaceDiff(activeWorkspaceId)
-        const files: DiffFileData[] = (snap.files ?? []).map((file) => ({
-          file: file.file,
-          oldFile: { name: file.old_file.name, contents: file.old_file.contents },
-          newFile: { name: file.new_file.name, contents: file.new_file.contents },
-        }))
-        setDiffFiles(files)
-      } catch (err) {
-        setDiffError(err instanceof Error ? err.message : String(err))
-        setDiffFiles([])
-      } finally {
-        setIsDiffLoading(false)
-      }
-    },
-    [activeWorkspaceId],
-  )
-
-  useEffect(() => {
-    if (!pendingDiffFile) return
-    void (async () => {
-      await openDiffTab(pendingDiffFile)
-      onDiffFileOpened?.()
-    })()
-  }, [onDiffFileOpened, openDiffTab, pendingDiffFile])
 
   const taskTitle = useMemo(() => {
     if (activeThreadId == null) return "Untitled Task"
@@ -471,49 +422,18 @@ export function TaskActivityPanel({
 
   return (
     <div className="flex-1 min-w-0 flex flex-col">
-      {activePanel === "diff" ? (
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          <div
-            className="flex items-center gap-2 h-[39px] flex-shrink-0"
-            style={{ padding: "0 20px", borderBottom: "1px solid #ebebeb" }}
-          >
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 text-[13px] rounded px-2 py-1 hover:bg-black/[0.03]"
-              style={{ color: "#1b1b1b" }}
-              onClick={() => setActivePanel("activity")}
-            >
-              <ArrowLeft className="w-3.5 h-3.5" style={{ color: "#6b6b6b" }} />
-              Back
-            </button>
-            <span className="text-[13px]" style={{ color: "#1b1b1b", fontWeight: 500 }}>
-              Diff
-            </span>
-          </div>
-
-          <DiffTabPanel
-            isLoading={isDiffLoading}
-            error={diffError}
-            files={diffFiles}
-            activeFileId={diffActiveFileId}
-            diffStyle={diffStyle}
-            onStyleChange={setDiffStyle}
-          />
-        </div>
-      ) : (
-		        <TaskActivityView
-		          listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
-		          title={taskTitle}
-		          description={taskDescription}
-		          workspaceId={activeWorkspaceId ?? undefined}
-              taskId={activeThreadId ?? undefined}
-		          messages={messages}
-	          isLoading={isAgentRunning}
-	          onCancelAgentTurn={isAgentRunning ? () => cancelAgentTurn() : undefined}
-	          inputComponent={inputComponent}
-	          className="flex-1 min-w-0"
-	        />
-      )}
+      <TaskActivityView
+        listKey={`${activeWorkspaceId ?? "none"}:${activeThreadId ?? "none"}`}
+        title={taskTitle}
+        description={taskDescription}
+        workspaceId={activeWorkspaceId ?? undefined}
+        taskId={activeThreadId ?? undefined}
+        messages={messages}
+        isLoading={isAgentRunning}
+        onCancelAgentTurn={isAgentRunning ? () => cancelAgentTurn() : undefined}
+        inputComponent={inputComponent}
+        className="flex-1 min-w-0"
+      />
     </div>
   )
 }

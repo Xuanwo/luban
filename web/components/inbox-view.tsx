@@ -17,7 +17,6 @@ import { cn } from "@/lib/utils"
 import { TaskActivityPanel } from "./task-activity-panel"
 import { TaskHeader } from "./shared/task-header"
 import { TaskStatusSelector } from "./shared/task-status-selector"
-import type { ChangedFile } from "./right-sidebar"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
@@ -232,7 +231,6 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
   const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
-  const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
   const [nowMs, setNowMs] = useState<number | null>(null)
   const [previewByNotificationId, setPreviewByNotificationId] = useState<
     Record<string, { userLine: string | null; agentLine: string | null; runStartedAtUnixMs: number | null } | null>
@@ -686,10 +684,7 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
 
             {/* Chat Preview */}
             <div className="flex-1 min-h-0 flex">
-              <TaskActivityPanel
-                pendingDiffFile={pendingDiffFile}
-                onDiffFileOpened={() => setPendingDiffFile(null)}
-              />
+              <TaskActivityPanel />
             </div>
           </>
         ) : (

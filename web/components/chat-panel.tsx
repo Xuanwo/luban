@@ -19,6 +19,7 @@ import type {
   CodexCustomPromptSnapshot,
   QueuedPromptSnapshot,
   ThinkingEffort,
+  ChangedFileSnapshot,
 } from "@/lib/luban-api"
 import { attachmentHref } from "@/lib/attachment-href"
 import {
@@ -27,7 +28,6 @@ import {
   loadJson,
   saveJson,
 } from "@/lib/ui-prefs"
-import type { ChangedFile } from "./right-sidebar"
 import { type ComposerAttachment as EditorComposerAttachment } from "@/components/shared/message-editor"
 import { AgentRunningCard, type AgentRunningStatus } from "@/components/shared/agent-running-card"
 import { openSettingsPanel } from "@/lib/open-settings"
@@ -41,6 +41,7 @@ import { ChatComposer } from "@/components/chat-composer"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
 
 type ComposerAttachment = EditorComposerAttachment
+type ChangedFile = ChangedFileSnapshot
 
 type PersistedChatDraft = {
   text: string

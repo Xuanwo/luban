@@ -25,6 +25,7 @@ import { runNewTaskDefaultProjectFollowsContext } from './scenarios/new-task-def
 import { runNewTaskGitProjectWithoutWorkdirs } from './scenarios/new-task-git-project-without-workdirs.mjs';
 import { runNewTaskProjectAvatars } from './scenarios/new-task-project-avatars.mjs';
 import { runNewTaskDrafts } from './scenarios/new-task-drafts.mjs';
+import { runNoRightSidebar } from './scenarios/no-right-sidebar.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runSidebarProjectAvatars } from './scenarios/sidebar-project-avatars.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
@@ -32,7 +33,6 @@ import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
-import { runRightSidebarNoContextTab } from './scenarios/right-sidebar-no-context-tab.mjs';
 import { runProjectArchiveMenu } from './scenarios/project-archive-menu.mjs';
 
 async function canRun(command, args) {
@@ -185,7 +185,7 @@ async function main() {
     await runAgentRunningEventNoChevron({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
     await runTaskSummariesEventsRefresh({ page, baseUrl });
-    await runRightSidebarNoContextTab({ page, baseUrl });
+    await runNoRightSidebar({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);

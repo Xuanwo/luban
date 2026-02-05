@@ -11,12 +11,12 @@ import {
   type WorkerInitializationRenderOptions,
   type WorkerPoolOptions,
 } from "@pierre/diffs/react"
-import type { ChangedFile } from "./right-sidebar"
+import type { ChangedFileSnapshot } from "@/lib/luban-api"
 
 export type DiffStyle = "split" | "unified"
 
 export interface DiffFileData {
-  file: ChangedFile
+  file: ChangedFileSnapshot
   oldFile: FileContents
   newFile: FileContents
 }
