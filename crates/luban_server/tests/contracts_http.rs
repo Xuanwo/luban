@@ -499,6 +499,148 @@ async fn set_task_status_via_ws(
     assert!(saw_ack, "expected ack for task_status_set");
 }
 
+async fn archive_workdir_via_ws(server_addr: SocketAddr, workdir_id: u64) {
+    let url = format!("ws://{}/api/events", server_addr);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("connect websocket");
+
+    let first = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+    assert!(matches!(first, luban_api::WsServerMessage::Hello { .. }));
+
+    let hello = luban_api::WsClientMessage::Hello {
+        protocol_version: luban_api::PROTOCOL_VERSION,
+        last_seen_rev: None,
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&hello)
+                .expect("serialize hello")
+                .into(),
+        ))
+        .await
+        .expect("send hello");
+
+    let mut saw_resync = false;
+    for _ in 0..20 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        if let luban_api::WsServerMessage::Event { event, .. } = msg
+            && matches!(*event, luban_api::ServerEvent::AppChanged { .. })
+        {
+            saw_resync = true;
+            break;
+        }
+    }
+    assert!(
+        saw_resync,
+        "expected an AppChanged resync event after hello"
+    );
+
+    let action = luban_api::WsClientMessage::Action {
+        request_id: "req-archive-workdir".to_owned(),
+        action: Box::new(luban_api::ClientAction::ArchiveWorkspace {
+            workspace_id: luban_api::WorkspaceId(workdir_id),
+        }),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&action)
+                .expect("serialize archive_workdir action")
+                .into(),
+        ))
+        .await
+        .expect("send archive_workdir action");
+
+    let mut saw_ack = false;
+    for _ in 0..120 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        match msg {
+            luban_api::WsServerMessage::Ack { request_id, .. } => {
+                if request_id == "req-archive-workdir" {
+                    saw_ack = true;
+                    break;
+                }
+            }
+            luban_api::WsServerMessage::Error { message, .. } => {
+                panic!("archive_workdir error: {message}");
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_ack, "expected ack for archive_workdir");
+}
+
+async fn create_workdir_for_project_via_ws(server_addr: SocketAddr, project_id: &str) {
+    let url = format!("ws://{}/api/events", server_addr);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("connect websocket");
+
+    let first = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+    assert!(matches!(first, luban_api::WsServerMessage::Hello { .. }));
+
+    let hello = luban_api::WsClientMessage::Hello {
+        protocol_version: luban_api::PROTOCOL_VERSION,
+        last_seen_rev: None,
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&hello)
+                .expect("serialize hello")
+                .into(),
+        ))
+        .await
+        .expect("send hello");
+
+    let mut saw_resync = false;
+    for _ in 0..20 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        if let luban_api::WsServerMessage::Event { event, .. } = msg
+            && matches!(*event, luban_api::ServerEvent::AppChanged { .. })
+        {
+            saw_resync = true;
+            break;
+        }
+    }
+    assert!(
+        saw_resync,
+        "expected an AppChanged resync event after hello"
+    );
+
+    let action = luban_api::WsClientMessage::Action {
+        request_id: "req-create-workdir".to_owned(),
+        action: Box::new(luban_api::ClientAction::CreateWorkspace {
+            project_id: luban_api::ProjectId(project_id.to_owned()),
+        }),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&action)
+                .expect("serialize create_workdir action")
+                .into(),
+        ))
+        .await
+        .expect("send create_workdir action");
+
+    let mut saw_ack = false;
+    for _ in 0..120 {
+        let msg = recv_ws_msg(&mut socket, Duration::from_secs(2)).await;
+        match msg {
+            luban_api::WsServerMessage::Ack { request_id, .. } => {
+                if request_id == "req-create-workdir" {
+                    saw_ack = true;
+                    break;
+                }
+            }
+            luban_api::WsServerMessage::Error { message, .. } => {
+                panic!("create_workdir error: {message}");
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_ack, "expected ack for create_workdir");
+}
+
 async fn upload_text_attachment(
     client: &reqwest::Client,
     base: &str,
@@ -960,6 +1102,111 @@ async fn http_contracts_smoke() {
         assert!(saw_updated, "expected task_status to be updated");
     }
 
+    // C-HTTP-TASKS (task_status query)
+    {
+        ensure_task_via_ws(server.addr, workdir_id).await;
+
+        let mut backlog_task_id: Option<u64> = None;
+        for _ in 0..60 {
+            let threads: luban_api::ThreadsSnapshot = client
+                .get(format!("{base}/api/workdirs/{workdir_id}/tasks"))
+                .send()
+                .await
+                .expect("GET /threads (backlog task poll)")
+                .error_for_status()
+                .expect("threads status (backlog poll)")
+                .json()
+                .await
+                .expect("threads json (backlog poll)");
+
+            if let Some(other) = threads
+                .threads
+                .iter()
+                .find(|t| t.thread_id.0 != task_id)
+                .map(|t| t.thread_id.0)
+            {
+                backlog_task_id = Some(other);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let backlog_task_id = backlog_task_id.expect("expected a second task to exist");
+
+        set_task_status_via_ws(
+            server.addr,
+            workdir_id,
+            backlog_task_id,
+            luban_api::TaskStatus::Backlog,
+        )
+        .await;
+
+        let url_backlog = reqwest::Url::parse_with_params(
+            &format!("{base}/api/tasks"),
+            [
+                ("project_id", project_id.clone()),
+                ("task_status", "backlog".to_owned()),
+            ],
+        )
+        .expect("tasks url (task_status=backlog)");
+        let snap_backlog: luban_api::TasksSnapshot = client
+            .get(url_backlog)
+            .send()
+            .await
+            .expect("GET /api/tasks (task_status=backlog)")
+            .error_for_status()
+            .expect("tasks status (task_status=backlog)")
+            .json()
+            .await
+            .expect("tasks json (task_status=backlog)");
+        assert!(
+            snap_backlog
+                .tasks
+                .iter()
+                .all(|t| t.task_status == luban_api::TaskStatus::Backlog),
+            "expected task_status=backlog to filter results"
+        );
+        assert!(
+            snap_backlog
+                .tasks
+                .iter()
+                .any(|t| t.workspace_id.0 == workdir_id && t.thread_id.0 == backlog_task_id),
+            "expected backlog task to be present in filtered results"
+        );
+
+        let url_iterating = reqwest::Url::parse_with_params(
+            &format!("{base}/api/tasks"),
+            [
+                ("project_id", project_id.clone()),
+                ("task_status", "iterating".to_owned()),
+            ],
+        )
+        .expect("tasks url (task_status=iterating)");
+        let snap_iterating: luban_api::TasksSnapshot = client
+            .get(url_iterating)
+            .send()
+            .await
+            .expect("GET /api/tasks (task_status=iterating)")
+            .error_for_status()
+            .expect("tasks status (task_status=iterating)")
+            .json()
+            .await
+            .expect("tasks json (task_status=iterating)");
+        assert!(
+            snap_iterating
+                .tasks
+                .iter()
+                .all(|t| t.task_status == luban_api::TaskStatus::Iterating),
+            "expected task_status=iterating to filter results"
+        );
+        assert!(
+            snap_iterating
+                .tasks
+                .iter()
+                .any(|t| t.workspace_id.0 == workdir_id && t.thread_id.0 == task_id),
+            "expected iterating task to be present in filtered results"
+        );
+    }
+
     // C-HTTP-CONVERSATION (pagination)
     {
         let convo: luban_api::ConversationSnapshot = client
@@ -1120,6 +1367,154 @@ async fn http_contracts_smoke() {
             ctx2.items.iter().all(|i| i.context_id != item.context_id),
             "expected deleted context item to be removed"
         );
+    }
+
+    // C-HTTP-TASKS (workdir_status query)
+    {
+        // The project used earlier in this test has a GitHub `origin`, and workspace creation
+        // (`create_workdir`) fetches `origin/main`. To keep this contract test independent from
+        // network access, create a second git project whose `origin` points at a local upstream.
+        let upstream_dir = create_git_project();
+        let archive_project_dir = create_git_project();
+        let origin = upstream_dir.to_string_lossy().to_string();
+        run_git(&archive_project_dir, &["remote", "add", "origin", &origin]);
+
+        let archive_project_path = archive_project_dir.to_string_lossy().to_string();
+        let (_main_workdir_id, archive_project_id) =
+            create_workdir_via_ws(server.addr, &archive_project_path).await;
+
+        create_workdir_for_project_via_ws(server.addr, &archive_project_id).await;
+
+        let mut workdir_to_archive: Option<u64> = None;
+        for _ in 0..600 {
+            let app: luban_api::AppSnapshot = client
+                .get(format!("{base}/api/app"))
+                .send()
+                .await
+                .expect("GET /api/app (create workdir poll)")
+                .error_for_status()
+                .expect("app status")
+                .json()
+                .await
+                .expect("app json");
+
+            let project = app
+                .projects
+                .iter()
+                .find(|p| p.id.0 == archive_project_id)
+                .expect("expected archive project to exist in app snapshot");
+
+            workdir_to_archive = project
+                .workspaces
+                .iter()
+                .find(|w| w.workspace_name != "main")
+                .map(|w| w.id.0);
+            if workdir_to_archive.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        let workdir_to_archive =
+            workdir_to_archive.expect("expected create_workdir to create a non-main workdir");
+
+        let threads: luban_api::ThreadsSnapshot = client
+            .get(format!("{base}/api/workdirs/{workdir_to_archive}/tasks"))
+            .send()
+            .await
+            .expect("GET /threads (archive target)")
+            .error_for_status()
+            .expect("threads status")
+            .json()
+            .await
+            .expect("threads json");
+        if threads.threads.is_empty() {
+            ensure_task_via_ws(server.addr, workdir_to_archive).await;
+        }
+
+        archive_workdir_via_ws(server.addr, workdir_to_archive).await;
+
+        let mut saw_archived = false;
+        for _ in 0..300 {
+            let app: luban_api::AppSnapshot = client
+                .get(format!("{base}/api/app"))
+                .send()
+                .await
+                .expect("GET /api/app (archive poll)")
+                .error_for_status()
+                .expect("app status")
+                .json()
+                .await
+                .expect("app json");
+
+            let status = app.projects.iter().find_map(|p| {
+                p.workspaces
+                    .iter()
+                    .find(|w| w.id.0 == workdir_to_archive)
+                    .map(|w| w.status)
+            });
+            if status == Some(luban_api::WorkspaceStatus::Archived) {
+                saw_archived = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            saw_archived,
+            "expected workdir to transition to archived after archive_workdir"
+        );
+
+        let url_active = reqwest::Url::parse_with_params(
+            &format!("{base}/api/tasks"),
+            [("project_id", archive_project_id.clone())],
+        )
+        .expect("tasks url (active)");
+        let snap_active: luban_api::TasksSnapshot = client
+            .get(url_active)
+            .send()
+            .await
+            .expect("GET /api/tasks (after archive, default active)")
+            .error_for_status()
+            .expect("tasks status (active)")
+            .json()
+            .await
+            .expect("tasks json (active)");
+        assert!(
+            snap_active
+                .tasks
+                .iter()
+                .all(|t| t.workspace_id.0 != workdir_to_archive),
+            "expected default /api/tasks to exclude archived workdirs"
+        );
+
+        let url_all = reqwest::Url::parse_with_params(
+            &format!("{base}/api/tasks"),
+            [
+                ("project_id", archive_project_id.clone()),
+                ("workdir_status", "all".to_owned()),
+            ],
+        )
+        .expect("tasks url (all)");
+        let snap_all: luban_api::TasksSnapshot = client
+            .get(url_all)
+            .send()
+            .await
+            .expect("GET /api/tasks (after archive, workdir_status=all)")
+            .error_for_status()
+            .expect("tasks status (all)")
+            .json()
+            .await
+            .expect("tasks json (all)");
+        assert!(
+            snap_all
+                .tasks
+                .iter()
+                .any(|t| t.workspace_id.0 == workdir_to_archive),
+            "expected workdir_status=all to include archived workdirs"
+        );
+
+        let _ = std::fs::remove_dir_all(&upstream_dir);
+        let _ = std::fs::remove_dir_all(&archive_project_dir);
     }
 
     let _ = std::fs::remove_dir_all(&project_dir);

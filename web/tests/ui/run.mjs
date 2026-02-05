@@ -38,6 +38,7 @@ import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
 import { runProjectAllTasksView } from './scenarios/project-all-tasks-view.mjs';
 import { runKeyboardSequenceShortcuts } from './scenarios/keyboard-sequence-shortcuts.mjs';
 import { runTurnDurationEstimate } from './scenarios/turn-duration-estimate.mjs';
+import { runAllTasksIncludesArchivedWorkdirs } from './scenarios/all-tasks-includes-archived-workdirs.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -191,13 +192,14 @@ async function main() {
     await runAgentRunningEventNoChevron({ page, baseUrl });
     await runTurnDurationEstimate({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
-    await runTaskSummariesEventsRefresh({ page, baseUrl });
-    await runNoRightSidebar({ page, baseUrl });
-    await runCancelTaskClearsRunning({ page, baseUrl });
-  } catch (err) {
-    if (logFile) {
-      process.stderr.write(`ui smoke failed; log: ${logFile}\n`);
-    }
+	    await runTaskSummariesEventsRefresh({ page, baseUrl });
+	    await runNoRightSidebar({ page, baseUrl });
+	    await runCancelTaskClearsRunning({ page, baseUrl });
+	    await runAllTasksIncludesArchivedWorkdirs({ page, baseUrl });
+	  } catch (err) {
+	    if (logFile) {
+	      process.stderr.write(`ui smoke failed; log: ${logFile}\n`);
+	    }
     throw err;
   } finally {
     await browser?.close().catch(() => {});

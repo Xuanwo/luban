@@ -1,7 +1,7 @@
 # C-HTTP-TASKS
 
 Status: Draft
-Verification: Mock=yes, Provider=yes, CI=no
+Verification: Mock=yes, Provider=yes, CI=yes
 
 ## Surface
 
@@ -18,6 +18,8 @@ client to iterate all workdirs and fan out requests.
 ## Query (optional)
 
 - `project_id`: `ProjectId` (string). When provided, only tasks for that project are returned.
+- `workdir_status`: `active` (default) / `archived` / `all`. Controls which workdir statuses are included in the response.
+- `task_status`: Comma-separated `TaskStatus` values. When provided, only tasks whose `task_status` is in the set are returned. Use `all` or omit to disable filtering. Legacy aliases are accepted (`in_progress` -> `iterating`, `in_review` -> `validating`).
 
 ## Response
 
@@ -41,4 +43,4 @@ client to iterate all workdirs and fan out requests.
 
 ## Web usage
 
-- `web/lib/luban-http.ts` `fetchTasks({ projectId? })`
+- `web/lib/luban-http.ts` `fetchTasks({ projectId?, workdirStatus? })`

@@ -8,6 +8,7 @@ import type {
   NewTaskDraftSnapshot,
   NewTaskDraftsSnapshot,
   NewTaskStashResponse,
+  TaskStatus,
   TasksSnapshot,
   ThreadsSnapshot,
   WorkspaceDiffSnapshot,
@@ -137,10 +138,16 @@ export async function fetchMentionItems(args: {
   return (await res.json()) as MentionItemSnapshot[]
 }
 
-export async function fetchTasks(args: { projectId?: string } = {}): Promise<TasksSnapshot> {
+export async function fetchTasks(args: {
+  projectId?: string
+  workdirStatus?: "active" | "archived" | "all"
+  taskStatus?: TaskStatus[]
+} = {}): Promise<TasksSnapshot> {
   if (isMockMode()) return await mockFetchTasks(args)
   const params = new URLSearchParams()
   if (args.projectId) params.set("project_id", args.projectId)
+  if (args.workdirStatus) params.set("workdir_status", args.workdirStatus)
+  if (args.taskStatus && args.taskStatus.length > 0) params.set("task_status", args.taskStatus.join(","))
   const suffix = params.toString() ? `?${params.toString()}` : ""
   const res = await fetch(`/api/tasks${suffix}`)
   if (!res.ok) throw new Error(`GET /api/tasks failed: ${res.status}`)

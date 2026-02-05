@@ -211,7 +211,7 @@ export function LubanSidebar({
     let cancelled = false
     void (async () => {
       try {
-        const snap = await fetchTasks()
+        const snap = await fetchTasks({ workdirStatus: "all" })
         if (cancelled) return
         const starred = snap.tasks
           .filter((t) => t.is_starred)

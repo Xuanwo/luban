@@ -291,6 +291,13 @@ export function TaskListView({
   const refreshInFlightRef = useRef(false)
   const prevWsConnectedRef = useRef(false)
 
+  const tasksWorkdirStatus = mode === "all" ? ("all" as const) : ("active" as const)
+  const tasksTaskStatus: TaskStatus[] | undefined = useMemo(() => {
+    if (mode === "backlog") return ["backlog"]
+    if (mode === "active") return ["todo", "iterating", "validating"]
+    return undefined
+  }, [mode])
+
   const formatCreatedAt = useCallback((createdAtUnixSeconds: number): string => {
     if (!createdAtUnixSeconds) return ""
     const date = new Date(createdAtUnixSeconds * 1000)
@@ -308,14 +315,14 @@ export function TaskListView({
     if (refreshInFlightRef.current) return
     refreshInFlightRef.current = true
     try {
-      const snap = await fetchTasks({ projectId: activeProjectId })
+      const snap = await fetchTasks({ projectId: activeProjectId, workdirStatus: tasksWorkdirStatus, taskStatus: tasksTaskStatus })
       setTasksSnapshot(snap)
     } catch (err) {
       console.warn("fetchTasks failed", err)
     } finally {
       refreshInFlightRef.current = false
     }
-  }, [activeProjectId])
+  }, [activeProjectId, tasksTaskStatus, tasksWorkdirStatus])
 
   useEffect(() => {
     if (!app || !activeProjectId) {
@@ -326,7 +333,7 @@ export function TaskListView({
     let cancelled = false
     void (async () => {
       try {
-        const snap = await fetchTasks({ projectId: activeProjectId })
+        const snap = await fetchTasks({ projectId: activeProjectId, workdirStatus: tasksWorkdirStatus, taskStatus: tasksTaskStatus })
         if (cancelled) return
         setTasksSnapshot(snap)
       } catch (err) {
@@ -337,7 +344,7 @@ export function TaskListView({
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, app])
+  }, [activeProjectId, app, tasksTaskStatus, tasksWorkdirStatus])
 
   useEffect(() => {
     const prev = prevWsConnectedRef.current
@@ -414,7 +421,7 @@ export function TaskListView({
     const filtered = tasksSnapshot.tasks.filter((t) => {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
-      if (workdir.status !== "active") return false
+      if (mode !== "all" && workdir.status !== "active") return false
       if (mode === "all") return true
       if (mode === "backlog") return t.task_status === "backlog"
       return t.task_status === "iterating" || t.task_status === "validating" || t.task_status === "todo"

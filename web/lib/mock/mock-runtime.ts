@@ -19,6 +19,7 @@ import type {
   NewTaskStashSnapshot,
   ProjectId,
   ServerEvent,
+  TaskStatus,
   TaskExecuteMode,
   TaskExecuteResult,
   TasksSnapshot,
@@ -207,15 +208,27 @@ export async function mockFetchApp(): Promise<AppSnapshot> {
   return clone(getRuntime().app)
 }
 
-export async function mockFetchTasks(args: { projectId?: string } = {}): Promise<TasksSnapshot> {
+export async function mockFetchTasks(args: {
+  projectId?: string
+  workdirStatus?: "active" | "archived" | "all"
+  taskStatus?: TaskStatus[]
+} = {}): Promise<TasksSnapshot> {
   const state = getRuntime()
   const tasks: TaskSummarySnapshot[] = []
+  const statusFilter = args.taskStatus && args.taskStatus.length > 0 ? new Set(args.taskStatus) : null
   for (const project of state.app.projects) {
     if (args.projectId && project.id !== args.projectId) continue
     for (const workdir of project.workdirs) {
+      const shouldIncludeWorkdir = (() => {
+        const filter = args.workdirStatus ?? "active"
+        if (filter === "all") return true
+        return workdir.status === filter
+      })()
+      if (!shouldIncludeWorkdir) continue
       const snap = state.threadsByWorkdir.get(workdir.id) ?? null
       if (!snap) continue
       for (const t of snap.tasks) {
+        if (statusFilter && !statusFilter.has(t.task_status)) continue
         tasks.push({
           project_id: project.id,
           workdir_id: workdir.id,

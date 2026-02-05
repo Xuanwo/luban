@@ -76,7 +76,7 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
     let cancelled = false
     void (async () => {
       try {
-        const snap = await fetchTasks(projectPath ? { projectId: projectPath } : {})
+        const snap = await fetchTasks(projectPath ? { projectId: projectPath, workdirStatus: "all" } : { workdirStatus: "all" })
         if (cancelled) return
         const found =
           snap.tasks.find((t) => t.workdir_id === activeWorkspaceId && t.task_id === activeThreadId) ?? null

@@ -364,6 +364,8 @@ async fn get_codex_prompts() -> impl IntoResponse {
 #[derive(serde::Deserialize)]
 struct TasksQuery {
     project_id: Option<String>,
+    workdir_status: Option<String>,
+    task_status: Option<String>,
 }
 
 async fn get_tasks(
@@ -394,6 +396,74 @@ async fn get_tasks(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum WorkdirStatusFilter {
+        Active,
+        Archived,
+        All,
+    }
+
+    let workdir_status_filter = match query
+        .workdir_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => WorkdirStatusFilter::Active,
+        Some("active") => WorkdirStatusFilter::Active,
+        Some("archived") => WorkdirStatusFilter::Archived,
+        Some("all") => WorkdirStatusFilter::All,
+        Some(other) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("invalid workdir_status: {other}"),
+            )
+                .into_response();
+        }
+    };
+
+    fn parse_task_status(value: &str) -> Option<luban_api::TaskStatus> {
+        match value {
+            "backlog" => Some(luban_api::TaskStatus::Backlog),
+            "todo" => Some(luban_api::TaskStatus::Todo),
+            "iterating" | "in_progress" => Some(luban_api::TaskStatus::Iterating),
+            "validating" | "in_review" => Some(luban_api::TaskStatus::Validating),
+            "done" => Some(luban_api::TaskStatus::Done),
+            "canceled" => Some(luban_api::TaskStatus::Canceled),
+            _ => None,
+        }
+    }
+
+    let task_status_filter: Option<Vec<luban_api::TaskStatus>> = match query
+        .task_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some("all") => None,
+        Some(raw) => {
+            let mut out = Vec::new();
+            for part in raw.split(',') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let Some(status) = parse_task_status(trimmed) else {
+                    return (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        format!("invalid task_status: {trimmed}"),
+                    )
+                        .into_response();
+                };
+                if !out.contains(&status) {
+                    out.push(status);
+                }
+            }
+            Some(out)
+        }
+    };
+
     for p in &app.projects {
         if let Some(selected) = selected_project_id
             && p.id.0 != selected
@@ -402,8 +472,18 @@ async fn get_tasks(
         }
 
         for w in &p.workspaces {
-            if w.status != luban_api::WorkspaceStatus::Active {
-                continue;
+            match workdir_status_filter {
+                WorkdirStatusFilter::Active => {
+                    if w.status != luban_api::WorkspaceStatus::Active {
+                        continue;
+                    }
+                }
+                WorkdirStatusFilter::Archived => {
+                    if w.status != luban_api::WorkspaceStatus::Archived {
+                        continue;
+                    }
+                }
+                WorkdirStatusFilter::All => {}
             }
 
             let snap = match state.engine.threads_snapshot(w.id).await {
@@ -413,6 +493,12 @@ async fn get_tasks(
 
             let active_task_id = snap.tabs.active_tab;
             for t in snap.threads {
+                if let Some(filter) = task_status_filter.as_ref()
+                    && !filter.contains(&t.task_status)
+                {
+                    continue;
+                }
+
                 let agent_run_status = if t.thread_id == active_task_id
                     && w.agent_run_status == luban_api::OperationStatus::Running
                 {

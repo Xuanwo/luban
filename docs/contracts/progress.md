@@ -70,6 +70,8 @@ Legend:
 - `C-HTTP-CONVERSATION`: `ConversationEntry.type=user_event` supports `event.type=message`, `terminal_command_started`, and `terminal_command_finished`.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.title` matches `ThreadMeta.title` and may be updated after the first user message.
 - `C-HTTP-TASKS`: `TaskSummarySnapshot` includes `is_starred` for rendering Favorites and in-view star toggles.
+- `C-HTTP-TASKS`: `GET /api/tasks` supports `workdir_status=active|archived|all` to control whether archived workdirs are included.
+- `C-HTTP-TASKS`: `GET /api/tasks` supports `task_status=...` (comma-separated) to filter by `TaskStatus` (use `all` or omit to disable filtering).
 - `C-HTTP-TASKS` / `C-HTTP-WORKDIR-TASKS`: thread metadata includes `created_at_unix_seconds` for stable creation-time sorting.
 - `C-HTTP-TASKS` / `C-HTTP-WORKDIR-TASKS`: thread metadata includes `task_status`, `turn_status`, and `last_turn_result` (see `docs/task-and-turn-status.md`).
 - `C-HTTP-WORKDIR-TASKS`: a workdir may start with zero tasks, and providers must not seed placeholder tasks on read; when legacy conversation storage exists, providers may perform a one-time migration to make tasks visible.

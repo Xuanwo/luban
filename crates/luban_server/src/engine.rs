@@ -215,6 +215,9 @@ pub enum EngineCommand {
     DispatchAction {
         action: Box<Action>,
     },
+    AutoArchiveWorkspace {
+        workspace_id: WorkspaceId,
+    },
     RefreshPullRequests {
         workspace_id: Option<WorkspaceId>,
     },
@@ -415,17 +418,20 @@ impl Engine {
 
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
-        self.reconcile_stale_running_turns().await;
-        self.auto_archive_closed_workspaces().await;
+        self.schedule_reconcile_stale_running_turns();
+        self.schedule_auto_archive_closed_workspaces();
     }
 
-    async fn auto_archive_closed_workspaces(&mut self) {
+    fn schedule_auto_archive_closed_workspaces(&self) {
         let mut candidates = Vec::new();
         for project in &self.state.projects {
             if !project.is_git {
                 continue;
             }
             for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
                 let is_main = workspace.workspace_name == "main";
                 if is_main {
                     continue;
@@ -443,40 +449,143 @@ impl Engine {
             }
         }
 
-        for (workspace_id, scope) in candidates {
-            let services = self.services.clone();
-            let project_slug = scope.project_slug.clone();
-            let workspace_name = scope.workspace_name.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                let threads = services.list_conversation_threads(project_slug, workspace_name)?;
-                if threads.is_empty() {
-                    return Ok(false);
-                }
-                let all_closed_and_idle = threads.iter().all(|t| {
-                    matches!(
-                        t.task_status,
-                        luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
-                    ) && t.turn_status == luban_domain::TurnStatus::Idle
-                });
-                Ok(all_closed_and_idle)
-            })
-            .await
-            .ok()
-            .unwrap_or_else(|| Err("failed to join auto archive scan task".to_owned()));
-
-            let Ok(should_archive) = result else {
-                continue;
-            };
-            if !should_archive {
-                continue;
-            }
-
-            self.auto_archive_workspaces.insert(workspace_id);
-            self.process_action_queue(Action::ArchiveWorkspace { workspace_id })
-                .await;
+        if candidates.is_empty() {
+            return;
         }
+
+        let services = self.services.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (workspace_id, scope) in candidates {
+                let services = services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let threads =
+                        services.list_conversation_threads(project_slug, workspace_name)?;
+                    if threads.is_empty() {
+                        return Ok(false);
+                    }
+                    let all_closed_and_idle = threads.iter().all(|t| {
+                        matches!(
+                            t.task_status,
+                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                        ) && t.turn_status == luban_domain::TurnStatus::Idle
+                    });
+                    Ok(all_closed_and_idle)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("failed to join auto archive scan task".to_owned()));
+
+                let Ok(should_archive) = result else {
+                    continue;
+                };
+                if !should_archive {
+                    continue;
+                }
+
+                let _ = tx
+                    .send(EngineCommand::AutoArchiveWorkspace { workspace_id })
+                    .await;
+            }
+        });
     }
 
+    fn schedule_reconcile_stale_running_turns(&self) {
+        let mut scopes = Vec::new();
+        for project in &self.state.projects {
+            for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
+                scopes.push(WorkspaceScope {
+                    project_slug: project.slug.clone(),
+                    workspace_name: workspace.workspace_name.clone(),
+                });
+            }
+        }
+
+        if scopes.is_empty() {
+            return;
+        }
+
+        let services = self.services.clone();
+        tokio::spawn(async move {
+            let finished_at_unix_ms = now_unix_ms();
+            for scope in scopes {
+                let services = services.clone();
+                let project_slug = scope.project_slug.clone();
+                let workspace_name = scope.workspace_name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let threads = services
+                        .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                    let mut reconciled = 0usize;
+                    for meta in threads {
+                        if meta.turn_status != luban_domain::TurnStatus::Running {
+                            continue;
+                        }
+
+                        let snapshot = services.load_conversation(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                        )?;
+
+                        if snapshot.run_started_at_unix_ms.is_none()
+                            || snapshot.run_finished_at_unix_ms.is_some()
+                        {
+                            continue;
+                        }
+
+                        services.append_conversation_entries(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            vec![luban_domain::ConversationEntry::AgentEvent {
+                                entry_id: String::new(),
+                                created_at_unix_ms: 0,
+                                event: luban_domain::AgentEvent::TurnError {
+                                    message: "Agent run interrupted by server restart.".to_owned(),
+                                },
+                            }],
+                        )?;
+
+                        services.save_conversation_queue_state(
+                            project_slug.clone(),
+                            workspace_name.clone(),
+                            meta.thread_id.as_u64(),
+                            true,
+                            snapshot.run_started_at_unix_ms,
+                            Some(finished_at_unix_ms),
+                            snapshot.pending_prompts,
+                        )?;
+                        reconciled += 1;
+                    }
+                    Ok::<_, String>(reconciled)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("failed to join stale run reconcile task".to_owned()));
+
+                let Ok(reconciled) = result else {
+                    continue;
+                };
+                if reconciled == 0 {
+                    continue;
+                }
+
+                tracing::info!(
+                    project_slug = %scope.project_slug,
+                    workspace_name = %scope.workspace_name,
+                    reconciled,
+                    "reconciled stale running turns"
+                );
+            }
+        });
+    }
+
+    #[cfg(test)]
     async fn reconcile_stale_running_turns(&mut self) {
         let mut scopes = Vec::new();
         for project in &self.state.projects {
@@ -2094,7 +2203,15 @@ impl Engine {
                 let _ = reply.send(Ok(self.rev));
             }
             EngineCommand::DispatchAction { action } => {
+                if let Action::WorkspaceArchived { workspace_id } = action.as_ref() {
+                    self.auto_archive_workspaces.remove(workspace_id);
+                }
                 self.process_action_queue(*action).await;
+            }
+            EngineCommand::AutoArchiveWorkspace { workspace_id } => {
+                self.auto_archive_workspaces.insert(workspace_id);
+                self.process_action_queue(Action::ArchiveWorkspace { workspace_id })
+                    .await;
             }
             EngineCommand::RefreshPullRequests { workspace_id } => match workspace_id {
                 Some(id) => self.maybe_refresh_pull_request(id),
@@ -3961,16 +4078,20 @@ impl Engine {
             }
             Effect::ArchiveWorkspace { workspace_id } => {
                 let scope = workspace_scope(&self.state, workspace_id);
-                if let Some(scope) = scope.as_ref() {
+                let should_emit_task_archived_events =
+                    self.auto_archive_workspaces.contains(&workspace_id);
+
+                let mut claude_cleanup_threads = Vec::new();
+                let (project_slug, workspace_name) = scope
+                    .as_ref()
+                    .map(|s| (s.project_slug.clone(), s.workspace_name.clone()))
+                    .unwrap_or_default();
+                if !project_slug.is_empty() && !workspace_name.is_empty() {
                     for (wid, thread_id) in self.state.conversations.keys() {
                         if *wid != workspace_id {
                             continue;
                         }
-                        self.services.cleanup_claude_process(
-                            &scope.project_slug,
-                            &scope.workspace_name,
-                            thread_id.as_u64(),
-                        );
+                        claude_cleanup_threads.push(thread_id.as_u64());
                     }
                 }
 
@@ -4002,87 +4123,81 @@ impl Engine {
                 };
 
                 let services = self.services.clone();
-                let should_emit_task_archived_events =
-                    self.auto_archive_workspaces.contains(&workspace_id);
-                let project_slug = scope
-                    .as_ref()
-                    .map(|s| s.project_slug.clone())
-                    .unwrap_or_default();
-                let workspace_name = scope
-                    .as_ref()
-                    .map(|s| s.workspace_name.clone())
-                    .unwrap_or_default();
-                let result = tokio::task::spawn_blocking(move || {
-                    services.archive_workspace(project_path, worktree_path, branch_name)?;
-                    if !should_emit_task_archived_events {
-                        return Ok(());
-                    }
-                    if project_slug.is_empty() || workspace_name.is_empty() {
-                        return Ok(());
+                let tx = self.tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    for thread_id in claude_cleanup_threads {
+                        services.cleanup_claude_process(&project_slug, &workspace_name, thread_id);
                     }
 
-                    let threads = services
-                        .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
-                    for meta in threads {
-                        if !matches!(
-                            meta.task_status,
-                            luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
-                        ) {
-                            continue;
+                    let result: Result<(), String> = (|| {
+                        services.archive_workspace(project_path, worktree_path, branch_name)?;
+                        if !should_emit_task_archived_events {
+                            return Ok(());
+                        }
+                        if project_slug.is_empty() || workspace_name.is_empty() {
+                            return Ok(());
                         }
 
-                        let recent = services.load_conversation_page(
+                        let threads = services.list_conversation_threads(
                             project_slug.clone(),
                             workspace_name.clone(),
-                            meta.thread_id.as_u64(),
-                            None,
-                            32,
                         )?;
-                        let already_archived = recent.entries.iter().any(|entry| {
-                            matches!(
-                                entry,
-                                luban_domain::ConversationEntry::SystemEvent { event, .. }
-                                    if matches!(
-                                        event,
-                                        luban_domain::ConversationSystemEvent::TaskArchived
-                                    )
-                            )
-                        });
-                        if already_archived {
-                            continue;
+                        for meta in threads {
+                            if !matches!(
+                                meta.task_status,
+                                luban_domain::TaskStatus::Done | luban_domain::TaskStatus::Canceled
+                            ) {
+                                continue;
+                            }
+
+                            let recent = services.load_conversation_page(
+                                project_slug.clone(),
+                                workspace_name.clone(),
+                                meta.thread_id.as_u64(),
+                                None,
+                                32,
+                            )?;
+                            let already_archived = recent.entries.iter().any(|entry| {
+                                matches!(
+                                    entry,
+                                    luban_domain::ConversationEntry::SystemEvent { event, .. }
+                                        if matches!(
+                                            event,
+                                            luban_domain::ConversationSystemEvent::TaskArchived
+                                        )
+                                )
+                            });
+                            if already_archived {
+                                continue;
+                            }
+
+                            services.append_conversation_entries(
+                                project_slug.clone(),
+                                workspace_name.clone(),
+                                meta.thread_id.as_u64(),
+                                vec![luban_domain::ConversationEntry::SystemEvent {
+                                    entry_id: String::new(),
+                                    created_at_unix_ms: now_unix_ms(),
+                                    event: luban_domain::ConversationSystemEvent::TaskArchived,
+                                }],
+                            )?;
                         }
+                        Ok(())
+                    })();
 
-                        services.append_conversation_entries(
-                            project_slug.clone(),
-                            workspace_name.clone(),
-                            meta.thread_id.as_u64(),
-                            vec![luban_domain::ConversationEntry::SystemEvent {
-                                entry_id: String::new(),
-                                created_at_unix_ms: now_unix_ms(),
-                                event: luban_domain::ConversationSystemEvent::TaskArchived,
-                            }],
-                        )?;
-                    }
-                    Ok(())
-                })
-                .await
-                .ok()
-                .unwrap_or_else(|| Err("failed to join archive workspace task".to_owned()));
+                    let action = match result {
+                        Ok(()) => Action::WorkspaceArchived { workspace_id },
+                        Err(message) => Action::WorkspaceArchiveFailed {
+                            workspace_id,
+                            message,
+                        },
+                    };
+                    let _ = tx.blocking_send(EngineCommand::DispatchAction {
+                        action: Box::new(action),
+                    });
+                });
 
-                let action = match result {
-                    Ok(()) => {
-                        if should_emit_task_archived_events {
-                            self.auto_archive_workspaces.remove(&workspace_id);
-                        }
-                        Action::WorkspaceArchived { workspace_id }
-                    }
-                    Err(message) => Action::WorkspaceArchiveFailed {
-                        workspace_id,
-                        message,
-                    },
-                };
-
-                Ok(VecDeque::from([action]))
+                Ok(VecDeque::new())
             }
             Effect::MaybeAutoArchiveWorkspace { workspace_id } => {
                 let Some(scope) = workspace_scope(&self.state, workspace_id) else {
@@ -7722,7 +7837,7 @@ mod tests {
             .id;
 
         let (events, _) = broadcast::channel::<WsServerMessage>(16);
-        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let (tx, mut rx) = mpsc::channel::<EngineCommand>(16);
         let mut engine = Engine {
             state,
             rev: 1,
@@ -7741,6 +7856,11 @@ mod tests {
         engine
             .process_action_queue(Action::ArchiveWorkspace { workspace_id })
             .await;
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .expect("timed out waiting for archive completion")
+            .expect("engine command channel closed");
+        engine.handle(cmd).await;
 
         let workspace = engine
             .state
@@ -7805,7 +7925,7 @@ mod tests {
         }
 
         let (events, _) = broadcast::channel::<WsServerMessage>(16);
-        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let (tx, mut rx) = mpsc::channel::<EngineCommand>(16);
         let mut engine = Engine {
             state,
             rev: 1,
@@ -7830,6 +7950,11 @@ mod tests {
         engine
             .process_action_queue(Action::ArchiveWorkspace { workspace_id })
             .await;
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .expect("timed out waiting for archive completion")
+            .expect("engine command channel closed");
+        engine.handle(cmd).await;
 
         assert!(cancel_flag.load(Ordering::SeqCst));
 
@@ -8919,5 +9044,286 @@ mod tests {
         assert!(run_finished.is_some());
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].text, "queued");
+    }
+
+    fn persisted_with_single_git_workspace(workspace_id: u64) -> PersistedAppState {
+        PersistedAppState {
+            projects: vec![PersistedProject {
+                id: 1,
+                name: "Repo".to_owned(),
+                path: PathBuf::from("/tmp/luban-engine-bootstrap"),
+                slug: "repo".to_owned(),
+                is_git: true,
+                expanded: true,
+                workspaces: vec![PersistedWorkspace {
+                    id: workspace_id,
+                    workspace_name: "dev".to_owned(),
+                    branch_name: "dev".to_owned(),
+                    worktree_path: PathBuf::from("/tmp/luban-engine-bootstrap/dev"),
+                    status: WorkspaceStatus::Active,
+                    last_activity_at_unix_seconds: None,
+                }],
+            }],
+            sidebar_width: None,
+            terminal_pane_width: None,
+            global_zoom_percent: None,
+            appearance_theme: None,
+            appearance_ui_font: None,
+            appearance_chat_font: None,
+            appearance_code_font: None,
+            appearance_terminal_font: None,
+            agent_default_model_id: None,
+            agent_default_thinking_effort: None,
+            agent_default_runner: None,
+            agent_amp_mode: None,
+            agent_codex_enabled: Some(true),
+            agent_amp_enabled: Some(true),
+            agent_claude_enabled: Some(true),
+            last_open_workspace_id: None,
+            open_button_selection: None,
+            sidebar_project_order: Vec::new(),
+            workspace_active_thread_id: HashMap::new(),
+            workspace_open_tabs: HashMap::new(),
+            workspace_archived_tabs: HashMap::new(),
+            workspace_next_thread_id: HashMap::new(),
+            workspace_chat_scroll_y10: HashMap::new(),
+            workspace_chat_scroll_anchor: HashMap::new(),
+            workspace_unread_completions: HashMap::new(),
+            workspace_thread_run_config_overrides: HashMap::new(),
+            starred_tasks: HashMap::new(),
+            task_prompt_templates: HashMap::new(),
+            telegram_enabled: None,
+            telegram_bot_token: None,
+            telegram_bot_username: None,
+            telegram_paired_chat_id: None,
+            telegram_topic_bindings: None,
+        }
+    }
+
+    #[derive(Clone)]
+    struct BootstrapHangServices {
+        persisted: PersistedAppState,
+        list_threads_delay: Duration,
+        archive_delay: Duration,
+    }
+
+    impl ProjectWorkspaceService for BootstrapHangServices {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Ok(self.persisted.clone())
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+            _branch_name_hint: Option<String>,
+        ) -> Result<luban_domain::CreatedWorkspace, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+            _branch_name: String,
+        ) -> Result<(), String> {
+            std::thread::sleep(self.archive_delay);
+            Ok(())
+        }
+
+        fn rename_workspace_branch(
+            &self,
+            _worktree_path: PathBuf,
+            _requested_branch_name: String,
+        ) -> Result<String, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn ensure_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_conversation_threads(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ConversationThreadMeta>, String> {
+            std::thread::sleep(self.list_threads_delay);
+            Ok(vec![ConversationThreadMeta {
+                thread_id: luban_domain::WorkspaceThreadId::from_u64(1),
+                remote_thread_id: None,
+                title: "Done: completed successfully".to_owned(),
+                created_at_unix_seconds: 1,
+                updated_at_unix_seconds: 1,
+                task_status: luban_domain::TaskStatus::Done,
+                last_message_seq: 0,
+                task_status_last_analyzed_message_seq: 0,
+                turn_status: luban_domain::TurnStatus::Idle,
+                last_turn_result: Some(luban_domain::TurnResult::Completed),
+            }])
+        }
+
+        fn load_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn load_conversation_page(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            _before: Option<u64>,
+            _limit: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_image(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _image: ContextImage,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_text(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _text: String,
+            _extension: String,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_file(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _source_path: PathBuf,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn record_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _attachment: AttachmentRef,
+            _created_at_unix_ms: u64,
+        ) -> Result<u64, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_context_items(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ContextItem>, String> {
+            Ok(Vec::new())
+        }
+
+        fn delete_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _context_id: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn run_agent_turn_streamed(
+            &self,
+            _request: luban_domain::RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
+            _on_event: Arc<dyn Fn(luban_domain::AgentThreadEvent) + Send + Sync>,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_is_authorized(&self) -> Result<bool, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_pull_request_info(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<Option<PullRequestInfo>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request_failed_action(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_does_not_block_on_auto_archive_scan() {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(BootstrapHangServices {
+            persisted: persisted_with_single_git_workspace(10),
+            list_threads_delay: Duration::from_secs(2),
+            archive_delay: Duration::from_millis(0),
+        });
+        let (engine, _events) = Engine::start(services);
+
+        let snap = tokio::time::timeout(Duration::from_millis(300), engine.app_snapshot())
+            .await
+            .expect("app snapshot should not be blocked by bootstrap maintenance")
+            .expect("snapshot should succeed");
+        assert_eq!(snap.projects.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn engine_remains_responsive_while_archive_workspace_runs() {
+        let services: Arc<dyn ProjectWorkspaceService> = Arc::new(BootstrapHangServices {
+            persisted: persisted_with_single_git_workspace(10),
+            list_threads_delay: Duration::from_millis(0),
+            archive_delay: Duration::from_secs(2),
+        });
+        let (engine, _events) = Engine::start(services);
+
+        let _ = tokio::time::timeout(Duration::from_secs(1), engine.app_snapshot())
+            .await
+            .expect("bootstrap should complete")
+            .expect("snapshot should succeed");
+
+        engine
+            .dispatch_domain_action(Action::ArchiveWorkspace {
+                workspace_id: WorkspaceId::from_u64(10),
+            })
+            .await
+            .expect("dispatch archive action");
+
+        let snap = tokio::time::timeout(Duration::from_millis(300), engine.app_snapshot())
+            .await
+            .expect("app snapshot should remain responsive during archive")
+            .expect("snapshot should succeed");
+        assert_eq!(snap.projects.len(), 1);
     }
 }

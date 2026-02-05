@@ -300,7 +300,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     let cancelled = false
     void (async () => {
       try {
-        const snap = await fetchTasks()
+        const snap = await fetchTasks({ workdirStatus: "active" })
         if (cancelled) return
         stableUpdatedAtByTaskRef.current = buildStableUpdatedAtMap(snap.tasks ?? [])
         setTasksSnapshot(snap)
@@ -317,7 +317,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
   const refreshTasks = useCallback(async () => {
     if (!app) return
     try {
-      const snap = await fetchTasks()
+      const snap = await fetchTasks({ workdirStatus: "active" })
       ensureStableUpdatedAtForNewTasks({ stable: stableUpdatedAtByTaskRef.current, tasks: snap.tasks ?? [] })
       setTasksSnapshot(snap)
     } catch (err) {
