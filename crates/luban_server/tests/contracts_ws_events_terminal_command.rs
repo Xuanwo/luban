@@ -70,7 +70,11 @@ async fn recv_ws_msg(
 
 #[tokio::test]
 async fn ws_events_terminal_command_start_emits_conversation_events_with_output() {
-    let env = EnvGuard::lock(vec![luban_domain::paths::LUBAN_ROOT_ENV, "SHELL"]);
+    let env = EnvGuard::lock(vec![
+        luban_domain::paths::LUBAN_ROOT_ENV,
+        "SHELL",
+        "COMSPEC",
+    ]);
 
     let root = std::env::temp_dir().join(format!(
         "luban-contracts-ws-terminal-command-{}-{}",
@@ -82,7 +86,13 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
     ));
     std::fs::create_dir_all(&root).expect("create LUBAN_ROOT");
     env.set_path(luban_domain::paths::LUBAN_ROOT_ENV, &root);
-    env.set_str("SHELL", "/bin/sh");
+    if cfg!(windows) {
+        if let Some(comspec) = std::env::var_os("COMSPEC") {
+            env.set_path("SHELL", &PathBuf::from(comspec));
+        }
+    } else {
+        env.set_str("SHELL", "/bin/sh");
+    }
 
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let server =
@@ -113,7 +123,11 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
 
     let request_id = "req-terminal-command-start".to_owned();
     let marker = "luban_terminal_command_contract_marker";
-    let cmd = format!("printf '{marker}\\n'");
+    let cmd = if cfg!(windows) {
+        format!("echo {marker}")
+    } else {
+        format!("printf '{marker}\\n'")
+    };
     let action = luban_api::WsClientMessage::Action {
         request_id: request_id.clone(),
         action: Box::new(luban_api::ClientAction::TerminalCommandStart {

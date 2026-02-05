@@ -3452,26 +3452,47 @@ mod tests {
         ));
         std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
 
-        let fake_codex = base_dir.join("fake-codex");
+        let fake_codex = if cfg!(windows) {
+            base_dir.join("fake-codex.cmd")
+        } else {
+            base_dir.join("fake-codex")
+        };
+
+        #[cfg(windows)]
         std::fs::write(
             &fake_codex,
             [
-                "#!/bin/sh",
-                "cat >/dev/null &",
-                "stdin_pid=$!",
-                "echo '{\"type\":\"turn.started\"}'",
-                "echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"id\":\"item_0\",\"command\":\"echo hi\",\"aggregated_output\":\"\",\"exit_code\":0,\"status\":\"completed\"}}'",
-                "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}'",
-                "wait \"$stdin_pid\"",
-                "exit 0",
+                "@echo off",
+                "more >nul",
+                "echo {\"type\":\"turn.started\"}",
+                "echo {\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"id\":\"item_0\",\"command\":\"echo hi\",\"aggregated_output\":\"\",\"exit_code\":0,\"status\":\"completed\"}}",
+                "echo {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}",
+                "exit /b 0",
                 "",
             ]
-            .join("\n"),
+            .join("\r\n"),
         )
         .expect("fake codex should be written");
 
         #[cfg(unix)]
         {
+            std::fs::write(
+                &fake_codex,
+                [
+                    "#!/bin/sh",
+                    "cat >/dev/null &",
+                    "stdin_pid=$!",
+                    "echo '{\"type\":\"turn.started\"}'",
+                    "echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"id\":\"item_0\",\"command\":\"echo hi\",\"aggregated_output\":\"\",\"exit_code\":0,\"status\":\"completed\"}}'",
+                    "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}'",
+                    "wait \"$stdin_pid\"",
+                    "exit 0",
+                    "",
+                ]
+                .join("\n"),
+            )
+            .expect("fake codex should be written");
+
             use std::os::unix::fs::PermissionsExt;
             let mut perms = std::fs::metadata(&fake_codex)
                 .expect("fake codex should exist")

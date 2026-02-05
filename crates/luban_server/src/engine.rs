@@ -7248,7 +7248,9 @@ mod tests {
 
         let snapshot = engine.app_snapshot().await.expect("snapshot should work");
         assert_eq!(snapshot.projects.len(), 1);
-        assert_eq!(snapshot.projects[0].path, "/tmp/repo-a");
+        let loaded_path = normalize_project_path(std::path::Path::new(&snapshot.projects[0].path));
+        let expected_path = normalize_project_path(std::path::Path::new("/tmp/repo-a"));
+        assert_eq!(loaded_path, expected_path);
     }
 
     struct ArchiveOkServices {
