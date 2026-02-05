@@ -8661,7 +8661,6 @@ mod tests {
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
-            task_status_auto_update_backfill_in_flight: HashSet::new(),
             workspace_threads_cache: HashMap::new(),
             telegram_pairing: None,
         };
