@@ -413,6 +413,96 @@ impl Engine {
 
     async fn bootstrap(&mut self) {
         self.process_action_queue(Action::AppStarted).await;
+        self.reconcile_stale_running_turns().await;
+    }
+
+    async fn reconcile_stale_running_turns(&mut self) {
+        let mut scopes = Vec::new();
+        for project in &self.state.projects {
+            for workspace in &project.workspaces {
+                if workspace.status != luban_domain::WorkspaceStatus::Active {
+                    continue;
+                }
+                scopes.push(WorkspaceScope {
+                    project_slug: project.slug.clone(),
+                    workspace_name: workspace.workspace_name.clone(),
+                });
+            }
+        }
+
+        if scopes.is_empty() {
+            return;
+        }
+
+        let finished_at_unix_ms = now_unix_ms();
+        for scope in scopes {
+            let services = self.services.clone();
+            let project_slug = scope.project_slug.clone();
+            let workspace_name = scope.workspace_name.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let threads = services
+                    .list_conversation_threads(project_slug.clone(), workspace_name.clone())?;
+                let mut reconciled = 0usize;
+                for meta in threads {
+                    if meta.turn_status != luban_domain::TurnStatus::Running {
+                        continue;
+                    }
+
+                    let snapshot = services.load_conversation(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                    )?;
+
+                    if snapshot.run_started_at_unix_ms.is_none()
+                        || snapshot.run_finished_at_unix_ms.is_some()
+                    {
+                        continue;
+                    }
+
+                    services.append_conversation_entries(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                        vec![luban_domain::ConversationEntry::AgentEvent {
+                            entry_id: String::new(),
+                            event: luban_domain::AgentEvent::TurnError {
+                                message: "Agent run interrupted by server restart.".to_owned(),
+                            },
+                        }],
+                    )?;
+
+                    services.save_conversation_queue_state(
+                        project_slug.clone(),
+                        workspace_name.clone(),
+                        meta.thread_id.as_u64(),
+                        true,
+                        snapshot.run_started_at_unix_ms,
+                        Some(finished_at_unix_ms),
+                        snapshot.pending_prompts,
+                    )?;
+                    reconciled += 1;
+                }
+                Ok::<_, String>(reconciled)
+            })
+            .await
+            .ok()
+            .unwrap_or_else(|| Err("failed to join stale run reconcile task".to_owned()));
+
+            let Ok(reconciled) = result else {
+                continue;
+            };
+            if reconciled == 0 {
+                continue;
+            }
+
+            tracing::info!(
+                project_slug = %scope.project_slug,
+                workspace_name = %scope.workspace_name,
+                reconciled,
+                "reconciled stale running turns"
+            );
+        }
     }
 
     async fn prune_archived_tasks(&mut self) {
@@ -4660,6 +4750,11 @@ fn queue_state_key_for_action(action: &Action) -> Option<(WorkspaceId, Workspace
             workspace_id,
             thread_id,
         } => Some((*workspace_id, *thread_id)),
+        Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status: luban_domain::TaskStatus::Canceled,
+        } => Some((*workspace_id, *thread_id)),
         Action::AgentEventReceived {
             workspace_id,
             thread_id,
@@ -4893,6 +4988,15 @@ fn now_unix_seconds() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(0u64)
 }
 
 fn map_workspace_tabs_snapshot(tabs: &luban_domain::WorkspaceTabs) -> WorkspaceTabsSnapshot {
@@ -5519,9 +5623,17 @@ mod tests {
         PersistedAppState, PersistedProject, PersistedWorkspace, WorkspaceStatus,
     };
     use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    type SavedQueueState = (
+        bool,
+        Option<u64>,
+        Option<u64>,
+        Vec<luban_domain::QueuedPrompt>,
+    );
 
     struct TestServices;
 
@@ -5598,6 +5710,252 @@ mod tests {
             _limit: u64,
         ) -> Result<DomainConversationSnapshot, String> {
             Err("unimplemented".to_owned())
+        }
+
+        fn store_context_image(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _image: ContextImage,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_text(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _text: String,
+            _extension: String,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn store_context_file(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _source_path: PathBuf,
+        ) -> Result<AttachmentRef, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn record_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _attachment: AttachmentRef,
+            _created_at_unix_ms: u64,
+        ) -> Result<u64, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_context_items(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ContextItem>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn delete_context_item(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _context_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn run_agent_turn_streamed(
+            &self,
+            _request: luban_domain::RunAgentTurnRequest,
+            _cancel: Arc<AtomicBool>,
+            _on_event: Arc<dyn Fn(luban_domain::AgentThreadEvent) + Send + Sync>,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_is_authorized(&self) -> Result<bool, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_pull_request_info(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<Option<PullRequestInfo>, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn gh_open_pull_request_failed_action(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+    }
+
+    #[derive(Default)]
+    struct ReconcileRecordingServices {
+        appended_entries: Mutex<Vec<ConversationEntry>>,
+        saved_queue_state: Mutex<Vec<SavedQueueState>>,
+    }
+
+    impl ProjectWorkspaceService for ReconcileRecordingServices {
+        fn load_app_state(&self) -> Result<PersistedAppState, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn save_app_state(&self, _snapshot: PersistedAppState) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn create_workspace(
+            &self,
+            _project_path: PathBuf,
+            _project_slug: String,
+            _branch_name_hint: Option<String>,
+        ) -> Result<luban_domain::CreatedWorkspace, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn open_workspace_in_ide(&self, _worktree_path: PathBuf) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn archive_workspace(
+            &self,
+            _project_path: PathBuf,
+            _worktree_path: PathBuf,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn rename_workspace_branch(
+            &self,
+            _worktree_path: PathBuf,
+            _requested_branch_name: String,
+        ) -> Result<String, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn ensure_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<(), String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn list_conversation_threads(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+        ) -> Result<Vec<ConversationThreadMeta>, String> {
+            Ok(vec![ConversationThreadMeta {
+                thread_id: WorkspaceThreadId::from_u64(1),
+                remote_thread_id: None,
+                title: "t1".to_owned(),
+                created_at_unix_seconds: 1,
+                updated_at_unix_seconds: 2,
+                task_status: luban_domain::TaskStatus::Todo,
+                last_message_seq: 1,
+                task_status_last_analyzed_message_seq: 0,
+                turn_status: luban_domain::TurnStatus::Running,
+                last_turn_result: None,
+            }])
+        }
+
+        fn load_conversation(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Ok(DomainConversationSnapshot {
+                title: Some("t1".to_owned()),
+                thread_id: None,
+                task_status: luban_domain::TaskStatus::Todo,
+                runner: None,
+                agent_model_id: None,
+                thinking_effort: None,
+                amp_mode: None,
+                entries: vec![ConversationEntry::UserEvent {
+                    entry_id: "e_1".to_owned(),
+                    event: luban_domain::UserEvent::Message {
+                        text: "hi".to_owned(),
+                        attachments: Vec::new(),
+                    },
+                }],
+                entries_total: 1,
+                entries_start: 0,
+                pending_prompts: vec![luban_domain::QueuedPrompt {
+                    id: 1,
+                    text: "queued".to_owned(),
+                    attachments: Vec::new(),
+                    run_config: luban_domain::AgentRunConfig {
+                        runner: luban_domain::AgentRunnerKind::Codex,
+                        model_id: "gpt-5".to_owned(),
+                        thinking_effort: ThinkingEffort::Medium,
+                        amp_mode: None,
+                    },
+                }],
+                queue_paused: false,
+                run_started_at_unix_ms: Some(10),
+                run_finished_at_unix_ms: None,
+            })
+        }
+
+        fn load_conversation_page(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            _before: Option<u64>,
+            _limit: u64,
+        ) -> Result<DomainConversationSnapshot, String> {
+            Err("unimplemented".to_owned())
+        }
+
+        fn append_conversation_entries(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            entries: Vec<ConversationEntry>,
+        ) -> Result<(), String> {
+            self.appended_entries
+                .lock()
+                .map_err(|_| "poisoned mutex".to_owned())?
+                .extend(entries);
+            Ok(())
+        }
+
+        fn save_conversation_queue_state(
+            &self,
+            _project_slug: String,
+            _workspace_name: String,
+            _thread_id: u64,
+            queue_paused: bool,
+            run_started_at_unix_ms: Option<u64>,
+            run_finished_at_unix_ms: Option<u64>,
+            pending_prompts: Vec<luban_domain::QueuedPrompt>,
+        ) -> Result<(), String> {
+            self.saved_queue_state
+                .lock()
+                .map_err(|_| "poisoned mutex".to_owned())?
+                .push((
+                    queue_paused,
+                    run_started_at_unix_ms,
+                    run_finished_at_unix_ms,
+                    pending_prompts,
+                ));
+            Ok(())
         }
 
         fn store_context_image(
@@ -8270,5 +8628,64 @@ mod tests {
 
         assert_eq!(request.runner, luban_domain::AgentRunnerKind::Amp);
         assert_eq!(request.amp_mode.as_deref(), Some("rush"));
+    }
+
+    #[tokio::test]
+    async fn reconcile_stale_running_turns_appends_error_and_sets_finished_at() {
+        let services: Arc<ReconcileRecordingServices> =
+            Arc::new(ReconcileRecordingServices::default());
+        let services_dyn: Arc<dyn ProjectWorkspaceService> = services.clone();
+
+        let mut state = AppState::new();
+        let _ = state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/luban-server-reconcile-test"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        let _ = state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "main".to_owned(),
+            branch_name: "main".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban-server-reconcile-test"),
+        });
+
+        let (events, _) = broadcast::channel::<WsServerMessage>(16);
+        let (tx, _rx) = mpsc::channel::<EngineCommand>(16);
+        let mut engine = Engine {
+            state,
+            rev: 1,
+            services: services_dyn,
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+            telegram_pairing: None,
+        };
+
+        engine.reconcile_stale_running_turns().await;
+
+        let appended = services.appended_entries.lock().expect("mutex ok").clone();
+        assert!(
+            appended.iter().any(|e| matches!(
+                e,
+                ConversationEntry::AgentEvent {
+                    event: luban_domain::AgentEvent::TurnError { message },
+                    ..
+                } if message == "Agent run interrupted by server restart."
+            )),
+            "expected reconcile to append a turn_error entry"
+        );
+
+        let saved = services.saved_queue_state.lock().expect("mutex ok").clone();
+        assert_eq!(saved.len(), 1);
+        let (queue_paused, run_started, run_finished, pending) = &saved[0];
+        assert!(*queue_paused);
+        assert_eq!(*run_started, Some(10));
+        assert!(run_finished.is_some());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].text, "queued");
     }
 }

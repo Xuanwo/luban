@@ -14,6 +14,7 @@ import { runInboxRead } from './scenarios/inbox-read.mjs';
 import { runInboxPreviewLine } from './scenarios/inbox-preview-line.mjs';
 import { runInboxSortStability } from './scenarios/inbox-sort-stability.mjs';
 import { runInboxStatusChange } from './scenarios/inbox-status-change.mjs';
+import { runCancelTaskClearsRunning } from './scenarios/cancel-task-clears-running.mjs';
 import { runLatestEventsVisible } from './scenarios/latest-events-visible.mjs';
 import { runActivityWindowing } from './scenarios/activity-windowing.mjs';
 import { runAgentRunnerIcons } from './scenarios/agent-runner-icons.mjs';
@@ -34,7 +35,7 @@ import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
 import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
-import { runProjectArchiveMenu } from './scenarios/project-archive-menu.mjs';
+import { runProjectAllTasksView } from './scenarios/project-all-tasks-view.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -163,7 +164,7 @@ async function main() {
 	
 	    await runSidebarProjectAvatars({ page, baseUrl });
       await runTaskListProjectIcon({ page, baseUrl });
-      await runProjectArchiveMenu({ page, baseUrl });
+      await runProjectAllTasksView({ page, baseUrl });
 	    await runNewTaskModal({ page, baseUrl });
 	    await runNewTaskDrafts({ page, baseUrl });
 	    await runNewTaskProjectAvatars({ page, baseUrl });
@@ -188,6 +189,7 @@ async function main() {
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
     await runTaskSummariesEventsRefresh({ page, baseUrl });
     await runNoRightSidebar({ page, baseUrl });
+    await runCancelTaskClearsRunning({ page, baseUrl });
   } catch (err) {
     if (logFile) {
       process.stderr.write(`ui smoke failed; log: ${logFile}\n`);

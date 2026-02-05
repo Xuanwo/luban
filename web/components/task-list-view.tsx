@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
+  Activity,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Layers,
   Loader2,
+  ListChecks,
   Plus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -196,6 +199,11 @@ interface TaskGroupProps {
 function TaskGroup({ title, count, defaultExpanded = true, children }: TaskGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const userToggledRef = useRef(false)
+  const testId = `task-group-${title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")}`
 
   useEffect(() => {
     if (userToggledRef.current) return
@@ -206,6 +214,7 @@ function TaskGroup({ title, count, defaultExpanded = true, children }: TaskGroup
   return (
     <div>
       <button
+        data-testid={testId}
         onClick={() => {
           userToggledRef.current = true
           setExpanded(!expanded)
@@ -239,8 +248,8 @@ function TaskGroup({ title, count, defaultExpanded = true, children }: TaskGroup
 
 interface TaskListViewProps {
   activeProjectId?: string | null
-  mode?: "active" | "archive"
-  onModeChange?: (mode: "active" | "archive") => void
+  mode?: "all" | "active" | "backlog"
+  onModeChange?: (mode: "all" | "active" | "backlog") => void
   onTaskClick?: (task: Task) => void
 }
 
@@ -251,7 +260,6 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
   const agentRunner = app?.agent.default_runner ?? null
   const refreshInFlightRef = useRef(false)
   const prevWsConnectedRef = useRef(false)
-  const [nowUnixSeconds, setNowUnixSeconds] = useState<number>(Math.floor(Date.now() / 1000))
 
   const formatCreatedAt = useCallback((createdAtUnixSeconds: number): string => {
     if (!createdAtUnixSeconds) return ""
@@ -260,12 +268,6 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
     const month = String(date.getMonth() + 1).padStart(2, "0")
     const day = String(date.getDate()).padStart(2, "0")
     return `${year}-${month}-${day}`
-  }, [])
-
-  useEffect(() => {
-    const update = () => setNowUnixSeconds(Math.floor(Date.now() / 1000))
-    const id = window.setInterval(update, 60 * 60 * 1000)
-    return () => window.clearInterval(id)
   }, [])
 
   const refreshTasks = useCallback(async () => {
@@ -379,27 +381,18 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
 
     const out: TaskRowModel[] = []
 
-    const isArchived = (t: (typeof tasksSnapshot.tasks)[number]): boolean => {
-      const isClosed = t.task_status === "done" || t.task_status === "canceled"
-      if (!isClosed) return false
-      const archiveAfterSeconds = 7 * 24 * 60 * 60
-      return t.updated_at_unix_seconds <= nowUnixSeconds - archiveAfterSeconds
-    }
-
     const filtered = tasksSnapshot.tasks.filter((t) => {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
-      const archived = isArchived(t)
-      if (mode === "archive") return archived
-      return !archived
+      if (mode === "all") return true
+      if (mode === "backlog") return t.task_status === "backlog"
+      return t.task_status === "iterating" || t.task_status === "validating" || t.task_status === "todo"
     })
 
     filtered.sort((a, b) => {
       const primary =
-        mode === "archive"
-          ? b.updated_at_unix_seconds - a.updated_at_unix_seconds
-          : b.created_at_unix_seconds - a.created_at_unix_seconds
+        mode === "all" ? b.updated_at_unix_seconds - a.updated_at_unix_seconds : b.created_at_unix_seconds - a.created_at_unix_seconds
       if (primary !== 0) return primary
       const workdir = b.workdir_id - a.workdir_id
       if (workdir !== 0) return workdir
@@ -427,7 +420,7 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
     }
 
     return out
-  }, [app, formatCreatedAt, mode, nowUnixSeconds, tasksSnapshot])
+  }, [app, formatCreatedAt, mode, tasksSnapshot])
 
   const headerProject: ProjectInfo = useMemo(() => {
     if (!app) return { name: "Projects", color: "bg-violet-500" }
@@ -478,7 +471,19 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
         {/* View Tabs */}
         <div className="flex items-center gap-0.5 ml-3">
           <button
-            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center"
+            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
+            style={{
+              backgroundColor: mode === "all" ? "#eeeeee" : "transparent",
+              color: mode === "all" ? "#1b1b1b" : "#6b6b6b",
+            }}
+            data-testid="task-view-tab-all"
+            onClick={() => onModeChange?.("all")}
+          >
+            <ListChecks className="w-3.5 h-3.5" />
+            All tasks
+          </button>
+          <button
+            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
             style={{
               backgroundColor: mode === "active" ? "#eeeeee" : "transparent",
               color: mode === "active" ? "#1b1b1b" : "#6b6b6b",
@@ -486,28 +491,30 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
             data-testid="task-view-tab-active"
             onClick={() => onModeChange?.("active")}
           >
+            <Activity className="w-3.5 h-3.5" />
             Active
           </button>
           <button
-            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center hover:bg-[#eeeeee] transition-colors"
+            className="h-6 px-2 text-[12px] font-medium rounded-[5px] flex items-center gap-1.5 hover:bg-[#eeeeee] transition-colors"
             style={{
-              backgroundColor: mode === "archive" ? "#eeeeee" : "transparent",
-              color: mode === "archive" ? "#1b1b1b" : "#6b6b6b",
+              backgroundColor: mode === "backlog" ? "#eeeeee" : "transparent",
+              color: mode === "backlog" ? "#1b1b1b" : "#6b6b6b",
             }}
-            data-testid="task-view-tab-archive"
-            onClick={() => onModeChange?.("archive")}
+            data-testid="task-view-tab-backlog"
+            onClick={() => onModeChange?.("backlog")}
           >
-            Archive
+            <Layers className="w-3.5 h-3.5" />
+            Backlog
           </button>
         </div>
       </div>
 
       {/* Task List */}
       <div className="flex-1 overflow-y-auto">
-        {mode === "archive" ? (
+        {mode === "backlog" ? (
           <>
-            <TaskGroup title="Done" count={doneTasks.length}>
-              {doneTasks.map((task) => (
+            <TaskGroup title="Backlog" count={backlogTasks.length} defaultExpanded={true}>
+              {backlogTasks.map((task) => (
                 <TaskRow
                   key={task.id}
                   task={task}
@@ -523,8 +530,11 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                 />
               ))}
             </TaskGroup>
-            <TaskGroup title="Canceled" count={canceledTasks.length}>
-              {canceledTasks.map((task) => (
+          </>
+        ) : mode === "active" ? (
+          <>
+            <TaskGroup title="Iterating" count={iteratingTasks.length}>
+              {iteratingTasks.map((task) => (
                 <TaskRow
                   key={task.id}
                   task={task}
@@ -540,6 +550,43 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
                 />
               ))}
             </TaskGroup>
+
+            <TaskGroup title="Validating" count={validatingTasks.length}>
+              {validatingTasks.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  agentRunner={agentRunner}
+                  selected={selectedTask === task.id}
+                  onClick={() => {
+                    setSelectedTask(task.id)
+                    onTaskClick?.(task)
+                  }}
+                  onStatusChange={(newStatus) =>
+                    handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
+                  }
+                />
+              ))}
+            </TaskGroup>
+
+            <TaskGroup title="Todo" count={todoTasks.length}>
+              {todoTasks.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  agentRunner={agentRunner}
+                  selected={selectedTask === task.id}
+                  onClick={() => {
+                    setSelectedTask(task.id)
+                    onTaskClick?.(task)
+                  }}
+                  onStatusChange={(newStatus) =>
+                    handleStatusChange({ workspaceId: task.workspaceId, taskId: task.taskId, status: newStatus })
+                  }
+                />
+              ))}
+            </TaskGroup>
+
           </>
         ) : (
           <>
@@ -597,11 +644,7 @@ export function TaskListView({ activeProjectId, mode = "active", onModeChange, o
               ))}
             </TaskGroup>
 
-            <TaskGroup
-              title="Backlog"
-              count={backlogTasks.length}
-              defaultExpanded={backlogTasks.length > 0}
-            >
+            <TaskGroup title="Backlog" count={backlogTasks.length} defaultExpanded={backlogTasks.length > 0}>
               {backlogTasks.map((task) => (
                 <TaskRow
                   key={task.id}

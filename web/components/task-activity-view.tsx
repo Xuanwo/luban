@@ -1383,6 +1383,90 @@ export function TaskActivityView({
     scrollContainerRef.current = el
     setScrollContainerEl(el)
   }, [])
+  const contentWrapperRef = useRef<HTMLDivElement | null>(null)
+  const [contentWrapperEl, setContentWrapperEl] = useState<HTMLDivElement | null>(null)
+  const setContentWrapper = useCallback((el: HTMLDivElement | null) => {
+    contentWrapperRef.current = el
+    setContentWrapperEl(el)
+  }, [])
+  const autoScrollRef = useRef<{ epoch: number; untilMs: number; maxUntilMs: number; raf: number | null } | null>(null)
+
+  const stopAutoScrollToLatest = useCallback(() => {
+    const pending = autoScrollRef.current
+    if (pending?.raf != null) {
+      window.cancelAnimationFrame(pending.raf)
+    }
+    autoScrollRef.current = null
+  }, [])
+
+  const startAutoScrollToLatest = useCallback(
+    ({ durationMs, maxDurationMs }: { durationMs: number; maxDurationMs: number }) => {
+      if (workspaceId == null || taskId == null) return
+      const el = scrollContainerRef.current
+      if (!el) return
+
+      const prev = autoScrollRef.current
+      const epoch = (prev?.epoch ?? 0) + 1
+      const startedAt = Date.now()
+      const maxUntilMs = startedAt + maxDurationMs
+      const untilMs = Math.min(maxUntilMs, startedAt + durationMs)
+
+      if (prev?.raf != null) window.cancelAnimationFrame(prev.raf)
+      autoScrollRef.current = { epoch, untilMs, maxUntilMs, raf: null }
+
+      const tick = () => {
+        const pending = autoScrollRef.current
+        if (!pending || pending.epoch !== epoch) return
+        const root = scrollContainerRef.current
+        if (root) {
+          root.scrollTop = root.scrollHeight
+        }
+        if (Date.now() >= pending.untilMs) {
+          stopAutoScrollToLatest()
+          return
+        }
+        pending.raf = window.requestAnimationFrame(tick)
+      }
+
+      autoScrollRef.current.raf = window.requestAnimationFrame(tick)
+    },
+    [stopAutoScrollToLatest, taskId, workspaceId],
+  )
+
+  useEffect(() => {
+    if (!scrollContainerEl) return
+    if (workspaceId == null || taskId == null) return
+    startAutoScrollToLatest({ durationMs: 400, maxDurationMs: 2000 })
+    return () => stopAutoScrollToLatest()
+  }, [listKey, scrollContainerEl, startAutoScrollToLatest, stopAutoScrollToLatest, taskId, workspaceId])
+
+  useEffect(() => {
+    const el = scrollContainerEl
+    if (!el) return
+    const onUserScrollIntent = () => stopAutoScrollToLatest()
+    el.addEventListener("wheel", onUserScrollIntent, { passive: true })
+    el.addEventListener("touchstart", onUserScrollIntent, { passive: true })
+    el.addEventListener("pointerdown", onUserScrollIntent)
+    return () => {
+      el.removeEventListener("wheel", onUserScrollIntent)
+      el.removeEventListener("touchstart", onUserScrollIntent)
+      el.removeEventListener("pointerdown", onUserScrollIntent)
+    }
+  }, [scrollContainerEl, stopAutoScrollToLatest])
+
+  useEffect(() => {
+    const wrapper = contentWrapperEl
+    if (!wrapper) return
+    const observer = new ResizeObserver(() => {
+      const pending = autoScrollRef.current
+      if (!pending) return
+      const now = Date.now()
+      if (now >= pending.maxUntilMs) return
+      pending.untilMs = Math.min(pending.maxUntilMs, now + 250)
+    })
+    observer.observe(wrapper)
+    return () => observer.disconnect()
+  }, [contentWrapperEl, listKey])
 
   return (
     <div 
@@ -1396,7 +1480,11 @@ export function TaskActivityView({
         data-testid="chat-scroll-container"
         style={{ padding: "0 60px" }}
       >
-        <div data-testid="chat-content-wrapper" style={{ maxWidth: "686px", margin: "0 auto" }}>
+        <div
+          ref={setContentWrapper}
+          data-testid="chat-content-wrapper"
+          style={{ maxWidth: "686px", margin: "0 auto" }}
+        >
           {/* Task header with title and description */}
           <TaskHeaderSection
             title={title}

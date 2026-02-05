@@ -39,6 +39,7 @@ fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> 
     conversation.current_run_config = None;
     conversation.active_run_id = None;
     conversation.queue_paused = true;
+    conversation.run_finished_at_unix_ms = Some(now_unix_ms());
     conversation.push_entry(ConversationEntry::AgentEvent {
         entry_id: String::new(),
         event: crate::AgentEvent::TurnCanceled,
@@ -2308,14 +2309,24 @@ impl AppState {
                         to: task_status,
                     },
                 });
-                vec![
+                let mut effects = vec![
                     Effect::StoreConversationTaskStatus {
                         workspace_id,
                         thread_id,
                         task_status,
                     },
                     Effect::LoadWorkspaceThreads { workspace_id },
-                ]
+                ];
+                if task_status == crate::TaskStatus::Canceled
+                    && let Some(run_id) = cancel_running_turn(conversation)
+                {
+                    effects.push(Effect::CancelAgentTurn {
+                        workspace_id,
+                        thread_id,
+                        run_id,
+                    });
+                }
+                effects
             }
             Action::TaskStatusSuggestionCreated {
                 workspace_id,
@@ -5307,6 +5318,60 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(user_messages, vec!["Hello"]);
+    }
+
+    #[test]
+    fn task_status_canceled_cancels_running_turn_and_emits_effect() {
+        let mut state = AppState::demo();
+        let workspace_id = first_non_main_workspace_id(&state);
+        let thread_id = default_thread_id();
+
+        state.apply(Action::SendAgentMessage {
+            workspace_id,
+            thread_id,
+            text: "Hello".to_owned(),
+            attachments: Vec::new(),
+            runner: None,
+            amp_mode: None,
+        });
+        let run_id = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation")
+            .active_run_id
+            .expect("missing active run id");
+
+        let effects = state.apply(Action::TaskStatusSet {
+            workspace_id,
+            thread_id,
+            task_status: crate::TaskStatus::Canceled,
+        });
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::CancelAgentTurn { workspace_id: wid, thread_id: tid, run_id: rid }
+                    if *wid == workspace_id && *tid == thread_id && *rid == run_id
+            )),
+            "expected CancelAgentTurn effect"
+        );
+
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.task_status, crate::TaskStatus::Canceled);
+        assert_eq!(conversation.run_status, OperationStatus::Idle);
+        assert_eq!(conversation.active_run_id, None);
+        assert!(conversation.queue_paused);
+        assert!(conversation.run_finished_at_unix_ms.is_some());
+        assert!(conversation.entries.iter().any(|e| {
+            matches!(
+                e,
+                ConversationEntry::AgentEvent {
+                    event: crate::AgentEvent::TurnCanceled,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]

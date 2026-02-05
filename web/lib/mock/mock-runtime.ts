@@ -871,14 +871,42 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       ) + 1
     snap.tasks = snap.tasks.map((t) =>
       t.task_id === a.task_id
-        ? { ...t, task_status: a.task_status, updated_at_unix_seconds: bumpedNow }
+        ? {
+            ...t,
+            task_status: a.task_status,
+            updated_at_unix_seconds: bumpedNow,
+            turn_status: a.task_status === "canceled" ? "idle" : t.turn_status,
+            last_turn_result: a.task_status === "canceled" ? "failed" : t.last_turn_result,
+          }
         : t,
     )
 
     const key = workdirTaskKey(a.workdir_id, a.task_id)
     const convo = state.conversationsByWorkdirTask.get(key) ?? null
     if (convo) {
-      state.conversationsByWorkdirTask.set(key, { ...convo, task_status: a.task_status })
+      const shouldCancel = a.task_status === "canceled" && convo.run_status === "running"
+      const nextEntries = (() => {
+        if (!shouldCancel) return convo.entries
+        const alreadyCanceled = convo.entries.some((e) => e.type === "agent_event" && e.event?.type === "turn_canceled")
+        if (alreadyCanceled) return convo.entries
+        return [
+          ...convo.entries,
+          {
+            type: "agent_event",
+            entry_id: newEntryId("ae"),
+            event: { type: "turn_canceled" },
+          },
+        ] satisfies ConversationEntry[]
+      })()
+
+      state.conversationsByWorkdirTask.set(key, {
+        ...convo,
+        task_status: a.task_status,
+        run_status: shouldCancel ? "idle" : convo.run_status,
+        run_finished_at_unix_ms: shouldCancel ? Date.now() : convo.run_finished_at_unix_ms,
+        queue_paused: shouldCancel ? true : convo.queue_paused,
+        entries: nextEntries,
+      })
     }
 
     const rev = bumpRev(state)
