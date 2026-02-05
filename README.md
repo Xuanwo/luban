@@ -72,6 +72,23 @@ This project uses `just` to manage common dev commands:
 just -l
 ```
 
+### Windows (PowerShell)
+
+`just` defaults to `sh`, which is not always available on Windows. Use the
+PowerShell-friendly `justfile.win`:
+
+```powershell
+# One-off
+just -f justfile.win test
+
+# Or set for the current session
+$env:JUSTFILE = "justfile.win"
+just test
+
+# Or set permanently (new terminals will pick this up)
+setx JUSTFILE "justfile.win"
+```
+
 ### Workflows
 
 - Desktop app (Tauri): `just app run`

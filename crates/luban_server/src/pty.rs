@@ -471,11 +471,19 @@ fn default_shell_path() -> PathBuf {
 }
 
 fn shell_command_args(shell_path: &std::path::Path, command: &str) -> Vec<String> {
-    let name = shell_path
+    let path_str = shell_path.to_string_lossy();
+    let mut name = shell_path
         .file_name()
         .map(|v| v.to_string_lossy().to_string())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
+    if name.is_empty() || name.contains('\\') || name.contains('/') {
+        name = path_str
+            .rsplit(|ch| ['/', '\\'].contains(&ch))
+            .next()
+            .unwrap_or_default()
+            .to_string();
+    }
+    let name = name.to_ascii_lowercase();
 
     if name.contains("zsh") || name.contains("bash") {
         return vec![

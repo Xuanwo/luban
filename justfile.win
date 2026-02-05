@@ -1,0 +1,229 @@
+set dotenv-load
+
+# Windows-friendly recipes for running in PowerShell (pwsh).
+#
+# Usage:
+#   just -f justfile.win <recipe>
+#
+# Notes:
+# - This file assumes `pwsh` (PowerShell 7+) is available on PATH.
+# - `just` executes each recipe line in a fresh shell invocation, so multi-step
+#   recipes are written as a single logical command using `\` continuations.
+set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
+
+default:
+  @just -f {{justfile()}} --list
+
+fmt:
+  cargo fmt --all
+
+lint:
+  cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+
+test:
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  $root = Join-Path ([System.IO.Path]::GetTempPath()) ("luban-test-" + [Guid]::NewGuid().ToString("N")); \
+  New-Item -ItemType Directory -Force -Path $root | Out-Null; \
+  try { \
+    $env:LUBAN_ROOT = $root; \
+    cargo test --workspace --all-targets --all-features; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    cargo test --manifest-path dev/Cargo.toml; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  } finally { \
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue; \
+  }
+
+test-fast:
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  $root = Join-Path ([System.IO.Path]::GetTempPath()) ("luban-test-" + [Guid]::NewGuid().ToString("N")); \
+  New-Item -ItemType Directory -Force -Path $root | Out-Null; \
+  try { \
+    $env:LUBAN_ROOT = $root; \
+    cargo test -p luban_domain; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  } finally { \
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue; \
+  }
+
+web cmd profile="debug":
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  if ("{{cmd}}" -eq "build") { \
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm not found; install pnpm to build the web UI"; exit 1 }; \
+    if (Test-Path -LiteralPath "web" -PathType Container) { \
+      Push-Location "web"; \
+      try { \
+        pnpm install; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+        $channel = if ("{{profile}}" -eq "release") { "release" } else { "dev" }; \
+        $tag = ""; \
+        if ($channel -eq "release") { \
+          $tag = (git describe --tags --exact-match 2>$null); \
+          if ($LASTEXITCODE -ne 0) { $tag = "" }; \
+        }; \
+        $tag = ($tag | Out-String).Trim(); \
+        $version = $env:LUBAN_DISPLAY_VERSION; \
+        if ([string]::IsNullOrWhiteSpace($version)) { \
+          $version = $tag; \
+          if (-not [string]::IsNullOrWhiteSpace($version) -and $version.StartsWith("v")) { $version = $version.Substring(1) }; \
+        }; \
+        if ([string]::IsNullOrWhiteSpace($version)) { $version = (node -p "require('./package.json').version" | Out-String).Trim() }; \
+        $commit = (git rev-parse HEAD 2>$null); \
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) { $commit = "unknown" }; \
+        $commit = ($commit | Out-String).Trim(); \
+        $env:NEXT_PUBLIC_LUBAN_VERSION = $version; \
+        $env:NEXT_PUBLIC_LUBAN_BUILD_CHANNEL = $channel; \
+        $env:NEXT_PUBLIC_LUBAN_COMMIT = $commit; \
+        $env:NEXT_PUBLIC_LUBAN_GIT_TAG = $tag; \
+        $env:NEXT_PUBLIC_LUBAN_BUILD_TIME = (Get-Date -AsUTC -Format "yyyy-MM-ddTHH:mm:ssZ"); \
+        pnpm build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+      } finally { \
+        Pop-Location; \
+      }; \
+      New-Item -ItemType Directory -Force -Path "web/out" | Out-Null; \
+      "`n" | Set-Content -Path "web/out/.gitkeep"; \
+    } \
+  } elseif ("{{cmd}}" -eq "run") { \
+    just -f {{justfile()}} web build "{{profile}}"; \
+    if ("{{profile}}" -eq "release") { cargo run -p luban_server --release } \
+    elseif ("{{profile}}" -eq "debug" -or "{{profile}}" -eq "dev") { cargo run -p luban_server } \
+    else { cargo run -p luban_server --profile "{{profile}}" } \
+  } elseif ("{{cmd}}" -eq "dev") { \
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm not found; install pnpm to run the web dev server"; exit 1 }; \
+    if (-not (Test-Path -LiteralPath "web/node_modules" -PathType Container)) { Push-Location "web"; try { pnpm install; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } finally { Pop-Location } }; \
+    Push-Location "web"; \
+    try { \
+      $channel = if ("{{profile}}" -eq "release") { "release" } else { "dev" }; \
+      $tag = ""; \
+      if ($channel -eq "release") { \
+        $tag = (git describe --tags --exact-match 2>$null); \
+        if ($LASTEXITCODE -ne 0) { $tag = "" }; \
+      }; \
+      $tag = ($tag | Out-String).Trim(); \
+      $version = $env:LUBAN_DISPLAY_VERSION; \
+      if ([string]::IsNullOrWhiteSpace($version)) { \
+        $version = $tag; \
+        if (-not [string]::IsNullOrWhiteSpace($version) -and $version.StartsWith("v")) { $version = $version.Substring(1) }; \
+      }; \
+      if ([string]::IsNullOrWhiteSpace($version)) { $version = (node -p "require('./package.json').version" | Out-String).Trim() }; \
+      $commit = (git rev-parse HEAD 2>$null); \
+      if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) { $commit = "unknown" }; \
+      $commit = ($commit | Out-String).Trim(); \
+      $env:NEXT_PUBLIC_LUBAN_VERSION = $version; \
+      $env:NEXT_PUBLIC_LUBAN_BUILD_CHANNEL = $channel; \
+      $env:NEXT_PUBLIC_LUBAN_COMMIT = $commit; \
+      $env:NEXT_PUBLIC_LUBAN_GIT_TAG = $tag; \
+      $env:NEXT_PUBLIC_LUBAN_BUILD_TIME = (Get-Date -AsUTC -Format "yyyy-MM-ddTHH:mm:ssZ"); \
+      pnpm dev; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    } finally { \
+      Pop-Location; \
+    } \
+  } elseif ("{{cmd}}" -eq "dev-mock") { \
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm not found; install pnpm to run the web dev server"; exit 1 }; \
+    if (-not (Test-Path -LiteralPath "web/node_modules" -PathType Container)) { Push-Location "web"; try { pnpm install; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } finally { Pop-Location } }; \
+    Push-Location "web"; \
+    try { \
+      $channel = if ("{{profile}}" -eq "release") { "release" } else { "dev" }; \
+      $tag = ""; \
+      if ($channel -eq "release") { \
+        $tag = (git describe --tags --exact-match 2>$null); \
+        if ($LASTEXITCODE -ne 0) { $tag = "" }; \
+      }; \
+      $tag = ($tag | Out-String).Trim(); \
+      $version = $env:LUBAN_DISPLAY_VERSION; \
+      if ([string]::IsNullOrWhiteSpace($version)) { \
+        $version = $tag; \
+        if (-not [string]::IsNullOrWhiteSpace($version) -and $version.StartsWith("v")) { $version = $version.Substring(1) }; \
+      }; \
+      if ([string]::IsNullOrWhiteSpace($version)) { $version = (node -p "require('./package.json').version" | Out-String).Trim() }; \
+      $commit = (git rev-parse HEAD 2>$null); \
+      if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) { $commit = "unknown" }; \
+      $commit = ($commit | Out-String).Trim(); \
+      $env:NEXT_PUBLIC_LUBAN_MODE = "mock"; \
+      $env:NEXT_PUBLIC_LUBAN_VERSION = $version; \
+      $env:NEXT_PUBLIC_LUBAN_BUILD_CHANNEL = $channel; \
+      $env:NEXT_PUBLIC_LUBAN_COMMIT = $commit; \
+      $env:NEXT_PUBLIC_LUBAN_GIT_TAG = $tag; \
+      $env:NEXT_PUBLIC_LUBAN_BUILD_TIME = (Get-Date -AsUTC -Format "yyyy-MM-ddTHH:mm:ssZ"); \
+      pnpm dev; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    } finally { \
+      Pop-Location; \
+    } \
+  } else { \
+    Write-Error "usage: just web {build|run|dev|dev-mock} [release]"; \
+    exit 2 \
+  }
+
+app cmd profile="debug":
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  if ("{{cmd}}" -eq "build") { \
+    just -f {{justfile()}} web build "{{profile}}"; \
+    if ("{{profile}}" -eq "release") { cargo build -p luban_tauri --release } \
+    elseif ("{{profile}}" -eq "debug" -or "{{profile}}" -eq "dev") { cargo build -p luban_tauri } \
+    else { cargo build -p luban_tauri --profile "{{profile}}" } \
+  } elseif ("{{cmd}}" -eq "run") { \
+    just -f {{justfile()}} web build "{{profile}}"; \
+    if ("{{profile}}" -eq "release") { cargo run -p luban_tauri --release } \
+    elseif ("{{profile}}" -eq "debug" -or "{{profile}}" -eq "dev") { cargo run -p luban_tauri } \
+    else { cargo run -p luban_tauri --profile "{{profile}}" } \
+  } else { \
+    Write-Error "usage: just app {build|run} [release]"; \
+    exit 2 \
+  }
+
+test-ui:
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm not found; cannot run UI tests"; exit 1 }; \
+  Push-Location "web"; \
+  try { \
+    pnpm test:ui; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  } finally { \
+    Pop-Location; \
+  }
+
+test-ui-headed:
+  @$ErrorActionPreference = 'Stop'; \
+  if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $true }; \
+  if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm not found; cannot run UI tests"; exit 1 }; \
+  Push-Location "web"; \
+  try { \
+    $env:LUBAN_AGENT_BROWSER_HEADED = "1"; \
+    pnpm test:ui; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  } finally { \
+    Pop-Location; \
+  }
+
+run profile="debug":
+  @just -f {{justfile()}} web run "{{profile}}"
+
+run-server profile="debug":
+  @if ("{{profile}}" -eq "release") { cargo run -p luban_server --release } \
+  elseif ("{{profile}}" -eq "debug" -or "{{profile}}" -eq "dev") { cargo run -p luban_server } \
+  else { cargo run -p luban_server --profile "{{profile}}" }
+
+build profile="debug":
+  @just -f {{justfile()}} app build "{{profile}}"
+
+build-server profile="debug":
+  @if ("{{profile}}" -eq "release") { cargo build -p luban_server --release } \
+  elseif ("{{profile}}" -eq "debug" -or "{{profile}}" -eq "dev") { cargo build -p luban_server } \
+  else { cargo build -p luban_server --profile "{{profile}}" }
+
+ci:
+  @just -f {{justfile()}} fmt; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  just -f {{justfile()}} lint; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+  just -f {{justfile()}} test
+
+package target profile="release" out_dir="dist":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- package "{{target}}" --profile "{{profile}}" --out-dir "{{out_dir}}"
+
+upload package_env="dist/package.env" latest="true":
+  @if (-not (Test-Path -LiteralPath "{{package_env}}" -PathType Leaf)) { Write-Error "missing {{package_env}}; run: just package <target> [out_dir=...]"; exit 1 }; \
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- upload --package-env "{{package_env}}" --latest "{{latest}}"
+
+manifest packages_dir="dist" out="dist/latest.json":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- manifest --packages-dir "{{packages_dir}}" --out "{{out}}"
+
+upload-manifest manifest="dist/latest.json":
+  cargo run --quiet --manifest-path=dev/Cargo.toml -- upload-manifest --manifest "{{manifest}}"
