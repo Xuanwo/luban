@@ -58,6 +58,10 @@ export type MockFixtures = {
 }
 
 const FIXTURE_BASE_UNIX_MS = Date.UTC(2026, 0, 22, 12, 0, 0)
+const FIXTURE_RELATIVE_NOW_UNIX_MS = (() => {
+  const now = Date.now()
+  return now - (now % 60_000)
+})()
 
 function unixMs(offsetMs: number = 0): number {
   return FIXTURE_BASE_UNIX_MS + offsetMs
@@ -65,6 +69,10 @@ function unixMs(offsetMs: number = 0): number {
 
 function unixSeconds(offsetSeconds: number = 0): number {
   return Math.floor(FIXTURE_BASE_UNIX_MS / 1000) + offsetSeconds
+}
+
+function nowUnixSeconds(offsetSeconds: number = 0): number {
+  return Math.floor(FIXTURE_RELATIVE_NOW_UNIX_MS / 1000) + offsetSeconds
 }
 
 function dataUrlSvg(text: string): string {
@@ -263,6 +271,8 @@ export function defaultMockFixtures(): MockFixtures {
   const task9: WorkspaceThreadId = 9
   const task10: WorkspaceThreadId = 10
   const task11: WorkspaceThreadId = 11
+  const task12: WorkspaceThreadId = 12
+  const task13: WorkspaceThreadId = 13
 
   const project1: ProjectId = "mock-project-1"
   const project2: ProjectId = "mock-project-2"
@@ -412,6 +422,8 @@ export function defaultMockFixtures(): MockFixtures {
         { task_id: task1, remote_thread_id: null, title: "Mock task 1", created_at_unix_seconds: unixSeconds(-30), updated_at_unix_seconds: unixSeconds(-30), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task2, remote_thread_id: null, title: "Mock task 2", created_at_unix_seconds: unixSeconds(-10), updated_at_unix_seconds: unixSeconds(-10), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
         { task_id: task11, remote_thread_id: null, title: "Mock: Long conversation", created_at_unix_seconds: unixSeconds(-2), updated_at_unix_seconds: unixSeconds(-2), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task12, remote_thread_id: null, title: "Mock: 10 days old", created_at_unix_seconds: nowUnixSeconds(-10 * 24 * 60 * 60), updated_at_unix_seconds: nowUnixSeconds(-10 * 24 * 60 * 60), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
+        { task_id: task13, remote_thread_id: null, title: "Mock: 45 days old", created_at_unix_seconds: nowUnixSeconds(-45 * 24 * 60 * 60), updated_at_unix_seconds: nowUnixSeconds(-45 * 24 * 60 * 60), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
         { task_id: task4, remote_thread_id: null, title: "Validating: awaiting feedback", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task5, remote_thread_id: null, title: "Done: completed successfully", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task6, remote_thread_id: null, title: "Canceled: aborted by user", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },

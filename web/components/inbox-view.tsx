@@ -18,12 +18,14 @@ import { TaskActivityPanel } from "./task-activity-panel"
 import { TaskHeader } from "./shared/task-header"
 import { TaskStatusSelector } from "./shared/task-status-selector"
 import type { ChangedFile } from "./right-sidebar"
+import { InboxFilterPopover } from "./inbox-filter-popover"
 import { useLuban } from "@/lib/luban-context"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
 import { projectColorClass } from "@/lib/project-colors"
 import { fetchConversation, fetchTasks } from "@/lib/luban-http"
 import type { ConversationSnapshot, OperationStatus, TaskStatus, TasksSnapshot, TurnResult, TurnStatus } from "@/lib/luban-api"
 import { isMockMode } from "@/lib/luban-mode"
+import { applyInboxFilters, DEFAULT_INBOX_FILTERS, inboxFiltersEqual, type InboxFilters } from "@/lib/inbox-filters"
 import type { NewTaskDraft } from "@/lib/new-task-drafts"
 import { NEW_TASK_DRAFTS_CHANGED_EVENT, deleteNewTaskDraft, loadNewTaskDrafts } from "@/lib/new-task-drafts"
 import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
@@ -34,18 +36,20 @@ export interface InboxNotification {
   taskId: number
   taskTitle: string
   workdir: string
+  projectId: string
   projectName: string
   projectAvatarUrl: string
   projectFallbackAvatarUrl: string
   projectColor: string
   type: TurnResult | null
-  taskLifecycleStatus: TaskStatus
+  status: TaskStatus
   taskStatus: {
     agentRunStatus: OperationStatus
     turnStatus: TurnStatus
     lastTurnResult: TurnResult | null
     hasUnreadCompletion: boolean
   }
+  updatedAtUnixSeconds: number
   timestamp: string
   read: boolean
   isStarred: boolean
@@ -75,6 +79,14 @@ function buildFallbackAvatarUrl(displayName: string, size: number): string {
     `</svg>`,
   ].join("")
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function cloneInboxFilters(filters: InboxFilters): InboxFilters {
+  return {
+    projectIds: [...filters.projectIds],
+    statuses: [...filters.statuses],
+    updated: filters.updated,
+  }
 }
 
 function extractLatestAgentResponsePreviewLine(conversation: ConversationSnapshot): string | null {
@@ -234,6 +246,8 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [pendingDiffFile, setPendingDiffFile] = useState<ChangedFile | null>(null)
   const [nowMs, setNowMs] = useState<number | null>(null)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filters, setFilters] = useState<InboxFilters>(() => cloneInboxFilters(DEFAULT_INBOX_FILTERS))
   const [previewByNotificationId, setPreviewByNotificationId] = useState<
     Record<string, { userLine: string | null; agentLine: string | null; runStartedAtUnixMs: number | null } | null>
   >({})
@@ -376,7 +390,31 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return `${year}-${month}-${day}`
   }, [nowMs])
 
-  const notifications = useMemo(() => {
+  const nowUnixSeconds = useMemo(() => Math.floor((nowMs ?? Date.now()) / 1000), [nowMs])
+
+  const projectOptions = useMemo(() => {
+    if (!app) return [] as Array<{ id: string; name: string; avatarUrl: string; fallbackAvatarUrl: string }>
+    const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
+    const out = app.projects.map((p) => {
+      const name = displayNames.get(p.path) ?? p.slug
+      const fallbackAvatarUrl = buildFallbackAvatarUrl(name, 14)
+      const avatarUrl = p.is_git
+        ? isMockMode()
+          ? fallbackAvatarUrl
+          : `/api/projects/avatar?project_id=${encodeURIComponent(p.id)}`
+        : fallbackAvatarUrl
+      return {
+        id: p.id,
+        name,
+        avatarUrl,
+        fallbackAvatarUrl,
+      }
+    })
+    out.sort((a, b) => a.name.localeCompare(b.name))
+    return out
+  }, [app])
+
+  const allNotifications = useMemo(() => {
     if (!app || !tasksSnapshot) return [] as InboxNotification[]
 
     const displayNames = computeProjectDisplayNames(app.projects.map((p) => ({ path: p.path, name: p.name })))
@@ -442,18 +480,20 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
         taskId: t.task_id,
         taskTitle: t.title,
         workdir: t.workdir_name || t.branch_name,
+        projectId: t.project_id,
         projectName: projectInfo.name,
         projectAvatarUrl: projectInfo.avatarUrl,
         projectFallbackAvatarUrl: projectInfo.fallbackAvatarUrl,
         projectColor: projectInfo.color,
         type: t.last_turn_result,
-        taskLifecycleStatus: t.task_status,
+        status: t.task_status,
         taskStatus: {
           agentRunStatus: t.agent_run_status,
           turnStatus: t.turn_status,
           lastTurnResult: t.last_turn_result,
           hasUnreadCompletion: t.has_unread_completion,
         },
+        updatedAtUnixSeconds: t.updated_at_unix_seconds,
         timestamp: formatTimestamp(t.updated_at_unix_seconds),
         read: !t.has_unread_completion,
         isStarred: t.is_starred,
@@ -462,11 +502,20 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return out
   }, [app, formatTimestamp, tasksSnapshot])
 
+  const visibleNotifications = useMemo(() => {
+    return applyInboxFilters(allNotifications, filters, nowUnixSeconds)
+  }, [allNotifications, filters, nowUnixSeconds])
+
+  const projectsInInbox = useMemo(() => {
+    const ids = new Set(allNotifications.map((n) => n.projectId))
+    return projectOptions.filter((p) => ids.has(p.id))
+  }, [allNotifications, projectOptions])
+
   useEffect(() => {
-    if (notifications.length === 0) return
+    if (visibleNotifications.length === 0) return
 
     const concurrency = 4
-    const queue = notifications
+    const queue = visibleNotifications
       .map((n) => ({ id: n.id, workdirId: n.workdirId, taskId: n.taskId }))
       .filter((n) => previewByNotificationIdRef.current[n.id] === undefined && !previewInFlightRef.current.has(n.id))
 
@@ -512,14 +561,15 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [notifications])
+  }, [visibleNotifications])
 
   const selectedNotification = useMemo(() => {
     if (!selectedNotificationId) return null
-    return notifications.find((n) => n.id === selectedNotificationId) ?? null
-  }, [notifications, selectedNotificationId])
+    return visibleNotifications.find((n) => n.id === selectedNotificationId) ?? null
+  }, [selectedNotificationId, visibleNotifications])
 
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const unreadCount = visibleNotifications.filter((n) => !n.read).length
+  const filtersActive = !inboxFiltersEqual(filters, DEFAULT_INBOX_FILTERS)
 
   return (
     <div className="h-full flex" data-testid="inbox-view">
@@ -557,13 +607,25 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
             </button>
           </div>
           <div className="flex items-center gap-0.5">
-            <button
-              className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-              style={{ color: '#9b9b9b' }}
-              title="Filter"
+            <InboxFilterPopover
+              open={filterOpen}
+              onOpenChange={setFilterOpen}
+              projects={projectsInInbox}
+              filters={filters}
+              onFiltersChange={setFilters}
+              onClear={() => setFilters(cloneInboxFilters(DEFAULT_INBOX_FILTERS))}
             >
-              <Filter className="w-4 h-4" />
-            </button>
+              <button
+                type="button"
+                data-testid="inbox-filter-button"
+                aria-pressed={filterOpen || filtersActive}
+                className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
+                style={{ color: filtersActive ? "#5e6ad2" : "#9b9b9b" }}
+                title="Filter"
+              >
+                <Filter className="w-4 h-4" />
+              </button>
+            </InboxFilterPopover>
             <button
               className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
               style={{ color: '#9b9b9b' }}
@@ -576,56 +638,90 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
 
         {/* Notification List */}
         <div className="flex-1 overflow-y-auto">
-          {notifications.map((notification, idx) => {
-            const preview = previewByNotificationId[notification.id]
-            const isRunning =
-              notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
+          {visibleNotifications.length === 0 ? (
+            <div className="flex items-center justify-center h-full px-6" style={{ color: "#9b9b9b" }}>
+              <div className="flex flex-col items-center gap-2">
+                <span className="text-[13px]">
+                  {allNotifications.length === 0
+                    ? "No notifications"
+                    : filtersActive
+                      ? "No matching notifications"
+                      : "No notifications (Done is hidden by default)"}
+                </span>
+                {allNotifications.length > 0 ? (
+                  <button
+                    type="button"
+                    data-testid="inbox-filter-empty-action"
+                    className="h-7 px-2.5 rounded-md hover:bg-[#eeeeee] transition-colors text-[12px] font-medium"
+                    style={{ color: "#6b6b6b" }}
+                    onClick={() => {
+                      if (filtersActive) {
+                        setFilters(cloneInboxFilters(DEFAULT_INBOX_FILTERS))
+                        return
+                      }
+                      setFilters((prev) => {
+                        if (prev.statuses.includes("done")) return prev
+                        return { ...prev, statuses: [...prev.statuses, "done"] }
+                      })
+                    }}
+                  >
+                    {filtersActive ? "Clear filters" : "Show done"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            visibleNotifications.map((notification, idx) => {
+              const preview = previewByNotificationId[notification.id]
+              const isRunning =
+                notification.taskStatus.agentRunStatus === "running" || notification.taskStatus.turnStatus === "running"
 
-            let previewText = "Loading response..."
-            if (preview !== undefined) {
-              if (preview == null) {
-                previewText = "No agent response yet."
-              } else {
-                const selected = isRunning ? preview.userLine ?? preview.agentLine : preview.agentLine ?? preview.userLine
-                previewText = selected ?? "No agent response yet."
+              let previewText = "Loading response..."
+              if (preview !== undefined) {
+                if (preview == null) {
+                  previewText = "No agent response yet."
+                } else {
+                  const selected = isRunning ? preview.userLine ?? preview.agentLine : preview.agentLine ?? preview.userLine
+                  previewText = selected ?? "No agent response yet."
+                }
               }
-            }
 
-            const timestampText =
-              isRunning && preview && preview.runStartedAtUnixMs != null
-                ? formatTimestamp(Math.floor(preview.runStartedAtUnixMs / 1000))
-                : notification.timestamp
+              const timestampText =
+                isRunning && preview && preview.runStartedAtUnixMs != null
+                  ? formatTimestamp(Math.floor(preview.runStartedAtUnixMs / 1000))
+                  : notification.timestamp
 
-            return (
-              <NotificationRow
-                key={notification.id}
-                notification={notification}
-                previewText={previewText}
-                timestampText={timestampText}
-                testId={`inbox-notification-row-${idx}`}
-                selected={selectedNotification?.id === notification.id}
-                onClick={() => {
-                  setSelectedNotificationId(notification.id)
-                  setTasksSnapshot((prev) => {
-                    if (!prev) return prev
-                    return {
-                      ...prev,
-                      tasks: prev.tasks.map((t) =>
-                        t.workdir_id === notification.workdirId && t.task_id === notification.taskId
-                          ? { ...t, has_unread_completion: false }
-                          : t,
-                      ),
-                    }
-                  })
-                  void (async () => {
-                    await openWorkdir(notification.workdirId)
-                    await activateTask(notification.taskId)
-                  })()
-                }}
-                onDoubleClick={() => onOpenFullView?.(notification)}
-              />
-            )
-          })}
+              return (
+                <NotificationRow
+                  key={notification.id}
+                  notification={notification}
+                  previewText={previewText}
+                  timestampText={timestampText}
+                  testId={`inbox-notification-row-${idx}`}
+                  selected={selectedNotification?.id === notification.id}
+                  onClick={() => {
+                    setSelectedNotificationId(notification.id)
+                    setTasksSnapshot((prev) => {
+                      if (!prev) return prev
+                      return {
+                        ...prev,
+                        tasks: prev.tasks.map((t) =>
+                          t.workdir_id === notification.workdirId && t.task_id === notification.taskId
+                            ? { ...t, has_unread_completion: false }
+                            : t,
+                        ),
+                      }
+                    })
+                    void (async () => {
+                      await openWorkdir(notification.workdirId)
+                      await activateTask(notification.taskId)
+                    })()
+                  }}
+                  onDoubleClick={() => onOpenFullView?.(notification)}
+                />
+              )
+            })
+          )}
         </div>
       </div>
 
@@ -652,7 +748,7 @@ export function InboxView({ onOpenFullView, onOpenDraft }: InboxViewProps) {
               actionBar={
                 <div className="flex items-center gap-2 min-w-0">
                   <TaskStatusSelector
-                    status={selectedNotification.taskLifecycleStatus}
+                    status={selectedNotification.status}
                     onStatusChange={(status) =>
                       handleTaskLifecycleStatusChange({
                         workdirId: selectedNotification.workdirId,
