@@ -42,7 +42,41 @@ export async function runNewTaskModal({ page }) {
   await page.getByRole('menuitem').filter({ hasText: 'feat-ui' }).first().click();
   await waitForDataAttribute(workdirSelector, 'data-selected-workdir-id', '2', 10_000);
 
-  await page.getByTestId('new-task-input').fill('Fix: programmatic agent-browser smoke');
+  // Composer auto-grows and then becomes scrollable, and Expand increases the editable area (non-fullscreen).
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="new-task-input"]');
+    if (!el) return false;
+    const height = Number.parseFloat(el.style.height || '0');
+    return Number.isFinite(height) && height >= 80;
+  });
+  const inputLocator = page.getByTestId('new-task-input');
+  const initialHeight = await inputLocator.evaluate((el) => el.getBoundingClientRect().height);
+  const longText = Array.from({ length: 80 }, (_, i) => `Line ${i + 1}`).join('\n');
+  await inputLocator.fill(longText);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="new-task-input"]');
+    if (!el) return false;
+    return window.getComputedStyle(el).overflowY === 'auto';
+  });
+  const collapsedHeight = await inputLocator.evaluate((el) => el.getBoundingClientRect().height);
+  if (!(collapsedHeight > initialHeight)) {
+    throw new Error(`expected textarea to grow (initial=${initialHeight}, collapsed=${collapsedHeight})`);
+  }
+  await page.getByTestId('new-task-expand-button').click();
+  await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    (prevHeight) => {
+      const el = document.querySelector('[data-testid="new-task-input"]');
+      if (!el) return false;
+      return el.getBoundingClientRect().height > prevHeight + 10;
+    },
+    collapsedHeight,
+  );
+  const expandedHeight = await inputLocator.evaluate((el) => el.getBoundingClientRect().height);
+  if (!(expandedHeight > collapsedHeight)) {
+    throw new Error(`expected Expand to increase textarea height (collapsed=${collapsedHeight}, expanded=${expandedHeight})`);
+  }
+
   await page.keyboard.press('Escape');
   await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
 

@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import {
   X,
   Maximize2,
+  Minimize2,
   GitBranch,
   Paperclip,
   Check,
@@ -89,6 +90,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
   const [selectedWorkdirId, setSelectedWorkdirId] = useState<number | null>(null)
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null)
+  const [isExpanded, setIsExpanded] = useState(false)
   const [projectSearch, setProjectSearch] = useState("")
   const [workdirSearch, setWorkdirSearch] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -184,6 +186,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     prevOpenRef.current = open
     if (prev || !open) return
 
+    setIsExpanded(false)
     setProjectSearch("")
     setWorkdirSearch("")
     hasUserEditedRef.current = false
@@ -332,6 +335,37 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [open])
+
+  const syncTextareaHeight = useCallback(() => {
+    const el = inputRef.current
+    if (!el) return
+
+    const minHeightPx = 80
+    const preferredMaxHeightPx = isExpanded ? 520 : 240
+    const viewportCapPx =
+      typeof window !== "undefined"
+        ? Math.floor(window.innerHeight * (isExpanded ? 0.65 : 0.4))
+        : preferredMaxHeightPx
+    const maxHeightPx = Math.max(minHeightPx, Math.min(preferredMaxHeightPx, viewportCapPx))
+
+    el.style.height = "auto"
+    const scrollHeightPx = el.scrollHeight
+    const nextHeightPx = Math.max(minHeightPx, Math.min(scrollHeightPx, maxHeightPx))
+    el.style.height = `${nextHeightPx}px`
+    el.style.overflowY = scrollHeightPx > maxHeightPx ? "auto" : "hidden"
+  }, [isExpanded])
+
+  useEffect(() => {
+    if (!open) return
+    syncTextareaHeight()
+  }, [open, input, isExpanded, syncTextareaHeight])
+
+  useEffect(() => {
+    if (!open) return
+    const onResize = () => syncTextareaHeight()
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [open, syncTextareaHeight])
 
   const revokeAttachmentUrls = (items: PendingAttachment[]) => {
     for (const item of items) {
@@ -605,11 +639,15 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     >
       <div
         data-testid="new-task-modal"
-        className="w-full max-w-[740px] flex flex-col"
+        data-expanded={isExpanded ? "true" : "false"}
+        className={`w-full flex flex-col transition-[max-width,max-height] duration-150 ${
+          isExpanded ? "max-w-[980px] max-h-[85vh]" : "max-w-[740px] max-h-[70vh]"
+        }`}
         style={{
           backgroundColor: "#ffffff",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           borderRadius: "12px",
+          overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -889,9 +927,11 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
               data-testid="new-task-expand-button"
               className="w-7 h-7 flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
               style={{ color: "#666", borderRadius: "5px" }}
-              title="Expand"
+              title={isExpanded ? "Collapse" : "Expand"}
+              aria-pressed={isExpanded}
+              onClick={() => setIsExpanded((v) => !v)}
             >
-              <Maximize2 className="w-4 h-4" />
+              {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
             <button
               data-testid="new-task-close-button"
@@ -909,7 +949,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
         </div>
 
         {/* Content Area */}
-        <div className="px-4 pt-2 pb-4">
+        <div className="px-4 pt-2 pb-4 flex-1 overflow-y-auto">
           {/* Description */}
           <textarea
             ref={inputRef}
