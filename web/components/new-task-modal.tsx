@@ -169,15 +169,15 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
       void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
       return
     }
-    const stashedWorkdirId = selectedWorkdirId === -1 ? null : selectedWorkdirId
     void saveNewTaskStash({
       text: input,
       projectId: effectiveProjectId || null,
-      workdirId: stashedWorkdirId,
+      // Do not persist workdir selection; always use the contextual default on next open.
+      workdirId: null,
       editingDraftId,
       updatedAtUnixMs: Date.now(),
     }).catch((err) => console.warn("saveNewTaskStash failed", err))
-  }, [editingDraftId, effectiveProjectId, input, selectedWorkdirId])
+  }, [editingDraftId, effectiveProjectId, input])
 
   useEffect(() => {
     const prev = prevOpenRef.current
@@ -211,8 +211,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
           setInput(stash.text)
           setSelectedProjectId(stash.projectId ?? defaultProjectId ?? "")
           setSelectedWorkdirId(
-            stash.workdirId ??
-              (stash.projectId ? pickDefaultWorkdirIdForProjectId(stash.projectId) : null) ??
+            (stash.projectId ? pickDefaultWorkdirIdForProjectId(stash.projectId) : null) ??
               (defaultProjectId ? pickDefaultWorkdirIdForProjectId(defaultProjectId) : null),
           )
           setEditingDraftId(stash.editingDraftId)

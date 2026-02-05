@@ -37,7 +37,27 @@ export async function runNewTaskModal({ page }) {
   await workdirSelector.waitFor({ state: 'visible' });
   await waitForDataAttribute(workdirSelector, 'data-selected-workdir-id', '1', 10_000);
 
+  // Changing the workdir and stashing should not persist that selection across opens.
+  await workdirSelector.click();
+  await page.getByRole('menuitem').filter({ hasText: 'feat-ui' }).first().click();
+  await waitForDataAttribute(workdirSelector, 'data-selected-workdir-id', '2', 10_000);
+
   await page.getByTestId('new-task-input').fill('Fix: programmatic agent-browser smoke');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
+
+  await page.getByTestId('new-task-button').click();
+  await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
+  await waitForDataAttribute(workdirSelector, 'data-selected-workdir-id', '1', 10_000);
+
+  // Clear stash to avoid interfering with later scenarios.
+  await page.getByTestId('new-task-input').fill('');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('new-task-modal').waitFor({ state: 'hidden' });
+
+  await page.getByTestId('new-task-button').click();
+  await page.getByTestId('new-task-modal').waitFor({ state: 'visible' });
+
   const pngPath = writeTempPng();
   try {
     await page.getByTestId('new-task-attachment-input').setInputFiles(pngPath);
