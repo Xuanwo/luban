@@ -36,6 +36,8 @@ import { runTaskListNavigation } from './scenarios/task-list-navigation.mjs';
 import { runTaskSummariesEventsRefresh } from './scenarios/task-summaries-events-refresh.mjs';
 import { runQueuedPrompts } from './scenarios/queued-prompts.mjs';
 import { runProjectAllTasksView } from './scenarios/project-all-tasks-view.mjs';
+import { runKeyboardSequenceShortcuts } from './scenarios/keyboard-sequence-shortcuts.mjs';
+import { runTurnDurationEstimate } from './scenarios/turn-duration-estimate.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -178,14 +180,16 @@ async function main() {
 			    await runStarFavorites({ page, baseUrl });
     await runNewTaskDefaultProjectFollowsContext({ page, baseUrl });
     await runSettingsPanel({ page, baseUrl });
-    await runTaskListNavigation({ page, baseUrl });
-    await runTaskStatusChange({ page, baseUrl });
-    await runQueuedPrompts({ page, baseUrl });
-    await runLatestEventsVisible({ page, baseUrl });
+	    await runTaskListNavigation({ page, baseUrl });
+	    await runTaskStatusChange({ page, baseUrl });
+	    await runKeyboardSequenceShortcuts({ page, baseUrl });
+	    await runQueuedPrompts({ page, baseUrl });
+	    await runLatestEventsVisible({ page, baseUrl });
     await runActivityWindowing({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
     await runEscapeDoesNotLeakFromChatInput({ page, baseUrl });
     await runAgentRunningEventNoChevron({ page, baseUrl });
+    await runTurnDurationEstimate({ page, baseUrl });
     await runNewTaskDoubleSubmitNoDuplicate({ page, baseUrl });
     await runTaskSummariesEventsRefresh({ page, baseUrl });
     await runNoRightSidebar({ page, baseUrl });

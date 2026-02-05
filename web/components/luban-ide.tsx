@@ -9,6 +9,7 @@ import { InboxView, type InboxNotification } from "./inbox-view"
 import { SettingsPanel } from "./settings-panel"
 import { NewTaskModal } from "./new-task-modal"
 import { NewTaskDraftsDialog } from "./new-task-drafts-dialog"
+import { GlobalSequenceShortcuts } from "./global-sequence-shortcuts"
 import { useLuban } from "@/lib/luban-context"
 import type { TaskSummarySnapshot } from "@/lib/luban-api"
 import { computeProjectDisplayNames } from "@/lib/project-display-names"
@@ -39,6 +40,7 @@ export function LubanIDE() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [newTaskDrafts, setNewTaskDrafts] = useState<NewTaskDraft[]>([])
   const [newTaskDraftsOpen, setNewTaskDraftsOpen] = useState(false)
+  const [statusPickerRequestSeq, setStatusPickerRequestSeq] = useState(0)
 
   useEffect(() => {
     const refresh = () => {
@@ -158,6 +160,7 @@ export function LubanIDE() {
       <TaskListView
         activeProjectId={activeProjectId}
         mode={taskListMode}
+        statusPickerRequestSeq={statusPickerRequestSeq}
         onModeChange={(mode) => {
           setActiveView(mode === "all" ? "tasks-all" : mode === "backlog" ? "tasks-backlog" : "tasks")
         }}
@@ -175,6 +178,22 @@ export function LubanIDE() {
 
   return (
     <>
+      <GlobalSequenceShortcuts
+        enabled={!settingsOpen && !newTaskOpen && !newTaskDraftsOpen}
+        canGoProjectModes={activeProjectId != null}
+        canOpenStatusPicker={activeProjectId != null && activeView !== "inbox" && !showDetail}
+        onNewTask={() => {
+          setNewTaskInitialDraft(null)
+          setNewTaskOpen(true)
+        }}
+        onGoInbox={() => handleViewChange("inbox")}
+        onSetTaskListMode={(mode) => {
+          setSelectedTask(null)
+          setShowDetail(false)
+          setActiveView(mode === "all" ? "tasks-all" : mode === "backlog" ? "tasks-backlog" : "tasks")
+        }}
+        onOpenStatusPicker={() => setStatusPickerRequestSeq((prev) => prev + 1)}
+      />
       <LubanLayout
         sidebar={
           <LubanSidebar

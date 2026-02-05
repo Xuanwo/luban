@@ -909,6 +909,37 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       })
     }
 
+    const shouldArchive =
+      (a.task_status === "done" || a.task_status === "canceled") &&
+      snap.tasks.every((t) => t.task_status === "done" || t.task_status === "canceled")
+    if (shouldArchive) {
+      state.app.projects = state.app.projects.map((p) => ({
+        ...p,
+        workdirs: p.workdirs.map((w) => (w.id === a.workdir_id ? { ...w, status: "archived" } : w)),
+      }))
+
+      const updatedConvo = state.conversationsByWorkdirTask.get(key) ?? null
+      if (updatedConvo) {
+        const alreadyArchived = updatedConvo.entries.some(
+          (e) => e.type === "system_event" && e.event?.event_type === "task_archived",
+        )
+        if (!alreadyArchived) {
+          state.conversationsByWorkdirTask.set(key, {
+            ...updatedConvo,
+            entries: [
+              ...updatedConvo.entries,
+              {
+                type: "system_event",
+                entry_id: newEntryId("se"),
+                created_at_unix_ms: Date.now(),
+                event: { event_type: "task_archived" },
+              },
+            ],
+          })
+        }
+      }
+    }
+
     const rev = bumpRev(state)
     snap.rev = rev
     if (convo) {

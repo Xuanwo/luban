@@ -275,6 +275,7 @@ pub trait ProjectWorkspaceService: Send + Sync {
         &self,
         project_path: PathBuf,
         worktree_path: PathBuf,
+        branch_name: String,
     ) -> Result<(), String>;
 
     fn rename_workspace_branch(

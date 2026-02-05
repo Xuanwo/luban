@@ -33,6 +33,7 @@ Wire invariant for conversations:
 
 - `ConversationEntry` is tagged by `type` and only includes: `system_event`, `user_event`, `agent_event`.
 - Each `ConversationEntry` includes a stable `entry_id` (unique per entry).
+- Each `ConversationEntry` includes `created_at_unix_ms` (millisecond timestamp).
 - Streaming/tool updates are sent as additional appended `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
 
 ## Invariants

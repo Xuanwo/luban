@@ -1289,7 +1289,7 @@ function ActivityStreamSection({
         ),
       }
     })
-  }, [agentTurnUiStateById, expandedGroups, groups, onCancelAgentTurn, toggleGroup, workspaceId])
+  }, [agentTurnUiStateById, expandedGroups, groups, onCancelAgentTurn, taskId, toggleGroup, workspaceId])
 
   const shouldWindow = items.length > 200
 

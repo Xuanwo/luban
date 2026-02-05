@@ -48,7 +48,6 @@ export type AgentRunningStatus = "running" | "cancelling" | "paused" | "resuming
 export function AgentRunningCard({
   activities,
   elapsedTime = "00:00",
-  turnStartedAtMs,
   status,
   hasQueuedMessages,
   editorValue,
@@ -70,7 +69,6 @@ export function AgentRunningCard({
 }: {
   activities: ActivityEvent[]
   elapsedTime?: string
-  turnStartedAtMs?: number | null
   status: AgentRunningStatus
   hasQueuedMessages: boolean
   editorValue: string
@@ -96,7 +94,7 @@ export function AgentRunningCard({
   const editorContainerRef = React.useRef<HTMLDivElement>(null)
   const anchorTopRef = React.useRef<number | null>(null)
   const isCompensatingScrollRef = React.useRef(false)
-  const { durationLabel: activityDurationLabel } = useActivityTiming(activities, { turnStartedAtMs })
+  const { durationLabel: activityDurationLabel } = useActivityTiming(activities)
 
   const showEditor = status === "cancelling" || status === "resuming"
   const isPaused = status === "paused"

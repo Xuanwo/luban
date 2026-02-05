@@ -133,20 +133,32 @@ function InboxTaskStatusIndicator({
   hasUnreadCompletion: boolean
 }) {
   const label = taskStatusConfig[lifecycleStatus]?.label ?? lifecycleStatus
+
+  if (isRunning) {
+    return (
+      <div
+        className="flex items-center justify-end"
+        title="Agent: running"
+        data-testid="inbox-notification-status-indicator"
+      >
+        <Loader2
+          className="w-[14px] h-[14px] animate-spin"
+          style={{ color: "#5e6ad2" }}
+          data-testid="inbox-notification-runner-spinner"
+          aria-label="Agent running"
+        />
+      </div>
+    )
+  }
+
   return (
     <div
       className="flex items-center justify-end gap-1"
-      title={isRunning ? `Task status: ${label} (runner running)` : `Task status: ${label}`}
+      title={`Task status: ${label}`}
       data-testid="inbox-notification-status-indicator"
     >
       <TaskStatusIcon status={lifecycleStatus} size="xs" className="w-[14px] h-[14px]" />
-      {isRunning ? (
-        <Loader2
-          className="w-[12px] h-[12px] animate-spin"
-          style={{ color: "#5e6ad2" }}
-          data-testid="inbox-notification-runner-spinner"
-        />
-      ) : hasUnreadCompletion ? (
+      {hasUnreadCompletion ? (
         <span
           className="w-[6px] h-[6px] rounded-full"
           style={{ backgroundColor: "#5e6ad2" }}
@@ -417,6 +429,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
       const workdir = workdirById.get(t.workdir_id) ?? null
       if (!workdir) return false
       if (workdir.status !== "active") return false
+      if (t.task_status === "done" || t.task_status === "canceled") return false
       return true
     })
 
@@ -647,6 +660,10 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
                     variant="pill"
                     size="sm"
                     triggerTestId="inbox-task-status-trigger"
+                    disabled={
+                      selectedNotification.taskLifecycleStatus === "done" ||
+                      selectedNotification.taskLifecycleStatus === "canceled"
+                    }
                   />
                 </div>
               }
