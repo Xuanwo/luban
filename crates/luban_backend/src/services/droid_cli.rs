@@ -85,8 +85,6 @@ enum DroidToolSummary {
 fn summarize_droid_tool(name: &str, input: &Value) -> (DroidToolKind, DroidToolSummary) {
     let key = tool_name_key(name);
 
-    // Reason: Droid CLI uses PascalCase tool names like "Execute" which
-    // lowercases to "execute". We include both standard and Droid-specific names.
     if key == "bash"
         || key == "shell"
         || key == "exec"
@@ -174,8 +172,13 @@ pub fn parse_droid_stream_json_line(
     }
 
     if type_name == "message" {
-        // Reason: Droid "message" events may carry either "text" (agent reply)
-        // or "thinking" (reasoning trace). We accumulate both.
+        // Reason: Droid CLI emits message events for both user and assistant.
+        // We only process assistant messages; user messages are echoes of the prompt.
+        let role = payload.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "user" {
+            return Ok(Vec::new());
+        }
+
         let thinking = payload
             .get("thinking")
             .and_then(|v| v.as_str())
@@ -232,21 +235,13 @@ pub fn parse_droid_stream_json_line(
         if id.is_empty() {
             return Ok(Vec::new());
         }
-        // Reason: Droid CLI uses "toolName" for the tool name and "parameters" for
-        // the tool input. We also check common alternatives ("name", "tool_name",
-        // "tool") so the parser stays resilient to future CLI changes.
         let name = payload
             .get("toolName")
-            .or_else(|| payload.get("name"))
-            .or_else(|| payload.get("tool_name"))
-            .or_else(|| payload.get("tool"))
             .and_then(|v| v.as_str())
             .unwrap_or("tool")
             .to_owned();
         let input = payload
             .get("parameters")
-            .or_else(|| payload.get("input"))
-            .or_else(|| payload.get("arguments"))
             .cloned()
             .unwrap_or(Value::Null);
 
@@ -328,17 +323,10 @@ pub fn parse_droid_stream_json_line(
             return Ok(Vec::new());
         }
 
-        // Reason: Droid CLI uses "value" for the result content and "isError" for
-        // the error flag. We also check alternatives for resilience.
-        let content = payload
-            .get("value")
-            .or_else(|| payload.get("content"))
-            .cloned()
-            .unwrap_or(Value::Null);
+        let content = payload.get("value").cloned().unwrap_or(Value::Null);
         let result_text = value_as_string(&content).unwrap_or_else(|| content.to_string());
         let is_error = payload
             .get("isError")
-            .or_else(|| payload.get("is_error"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -675,6 +663,18 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn skips_user_role_messages() {
+        let mut state = DroidStreamState::new();
+        let events = parse_droid_stream_json_line(
+            &mut state,
+            r#"{"type":"message","role":"user","id":"u1","text":"read README.md"}"#,
+        )
+        .expect("parse ok");
+        assert!(events.is_empty(), "user messages should be skipped");
+        assert!(state.agent_message.is_empty(), "user text should not accumulate");
+    }
+
     // -- Tests matching the actual Droid CLI stream-json format --
 
     #[test]
@@ -770,64 +770,6 @@ mod tests {
                     id, status: AgentMcpToolCallStatus::Failed, ..
                 }
             }] if id == "tc4"
-        ));
-    }
-
-    // -- Tests for fallback field names (resilience against future CLI changes) --
-
-    #[test]
-    fn parses_tool_call_with_name_and_input_fallback() {
-        let mut state = DroidStreamState::new();
-        let events = parse_droid_stream_json_line(
-            &mut state,
-            r#"{"type":"tool_call","id":"tc5","name":"bash","input":{"command":"echo hi"}}"#,
-        )
-        .expect("parse ok");
-        assert!(matches!(
-            events.as_slice(),
-            [AgentThreadEvent::ItemStarted {
-                item: AgentThreadItem::CommandExecution { id, command, .. }
-            }] if id == "tc5" && command == "echo hi"
-        ));
-    }
-
-    #[test]
-    fn parses_tool_result_with_content_and_is_error_fallback() {
-        let mut state = DroidStreamState::new();
-        let _ = parse_droid_stream_json_line(
-            &mut state,
-            r#"{"type":"tool_call","id":"tc6","toolName":"Grep","parameters":{"pattern":"todo"}}"#,
-        )
-        .expect("parse ok");
-
-        let events = parse_droid_stream_json_line(
-            &mut state,
-            r#"{"type":"tool_result","tool_call_id":"tc6","content":"match found","is_error":false}"#,
-        )
-        .expect("parse ok");
-        assert!(matches!(
-            events.as_slice(),
-            [AgentThreadEvent::ItemCompleted {
-                item: AgentThreadItem::McpToolCall {
-                    id, status: AgentMcpToolCallStatus::Completed, ..
-                }
-            }] if id == "tc6"
-        ));
-    }
-
-    #[test]
-    fn parses_mcp_tool_call_with_tool_name_fallback() {
-        let mut state = DroidStreamState::new();
-        let events = parse_droid_stream_json_line(
-            &mut state,
-            r#"{"type":"tool_call","id":"tc7","tool_name":"list_dir","input":{"path":"."}}"#,
-        )
-        .expect("parse ok");
-        assert!(matches!(
-            events.as_slice(),
-            [AgentThreadEvent::ItemStarted {
-                item: AgentThreadItem::McpToolCall { id, server, tool, .. }
-            }] if id == "tc7" && server == "droid" && tool == "list_dir"
         ));
     }
 
