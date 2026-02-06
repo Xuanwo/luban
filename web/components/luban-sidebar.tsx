@@ -142,6 +142,7 @@ function ProjectItem({
         className="flex-1 min-w-0 flex items-center gap-2 outline-none"
       >
         {avatarUrl && !avatarLoadFailed ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={avatarUrl}
             alt=""

@@ -671,11 +671,12 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
                   }}
                   disabled={executingMode != null}
                 >
-	                  {/* Project indicator */}
-	                  {selectedProject != null && selectedProject.isGit ? (
-	                    <img
-	                      src={selectedProject.avatarUrl ?? selectedProject.fallbackAvatarUrl}
-	                      alt=""
+		                  {/* Project indicator */}
+		                  {selectedProject != null && selectedProject.isGit ? (
+		                    /* eslint-disable-next-line @next/next/no-img-element */
+		                    <img
+		                      src={selectedProject.avatarUrl ?? selectedProject.fallbackAvatarUrl}
+		                      alt=""
 	                      width={12}
 	                      height={12}
 	                      className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 rounded overflow-hidden"
@@ -733,11 +734,12 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
 	                      }}
 	                      className="flex items-center justify-between h-8 px-2 rounded cursor-pointer hover:bg-[#f5f5f5] focus:bg-[#f5f5f5] outline-none"
 	                    >
-		                      <div className="flex items-center gap-2">
-		                        {p.isGit ? (
-	                          <img
-	                            src={p.avatarUrl ?? p.fallbackAvatarUrl}
-	                            alt=""
+			                      <div className="flex items-center gap-2">
+			                        {p.isGit ? (
+		                          /* eslint-disable-next-line @next/next/no-img-element */
+		                          <img
+		                            src={p.avatarUrl ?? p.fallbackAvatarUrl}
+		                            alt=""
 	                            width={16}
 	                            height={16}
 	                            className="w-4 h-4 rounded overflow-hidden flex-shrink-0"

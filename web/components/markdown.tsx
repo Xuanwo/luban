@@ -58,8 +58,8 @@ export const Markdown = memo(
           ),
           img: ({ className, src, alt, ...props }) => {
             if (!src) return null
-            // eslint-disable-next-line @next/next/no-img-element
             return (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 className={cn("my-2 max-w-full h-auto rounded-md border border-border/50", className)}
                 src={String(src)}

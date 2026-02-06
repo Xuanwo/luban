@@ -201,6 +201,7 @@ function NotificationRow({ notification, previewText, timestampText, testId, sel
       <div className="flex-1 min-w-0">
         {/* Project + Title row */}
         <div className="flex items-center gap-1.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             data-testid="inbox-notification-project-avatar"
             src={notification.projectAvatarUrl}
@@ -284,13 +285,13 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
   const previewInFlightRef = useRef<Set<string>>(new Set())
   const prevWsConnectedRef = useRef(false)
   const stableUpdatedAtByTaskRef = useRef<Map<string, number>>(new Map())
+  const hasApp = app != null
 
   useEffect(() => {
     previewByNotificationIdRef.current = previewByNotificationId
   }, [previewByNotificationId])
 
   useEffect(() => {
-    const hasApp = app != null
     if (!hasApp) {
       setTasksSnapshot(null)
       stableUpdatedAtByTaskRef.current = new Map()
@@ -312,7 +313,7 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
     return () => {
       cancelled = true
     }
-  }, [app != null, refreshSeq])
+  }, [hasApp, refreshSeq])
 
   const refreshTasks = useCallback(async () => {
     if (!app) return

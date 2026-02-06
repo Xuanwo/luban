@@ -47,6 +47,7 @@ export function ProjectIcon({ name, color, avatarUrl, testId }: ProjectInfo & { 
 
   if (avatarUrl && !avatarLoadFailed) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         data-testid={testId}
         src={avatarUrl}

@@ -152,6 +152,7 @@ function TaskAgentPill({
   const avatar = (() => {
     if (runner === "amp") {
       return (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           data-agent-runner-icon="amp"
           src={AMP_MARK_URL}

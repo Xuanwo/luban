@@ -1065,7 +1065,6 @@ export function ChatPanel({
       agentEditorAttachments,
       agentEditorValue,
       agentRunElapsedLabel,
-      agentRunStartedAtMs,
       agentStatus,
       attachmentsFromRefs,
       codexCustomPrompts,

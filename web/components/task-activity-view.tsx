@@ -13,6 +13,7 @@ import {
   FileCode,
   FileText,
   Loader2,
+  MessageSquareText,
   Pause,
   Pencil,
   Terminal,
@@ -43,7 +44,17 @@ function AgentRunnerIcon({
   className?: string
 }): React.ReactElement {
   if (runner === "amp") {
-    return <img data-agent-runner-icon="amp" src={AMP_MARK_URL} alt="" aria-hidden="true" className={className} />
+    return (
+      <Image
+        data-agent-runner-icon="amp"
+        src={AMP_MARK_URL}
+        alt=""
+        aria-hidden="true"
+        className={className}
+        width={14}
+        height={14}
+      />
+    )
   }
 
   if (runner === "claude") {
@@ -193,8 +204,11 @@ interface ActivityEventItemProps {
 
 function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEventItemProps) {
   const detail = typeof event.detail === "string" ? event.detail : ""
+  const isAssistantMessage = event.type === "assistant_message"
   const hasExpandableDetail = event.type === "bash" || detail.trim().length > 0
-  const hasDuration = typeof duration === "string" && duration.trim().length > 0
+  const canToggle = hasExpandableDetail && !isAssistantMessage
+  const shouldShowDetail = hasExpandableDetail && isExpanded
+  const hasDuration = !isAssistantMessage && typeof duration === "string" && duration.trim().length > 0
 
   const icon = (() => {
     switch (event.type) {
@@ -210,18 +224,55 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
         return <Eye className="w-3.5 h-3.5" />
       case "complete":
         return <CheckCircle2 className="w-3.5 h-3.5" />
+      case "assistant_message":
+        return <MessageSquareText className="w-3.5 h-3.5" />
       default:
         return <Wrench className="w-3.5 h-3.5" />
     }
   })()
 
+  if (isAssistantMessage) {
+    const assistantIcon = event.status === "running" ? (
+      <Loader2 data-testid="event-running-icon" className="w-3.5 h-3.5 animate-spin" />
+    ) : (
+      icon
+    )
+
+    return (
+      <div className="group/event py-1">
+        <div className="flex items-start gap-2">
+          <div
+            data-testid="activity-event-icon"
+            className="flex items-center justify-center flex-shrink-0"
+            style={{ width: "14px", height: "16.8px", marginLeft: "3px", marginTop: "2px" }}
+          >
+            {assistantIcon}
+          </div>
+          <div
+            className="flex-1 py-1.5 mb-1 rounded luban-font-chat"
+            style={{
+              paddingLeft: "8px",
+              paddingRight: "8px",
+              fontSize: "14px",
+              lineHeight: "22px",
+              color: COLORS.textPrimary,
+              backgroundColor: "rgba(0,0,0,0.02)",
+            }}
+          >
+            <Markdown content={detail} enableMermaid />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="group/event">
       <button
-        onClick={() => hasExpandableDetail && onToggle()}
+        onClick={() => canToggle && onToggle()}
         className={cn(
           "w-full flex items-center gap-2 py-1 rounded transition-colors",
-          hasExpandableDetail ? "hover:bg-black/[0.03] cursor-pointer" : "cursor-default"
+          canToggle ? "hover:bg-black/[0.03] cursor-pointer" : "cursor-default"
         )}
         style={{ 
           fontSize: '12px',
@@ -256,14 +307,14 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
           )}
         </div>
       </button>
-      {isExpanded && hasExpandableDetail && (
+      {shouldShowDetail && (
         <div
-          className="py-1.5 mb-1 font-mono rounded"
+          className="py-1.5 mb-1 rounded font-mono"
           style={{
             marginLeft: '25px',
             paddingLeft: '8px',
             paddingRight: '8px',
-            fontSize: '11px',
+            fontSize: "11px",
             color: COLORS.textMuted,
             backgroundColor: 'rgba(0,0,0,0.02)',
           }}
@@ -900,6 +951,15 @@ function AgentTurnCardEvent({
   const latestActivity = activities[activities.length - 1]
   const completedCount = activities.filter((a) => a.status === "done" && a.title !== "Turn canceled").length
   const turnDurationLabel = extractTurnDurationLabel(activities)
+  const assistantMessageEvents = activities.filter((event) => event.type === "assistant_message")
+  const latestAssistantMessage = assistantMessageEvents[assistantMessageEvents.length - 1]
+  const collapsedMessageContent = (() => {
+    const latestMessageText = (typeof latestAssistantMessage?.detail === "string" ? latestAssistantMessage.detail : "").trim()
+    const fullMessageText = message.content.trim()
+    if (isRunning) return latestMessageText.length > 0 ? latestMessageText : fullMessageText
+    return fullMessageText.length > 0 ? fullMessageText : latestMessageText
+  })()
+  const hasCollapsedContent = !isExpanded && collapsedMessageContent.length > 0
 
   const toggleEvent =
     onToggleEvent ??
@@ -924,6 +984,7 @@ function AgentTurnCardEvent({
   })()
 
   const agentName = agentRunnerLabel(message.agentRunner)
+  const timestampLabel = formatRelativeTime(message.timestamp)
 
   return (
     <div
@@ -973,6 +1034,9 @@ function AgentTurnCardEvent({
           <span data-testid="activity-card-author" style={{ fontSize: "13px", fontWeight: 500, color: COLORS.textPrimary }}>
             {agentName}
           </span>
+          {timestampLabel.length > 0 && (
+            <span style={{ fontSize: "14px", fontWeight: 400, color: COLORS.textMuted }}>{timestampLabel}</span>
+          )}
           <span
             className="flex-1 min-w-0 truncate"
             style={{ fontSize: "12px", fontWeight: 450, color: COLORS.textMuted }}
@@ -980,6 +1044,13 @@ function AgentTurnCardEvent({
             {summary}
           </span>
         </button>
+
+        {hasCollapsedContent && (
+          <CopyButton
+            text={collapsedMessageContent}
+            className="opacity-0 group-hover/turn:opacity-100 transition-opacity flex-shrink-0"
+          />
+        )}
 
         {isRunning && onCancel ? (
           <div
@@ -1011,21 +1082,34 @@ function AgentTurnCardEvent({
         )}
       </div>
 
+      {hasCollapsedContent && (
+        <div
+          data-testid="activity-agent-message-content"
+          className="luban-font-chat mt-2"
+          style={{ fontSize: "15px", fontWeight: 400, lineHeight: "24px", color: COLORS.textPrimary }}
+        >
+          <Markdown content={collapsedMessageContent} enableMermaid />
+        </div>
+      )}
+
       {isExpanded && (
         <div className="mt-2 space-y-0.5">
           {activities.length === 0 ? (
             <div style={{ fontSize: "12px", color: COLORS.textMuted }}>No activity yet.</div>
           ) : (
-            activities.map((event) => (
-              <div key={event.id} data-testid="agent-turn-event">
-                <ActivityEventItem
-                  event={event}
-                  isExpanded={expandedEvents.has(event.id)}
-                  onToggle={() => toggleEvent(event.id)}
-                  duration={durationLabel(event)}
-                />
-              </div>
-            ))
+            activities.map((event) => {
+              const eventTestId = event.type === "assistant_message" ? "agent-turn-message-event" : "agent-turn-event"
+              return (
+                <div key={event.id} data-testid={eventTestId}>
+                  <ActivityEventItem
+                    event={event}
+                    isExpanded={expandedEvents.has(event.id)}
+                    onToggle={() => toggleEvent(event.id)}
+                    duration={durationLabel(event)}
+                  />
+                </div>
+              )
+            })
           )}
         </div>
       )}

@@ -3,6 +3,7 @@
 import type { AgentRunnerKind, ThinkingEffort } from "@/lib/luban-api"
 
 import { useMemo, useState } from "react"
+import Image from "next/image"
 import { ChevronDown, Settings } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -14,12 +15,14 @@ const AMP_MARK_URL = "/logos/amp.svg"
 
 function AmpMark({ className }: { className?: string }) {
   return (
-    <img
+    <Image
       data-agent-runner-icon="amp"
       src={AMP_MARK_URL}
       alt=""
       aria-hidden="true"
       className={cn("inline-block", className)}
+      width={14}
+      height={14}
     />
   )
 }
