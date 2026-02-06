@@ -9,6 +9,7 @@ import {
   Clock,
   Eye,
   Loader2,
+  MessageSquareText,
   Send,
   Pause,
   Pencil,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { pickStreamingSummaryActivity } from "@/lib/conversation-ui"
 import type { ActivityEvent } from "@/lib/conversation-ui"
 import type { AttachmentRef, CodexCustomPromptSnapshot } from "@/lib/luban-api"
 import { useActivityTiming } from "@/lib/activity-timing"
@@ -32,6 +34,7 @@ const eventIcons: Record<ActivityEvent["type"], React.ElementType> = {
   bash: Terminal,
   search: Eye,
   complete: CheckCircle2,
+  assistant_message: MessageSquareText,
 }
 
 const eventLabels: Record<ActivityEvent["type"], string> = {
@@ -41,6 +44,7 @@ const eventLabels: Record<ActivityEvent["type"], string> = {
   bash: "Shell",
   search: "Search",
   complete: "Done",
+  assistant_message: "Message",
 }
 
 export type AgentRunningStatus = "running" | "cancelling" | "paused" | "resuming"
@@ -104,8 +108,9 @@ export function AgentRunningCard({
 
   const showPausedIndicator = !isRunning
 
-  const latestActivity = activities[activities.length - 1]
-  const historyActivities = activities.slice(0, -1)
+  const latestActivity = pickStreamingSummaryActivity(activities)
+  const latestActivityIndex = latestActivity ? activities.lastIndexOf(latestActivity) : -1
+  const historyActivities = activities.filter((_, index) => index !== latestActivityIndex)
   const labelForActivity = (event: ActivityEvent): string => {
     return eventLabels[event.type] ?? "Tool"
   }

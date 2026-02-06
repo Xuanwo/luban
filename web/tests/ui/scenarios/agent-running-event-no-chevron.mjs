@@ -9,7 +9,10 @@ export async function runAgentRunningEventNoChevron({ page }) {
     el.scrollTop = el.scrollHeight;
   });
 
-  const latestTurn = page.getByTestId('agent-turn-card').filter({ hasText: 'Progress update 3' }).first();
+  const latestTurn = page
+    .getByTestId('agent-turn-card')
+    .filter({ has: page.getByTestId('event-running-icon').first() })
+    .first();
   await latestTurn.waitFor({ state: 'visible' });
   await latestTurn.scrollIntoViewIfNeeded();
 

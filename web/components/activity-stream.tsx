@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Eye,
   Loader2,
+  MessageSquareText,
   Pencil,
   Terminal,
   Wrench,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { pickStreamingSummaryActivity } from "@/lib/conversation-ui"
 import type { ActivityEvent } from "@/lib/conversation-ui"
 import { useActivityTiming } from "@/lib/activity-timing"
 import { AnsiOutput } from "@/components/shared/ansi-output"
@@ -45,6 +47,8 @@ function ActivityEventItem({
         return <Eye className="w-3.5 h-3.5" />
       case "complete":
         return <CheckCircle2 className="w-3.5 h-3.5" />
+      case "assistant_message":
+        return <MessageSquareText className="w-3.5 h-3.5" />
       default:
         return <Wrench className="w-3.5 h-3.5" />
     }
@@ -110,7 +114,7 @@ export function ActivityStream({
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set())
   const { durationLabel } = useActivityTiming(activities)
 
-  const latestActivity = activities[activities.length - 1]
+  const latestActivity = isStreaming ? pickStreamingSummaryActivity(activities) : activities[activities.length - 1]
   const completedCount = activities.filter((a) => a.status === "done" && a.title !== "Turn canceled").length
 
   const toggleEvent = (eventId: string) => {

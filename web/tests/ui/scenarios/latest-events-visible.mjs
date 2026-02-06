@@ -49,9 +49,19 @@ export async function runLatestEventsVisible({ page }) {
     el.scrollTop = el.scrollHeight;
   });
 
-  const latestTurn = page.getByTestId('agent-turn-card').filter({ hasText: 'Progress update 3' }).first();
+  const latestTurn = page
+    .getByTestId('agent-turn-card')
+    .filter({ hasText: "I've updated the documentation" })
+    .first();
   await latestTurn.waitFor({ state: 'visible' });
   await latestTurn.scrollIntoViewIfNeeded();
+
+  const latestOutput = latestTurn.getByTestId('activity-agent-message-content').first();
+  await latestOutput.waitFor({ state: 'visible' });
+  const latestOutputText = ((await latestOutput.innerText()) ?? '').trim();
+  if (!latestOutputText.includes("I've updated the documentation")) {
+    throw new Error(`expected latest turn card to show the latest model output, got "${latestOutputText}"`);
+  }
 
   const agentTurnHeaderText = ((await latestTurn.getByTestId('agent-turn-toggle').textContent()) ?? '').trim();
   if (!agentTurnHeaderText.startsWith('Codex')) {
@@ -83,6 +93,10 @@ export async function runLatestEventsVisible({ page }) {
   }
 
   await latestTurn.getByTestId('agent-turn-toggle').click();
+  const showMoreToggle = latestTurn.getByTestId('agent-turn-show-more');
+  if ((await showMoreToggle.count()) > 0) {
+    await showMoreToggle.first().click();
+  }
 
   const progressEvents = latestTurn.getByTestId('agent-turn-event').filter({ hasText: 'Progress update' });
   await waitForLocatorCount(progressEvents, 1, 20_000);

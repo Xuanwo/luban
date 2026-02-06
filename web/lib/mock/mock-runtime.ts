@@ -56,6 +56,12 @@ type RuntimeState = {
 
 let runtime: RuntimeState | null = null
 
+declare global {
+  interface Window {
+    __LUBAN_MOCK_RESET__?: () => void
+  }
+}
+
 function clone<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value)
   return JSON.parse(JSON.stringify(value)) as T
@@ -139,6 +145,16 @@ function initRuntime(): RuntimeState {
 function getRuntime(): RuntimeState {
   if (!runtime) runtime = initRuntime()
   return runtime
+}
+
+export function mockResetRuntime(): void {
+  runtime = initRuntime()
+}
+
+if (typeof window !== "undefined") {
+  window.__LUBAN_MOCK_RESET__ = () => {
+    mockResetRuntime()
+  }
 }
 
 function findProject(app: AppSnapshot, projectId: ProjectId): { projectIdx: number; project: AppSnapshot["projects"][number] } | null {
@@ -730,6 +746,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       {
         type: "user_event",
         entry_id: newEntryId("ue"),
+        created_at_unix_ms: Date.now(),
         event: { type: "message", text: a.text, attachments: a.attachments ?? [] },
       },
     ]
@@ -757,6 +774,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     const startedEntry: ConversationEntry = {
       type: "user_event",
       entry_id: newEntryId("ue"),
+      created_at_unix_ms: Date.now(),
       event: { type: "terminal_command_started", id: commandId, command, reconnect },
     }
 
@@ -782,6 +800,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
       const finishedEntry: ConversationEntry = {
         type: "user_event",
         entry_id: newEntryId("ue"),
+        created_at_unix_ms: Date.now(),
         event: {
           type: "terminal_command_finished",
           id: commandId,
@@ -907,6 +926,7 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
           {
             type: "agent_event",
             entry_id: newEntryId("ae"),
+            created_at_unix_ms: Date.now(),
             event: { type: "turn_canceled" },
           },
         ] satisfies ConversationEntry[]

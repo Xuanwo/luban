@@ -7,6 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
+    "test:ui:running-streaming": "node tests/ui/run-running-streaming.mjs",
     "test:ui": "node tests/ui/run.mjs",
     "typecheck": "tsc --noEmit"
   },

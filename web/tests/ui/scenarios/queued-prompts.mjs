@@ -11,7 +11,10 @@ export async function runQueuedPrompts({ page }) {
     el.scrollTop = el.scrollHeight;
   });
 
-  const runningTurn = page.getByTestId('agent-turn-card').filter({ hasText: 'Progress update 3' }).first();
+  const runningTurn = page
+    .getByTestId('agent-turn-card')
+    .filter({ has: page.getByTestId('event-running-icon').first() })
+    .first();
   await runningTurn.waitFor({ state: 'visible' });
   await runningTurn.getByTestId('event-running-icon').waitFor({ state: 'visible' });
 

@@ -299,6 +299,9 @@ export function defaultMockFixtures(): MockFixtures {
   const task9: WorkspaceThreadId = 9
   const task10: WorkspaceThreadId = 10
   const task11: WorkspaceThreadId = 11
+  const task12: WorkspaceThreadId = 12
+  const task13: WorkspaceThreadId = 13
+  const task14: WorkspaceThreadId = 14
 
   const project1: ProjectId = "mock-project-1"
   const project2: ProjectId = "mock-project-2"
@@ -435,7 +438,11 @@ export function defaultMockFixtures(): MockFixtures {
     },
   }
 
-  const tabs1: WorkspaceTabsSnapshot = { open_tabs: [task1, task9, task7, task4, task2, task8, task5, task6], archived_tabs: [], active_tab: task1 }
+  const tabs1: WorkspaceTabsSnapshot = {
+    open_tabs: [task1, task12, task13, task14, task9, task7, task4, task2, task8, task5, task6],
+    archived_tabs: [],
+    active_tab: task1,
+  }
   const tabs2: WorkspaceTabsSnapshot = { open_tabs: [task3, task10], archived_tabs: [], active_tab: task3 }
   const tabs3: WorkspaceTabsSnapshot = { open_tabs: [task1, task9, task7, task4, task8, task5, task6], archived_tabs: [], active_tab: task1 }
 
@@ -448,6 +455,9 @@ export function defaultMockFixtures(): MockFixtures {
         { task_id: task1, remote_thread_id: null, title: "Mock task 1", created_at_unix_seconds: unixSeconds(-30), updated_at_unix_seconds: unixSeconds(-30), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task2, remote_thread_id: null, title: "Mock task 2", created_at_unix_seconds: unixSeconds(-10), updated_at_unix_seconds: unixSeconds(-10), task_status: "backlog" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
         { task_id: task11, remote_thread_id: null, title: "Mock: Long conversation", created_at_unix_seconds: unixSeconds(-2), updated_at_unix_seconds: unixSeconds(-2), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task12, remote_thread_id: null, title: "Mock: Running state (no output)", created_at_unix_seconds: unixSeconds(-7), updated_at_unix_seconds: unixSeconds(-7), task_status: "iterating" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null },
+        { task_id: task13, remote_thread_id: null, title: "Mock: Running state (streaming output)", created_at_unix_seconds: unixSeconds(-6), updated_at_unix_seconds: unixSeconds(-6), task_status: "iterating" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null },
+        { task_id: task14, remote_thread_id: null, title: "Mock: Running state (completed output)", created_at_unix_seconds: unixSeconds(-5), updated_at_unix_seconds: unixSeconds(-5), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task4, remote_thread_id: null, title: "Validating: awaiting feedback", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task5, remote_thread_id: null, title: "Done: completed successfully", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task6, remote_thread_id: null, title: "Canceled: aborted by user", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
@@ -595,6 +605,301 @@ export function defaultMockFixtures(): MockFixtures {
       taskStatus: "todo",
       runStatus: "idle",
       entries: longConversationEntries({ pairs: 320 }),
+    }),
+    [key(workdir1, task12)]: conversationBase({
+      workdirId: workdir1,
+      taskId: task12,
+      title: "Mock: Running state (no output)",
+      taskStatus: "iterating",
+      runStatus: "running",
+      entries: [
+        systemEvent({
+          id: "sys_running_no_output_1",
+          createdAtUnixMs: unixMs(-70 * 60 * 1000),
+          event: { event_type: "task_created" },
+        }),
+        systemEvent({
+          id: "sys_running_no_output_2",
+          createdAtUnixMs: unixMs(-69 * 60 * 1000),
+          event: { event_type: "task_status_changed", from: "todo", to: "iterating" },
+        }),
+        userMessage("Start the run and show a running state before message output."),
+        agentActivity("reasoning", {
+          text: "Loading project context and preparing a safe execution plan before writing any output.",
+        }),
+        agentActivity("todo_list", {
+          items: [
+            { text: "Collect repository context", completed: true },
+            { text: "Locate impacted files", completed: true },
+            { text: "Run focused checks", completed: false },
+          ],
+        }),
+        agentActivity("command_execution", {
+          command: "rg -n \"agent-turn|streaming\" web/components web/lib -S",
+          status: "completed",
+          aggregated_output:
+            "web/components/task-activity-view.tsx:914:const AgentTurnCardEvent = ...\nweb/lib/conversation-ui.ts:296:export function pickStreamingSummaryActivity(...)",
+        }),
+        agentActivity("mcp_tool_call", {
+          server: "workspace",
+          tool: "read_file",
+          arguments: { path: "web/components/task-activity-view.tsx", start_line: 860, end_line: 1160 },
+          result: { lines: 301, truncated: false },
+          status: "completed",
+        }),
+        agentActivity("command_execution", {
+          command: "just test-fast",
+          status: "in_progress",
+          aggregated_output: "running 34 tests in luban_domain ...",
+        }),
+      ],
+    }),
+    [key(workdir1, task13)]: conversationBase({
+      workdirId: workdir1,
+      taskId: task13,
+      title: "Mock: Running state (streaming output)",
+      taskStatus: "iterating",
+      runStatus: "running",
+      entries: [
+        systemEvent({
+          id: "sys_running_stream_1",
+          createdAtUnixMs: unixMs(-68 * 60 * 1000),
+          event: { event_type: "task_created" },
+        }),
+        systemEvent({
+          id: "sys_running_stream_2",
+          createdAtUnixMs: unixMs(-67 * 60 * 1000),
+          event: { event_type: "task_status_changed", from: "todo", to: "iterating" },
+        }),
+        userMessage("Show running output while the model is still streaming."),
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_progress",
+            kind: "reasoning",
+            payload: { text: "Preparing the response body and validating examples." },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_plan",
+            kind: "todo_list",
+            payload: {
+              items: [
+                { text: "Inspect event ordering logic", completed: true },
+                { text: "Apply card rendering changes", completed: true },
+                { text: "Run typecheck and UI isolation tests", completed: false },
+              ],
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_search_1",
+            kind: "command_execution",
+            payload: {
+              command: "rg -n \"agent-turn-show-more|assistant_message\" web/components web/lib -S",
+              status: "completed",
+              aggregated_output:
+                "web/components/task-activity-view.tsx:930:const assistantMessageEvents = ...\nweb/lib/conversation-ui.ts:777:const activityKey = `assistant_message_${entry.entry_id || out.length}`",
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_mcp_1",
+            kind: "mcp_tool_call",
+            payload: {
+              server: "workspace",
+              tool: "read_multiple_files",
+              arguments: {
+                paths: [
+                  "web/components/task-activity-view.tsx",
+                  "web/lib/conversation-ui.ts",
+                  "web/tests/ui/scenarios/running-streaming-states.mjs",
+                ],
+              },
+              result: { files: 3, bytes: 18_742 },
+              status: "completed",
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "message",
+            id: "running_stream_message_1",
+            text: "Collected context from the relevant files and started drafting the response structure.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_files",
+            kind: "file_change",
+            payload: {
+              changes: [
+                { path: "web/components/task-activity-view.tsx", kind: "update" },
+                { path: "web/lib/conversation-ui.ts", kind: "update" },
+              ],
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "message",
+            id: "running_stream_message_2",
+            text: "Validated the timeline ordering path and confirmed assistant message events are rendered as independent rows.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_validate",
+            kind: "command_execution",
+            payload: {
+              command: "cd web && pnpm typecheck",
+              status: "completed",
+              aggregated_output: "Type checking passed with 0 errors",
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "message",
+            id: "running_stream_message_3",
+            text: "Typecheck passed locally and I am now verifying isolated UI assertions for running and completed states.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_docs",
+            kind: "web_search",
+            payload: {
+              query: "playwright best practices for deterministic timeline ui assertions",
+              domains: ["playwright.dev"],
+              top_results: [
+                "Use stable data-testid selectors",
+                "Avoid strict text-based assertions on dynamic content",
+              ],
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "message",
+            id: "running_stream_message_4",
+            text: "UI verification is still running; I am consolidating the final wording for the response.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "message",
+            id: "running_stream_message_5",
+            text: "Almost done. Preparing the final consolidated response and final verification notes.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "running_stream_tool_tail",
+            kind: "command_execution",
+            payload: {
+              command: "Collecting diagnostics",
+              status: "in_progress",
+              aggregated_output: "",
+            },
+          },
+        },
+      ],
+    }),
+    [key(workdir1, task14)]: conversationBase({
+      workdirId: workdir1,
+      taskId: task14,
+      title: "Mock: Running state (completed output)",
+      taskStatus: "todo",
+      runStatus: "idle",
+      entries: [
+        systemEvent({
+          id: "sys_running_done_1",
+          createdAtUnixMs: unixMs(-66 * 60 * 1000),
+          event: { event_type: "task_created" },
+        }),
+        userMessage("Show the final complete message after the run finishes."),
+        agentActivity("reasoning", { text: "Summarizing implementation details and verification outcomes." }),
+        agentActivity("todo_list", {
+          items: [
+            { text: "Unify running and message cards", completed: true },
+            { text: "Render streaming messages as timeline rows", completed: true },
+            { text: "Add isolated UI regression coverage", completed: true },
+          ],
+        }),
+        agentActivity("command_execution", {
+          command: "rg -n \"agent-turn-message-event|agent-turn-show-more\" web -S",
+          status: "completed",
+          aggregated_output:
+            "web/components/task-activity-view.tsx:281:const AgentMessageTimelineItem = ...\nweb/tests/ui/scenarios/running-streaming-states.mjs:73:const showMoreButton = ...",
+        }),
+        agentActivity("file_change", {
+          changes: [
+            { path: "web/components/task-activity-view.tsx", kind: "update" },
+            { path: "web/lib/mock/fixtures.ts", kind: "update" },
+            { path: "web/tests/ui/scenarios/running-streaming-states.mjs", kind: "update" },
+          ],
+        }),
+        agentActivity("command_execution", {
+          command: "cd web && pnpm test:ui:running-streaming",
+          status: "completed",
+          aggregated_output:
+            "running-streaming-states passed\nlatest-events-visible passed\nagent-running-event-no-chevron passed",
+        }),
+        agentMessage(
+          "Completed run with full output.\n\n### What changed\n- Merged running and message rendering behavior into one agent turn card.\n- In collapsed view, only the latest streaming update or final assistant output is shown.\n- In expanded view, assistant streaming updates render as full-width markdown timeline rows.\n- Added timeline overflow behavior with a show-more toggle that expands older events.\n\n### Validation\n- `pnpm typecheck`\n- `pnpm lint`\n- `pnpm test:ui:running-streaming`\n\n### Notes\n- Existing event ordering semantics are preserved.\n- Streaming messages have display priority in summary while keeping chronological order in expanded timeline."
+        ),
+        agentTurnDuration(14_200),
+      ],
     }),
     [key(workdir1, task2)]: conversationBase({
       workdirId: workdir1,
@@ -1155,6 +1460,54 @@ export function defaultMockFixtures(): MockFixtures {
         task_status: "backlog",
         turn_status: "idle",
         last_turn_result: null,
+        is_starred: false,
+      } satisfies TaskSummarySnapshot,
+      {
+        project_id: project1,
+        workdir_id: workdir1,
+        task_id: task12,
+        title: "Mock: Running state (no output)",
+        created_at_unix_seconds: unixSeconds(-7),
+        updated_at_unix_seconds: unixSeconds(-7),
+        branch_name: "main",
+        workdir_name: "main",
+        agent_run_status: "running",
+        has_unread_completion: false,
+        task_status: "iterating",
+        turn_status: "running",
+        last_turn_result: null,
+        is_starred: false,
+      } satisfies TaskSummarySnapshot,
+      {
+        project_id: project1,
+        workdir_id: workdir1,
+        task_id: task13,
+        title: "Mock: Running state (streaming output)",
+        created_at_unix_seconds: unixSeconds(-6),
+        updated_at_unix_seconds: unixSeconds(-6),
+        branch_name: "main",
+        workdir_name: "main",
+        agent_run_status: "running",
+        has_unread_completion: false,
+        task_status: "iterating",
+        turn_status: "running",
+        last_turn_result: null,
+        is_starred: false,
+      } satisfies TaskSummarySnapshot,
+      {
+        project_id: project1,
+        workdir_id: workdir1,
+        task_id: task14,
+        title: "Mock: Running state (completed output)",
+        created_at_unix_seconds: unixSeconds(-5),
+        updated_at_unix_seconds: unixSeconds(-5),
+        branch_name: "main",
+        workdir_name: "main",
+        agent_run_status: "idle",
+        has_unread_completion: false,
+        task_status: "todo",
+        turn_status: "idle",
+        last_turn_result: "completed",
         is_starred: false,
       } satisfies TaskSummarySnapshot,
       {

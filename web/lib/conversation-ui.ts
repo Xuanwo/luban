@@ -16,7 +16,7 @@ export { formatDurationMs } from "./duration-format"
 
 export interface ActivityEvent {
   id: string
-  type: "thinking" | "tool_call" | "file_edit" | "bash" | "search" | "complete"
+  type: "thinking" | "tool_call" | "file_edit" | "bash" | "search" | "complete" | "assistant_message"
   title: string
   detail?: string
   status: "running" | "done"
@@ -288,6 +288,19 @@ function inferActivityStatusFromPayload(payload: unknown): ActivityStatus {
   return "done"
 }
 
+function activityDisplayPriority(event: ActivityEvent): number {
+  if (event.type === "assistant_message") return 100
+  return 10
+}
+
+export function pickStreamingSummaryActivity(activities: ActivityEvent[]): ActivityEvent | undefined {
+  for (let idx = activities.length - 1; idx >= 0; idx -= 1) {
+    const event = activities[idx]
+    if (event?.type === "assistant_message") return event
+  }
+  return activities[activities.length - 1]
+}
+
 export function buildAgentActivities(conversation: ConversationSnapshot | null): ActivityEvent[] {
   if (!conversation) return []
 
@@ -422,7 +435,6 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     }
   }
 
-  const agentMessageById = new Map<string, Message>()
   const turnMessageById = new Map<string, Message>()
   const turnActivityById = new Map<
     string,
@@ -431,6 +443,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       latestByRowId: Map<string, ActivityEvent>
       latestByKey: Map<string, string>
       timingByKey: Map<string, { startedAtUnixMs: number | null; doneAtUnixMs: number | null }>
+      rowMetaByRowId: Map<string, { createdAtUnixMs: number | null; seq: number; priority: number }>
+      nextSeq: number
     }
   >()
   let lastUserEntryId: string | null = null
@@ -456,7 +470,14 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       out.push(msg)
     }
     turnMessageById.set(turnId, msg)
-    turnActivityById.set(turnId, { order: [], latestByRowId: new Map(), latestByKey: new Map(), timingByKey: new Map() })
+    turnActivityById.set(turnId, {
+      order: [],
+      latestByRowId: new Map(),
+      latestByKey: new Map(),
+      timingByKey: new Map(),
+      rowMetaByRowId: new Map(),
+      nextSeq: 0,
+    })
     return msg
   }
 
@@ -480,7 +501,52 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     return timing
   }
 
-  const appendTurnActivity = (turnId: string, args: { key: string; rowId: string; event: ActivityEvent }) => {
+  const activityTitleFromMessageText = (text: string): string => {
+    const trimmed = text.trim()
+    if (!trimmed) return "Assistant update"
+    const firstLine = (trimmed.split(/\r?\n/)[0] ?? "").trim()
+    if (!firstLine) return "Assistant update"
+    const maxLen = 96
+    if (firstLine.length <= maxLen) return firstLine
+    return `${firstLine.slice(0, maxLen - 1)}...`
+  }
+
+  const compareActivityRows = (
+    state: {
+      rowMetaByRowId: Map<string, { createdAtUnixMs: number | null; seq: number; priority: number }>
+    },
+    leftRowId: string,
+    rightRowId: string,
+  ): number => {
+    const left = state.rowMetaByRowId.get(leftRowId) ?? {
+      createdAtUnixMs: null,
+      seq: Number.MAX_SAFE_INTEGER,
+      priority: 0,
+    }
+    const right = state.rowMetaByRowId.get(rightRowId) ?? {
+      createdAtUnixMs: null,
+      seq: Number.MAX_SAFE_INTEGER,
+      priority: 0,
+    }
+
+    const leftTime = left.createdAtUnixMs ?? Number.MIN_SAFE_INTEGER
+    const rightTime = right.createdAtUnixMs ?? Number.MIN_SAFE_INTEGER
+    if (leftTime !== rightTime) return leftTime - rightTime
+    if (left.priority !== right.priority) return left.priority - right.priority
+    return left.seq - right.seq
+  }
+
+  const appendTurnActivity = (
+    turnId: string,
+    args: {
+      key: string
+      rowId: string
+      event: ActivityEvent
+      timestamp?: string
+      createdAtUnixMs?: number | null
+      priority?: number
+    },
+  ) => {
     const state = turnActivityById.get(turnId)
     if (!state) return
 
@@ -489,6 +555,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (existingRowId != null) {
         state.latestByRowId.delete(existingRowId)
         state.order = state.order.filter((id) => id !== existingRowId)
+        state.rowMetaByRowId.delete(existingRowId)
       }
       if (!state.latestByRowId.has(args.rowId)) {
         state.order.push(args.rowId)
@@ -497,9 +564,20 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     }
 
     state.latestByRowId.set(args.rowId, args.event)
+    const previousMeta = state.rowMetaByRowId.get(args.rowId) ?? null
+    const seq = previousMeta?.seq ?? state.nextSeq
+    if (previousMeta == null) state.nextSeq += 1
+    state.rowMetaByRowId.set(args.rowId, {
+      createdAtUnixMs: args.createdAtUnixMs ?? null,
+      seq,
+      priority: args.priority ?? activityDisplayPriority(args.event),
+    })
+
     const msg = turnMessageById.get(turnId) ?? null
     if (!msg) return
-    msg.activities = state.order.map((id) => state.latestByRowId.get(id)!).filter(Boolean)
+    if (!msg.timestamp && args.timestamp) msg.timestamp = args.timestamp
+    const sortedRowIds = [...state.order].sort((left, right) => compareActivityRows(state, left, right))
+    msg.activities = sortedRowIds.map((id) => state.latestByRowId.get(id)!).filter(Boolean)
   }
 
   const applyTurnStatus = (turnId: string, status: AgentTurnStatus) => {
@@ -688,22 +766,31 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     if (entry.type === "agent_event") {
       const ev = entry.event
       if (ev.type === "message") {
-        const baseId = `a_${ev.id}`
-        const existing = agentMessageById.get(baseId) ?? null
-        if (existing && existing.type === "assistant") {
-          existing.content = ev.text.trim()
-        } else {
-          const msg: Message = {
-            id: baseId,
-            type: "assistant",
-            eventSource: "agent",
-            agentRunner: conversation.agent_runner,
-            content: ev.text.trim(),
-            timestamp: unixMsToIso(entry.created_at_unix_ms),
-          }
-          out.push(msg)
-          agentMessageById.set(baseId, msg)
-        }
+        const turnId = lastUserEntryId ? `t_${lastUserEntryId}` : `t_orphan_${ev.id}`
+        const msg = ensureTurnMessage(turnId)
+        const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
+        const messageText = ev.text.trim()
+        msg.agentRunner = conversation.agent_runner
+        msg.content = messageText
+        msg.timestamp = unixMsToIso(entry.created_at_unix_ms) ?? msg.timestamp
+
+        const activityKey = `assistant_message_${entry.entry_id || out.length}`
+        const rowId = activityKey
+        appendTurnActivity(turnId, {
+          key: activityKey,
+          rowId,
+          event: {
+            id: rowId,
+            type: "assistant_message",
+            title: activityTitleFromMessageText(messageText),
+            detail: messageText,
+            status: "done",
+            timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
+          },
+          createdAtUnixMs,
+          priority: 100,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
+        })
         continue
       }
 
@@ -721,7 +808,13 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
           payload: ev.payload,
           forcedStatus: status,
         })
-        appendTurnActivity(turnId, { key: activityKey, rowId, event: { ...activity, timing } })
+        appendTurnActivity(turnId, {
+          key: activityKey,
+          rowId,
+          event: { ...activity, timing },
+          createdAtUnixMs: normalizeUnixMs(entry.created_at_unix_ms),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
+        })
         continue
       }
 
@@ -742,6 +835,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
             status: "done",
             timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
           },
+          createdAtUnixMs,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -764,6 +859,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
             status: "done",
             timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
           },
+          createdAtUnixMs,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -787,6 +884,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
             status: "done",
             timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
           },
+          createdAtUnixMs,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -809,6 +908,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
             status: "done",
             timing: { startedAtUnixMs: createdAtUnixMs, doneAtUnixMs: createdAtUnixMs },
           },
+          createdAtUnixMs,
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
         continue
       }
@@ -819,15 +920,11 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
     const turnId = `t_${lastUserEntryId}`
     ensureTurnMessage(turnId)
     applyTurnStatus(turnId, "running")
-  }
-
-  if (conversation.run_status === "running") {
-    for (let i = out.length - 1; i >= 0; i -= 1) {
-      const msg = out[i]
-      if (msg && msg.type === "assistant") {
-        msg.isStreaming = true
-        break
-      }
+    const turn = turnMessageById.get(turnId) ?? null
+    if (turn) turn.isStreaming = true
+  } else {
+    for (const turn of turnMessageById.values()) {
+      if (turn.isStreaming) turn.isStreaming = false
     }
   }
 
@@ -869,7 +966,6 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
     }
   }
 
-  const agentMessageIndexById = new Map<string, number>()
   const agentEventIndexById = new Map<string, number>()
   const terminalCommandIndexById = new Map<string, number>()
 
@@ -1042,24 +1138,15 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
     if (entry.type === "agent_event") {
       const ev = entry.event
       if (ev.type === "message") {
-        const baseId = `a_${ev.id}`
-        const existing = agentMessageIndexById.get(baseId)
-        if (typeof existing === "number") {
-          const prev = out[existing]
-          if (prev && prev.type === "assistant") {
-            prev.content = ev.text.trim()
-          }
-        } else {
-          out.push({
-            id: baseId,
-            type: "assistant",
-            eventSource: "agent",
-            agentRunner: conversation.agent_runner,
-            content: ev.text.trim(),
-            timestamp: unixMsToIso(entry.created_at_unix_ms),
-          })
-          agentMessageIndexById.set(baseId, out.length - 1)
-        }
+        const entryPart = entry.entry_id ? `_${entry.entry_id}` : `_${out.length}`
+        out.push({
+          id: `a_${ev.id}${entryPart}`,
+          type: "assistant",
+          eventSource: "agent",
+          agentRunner: conversation.agent_runner,
+          content: ev.text.trim(),
+          timestamp: unixMsToIso(entry.created_at_unix_ms),
+        })
         continue
       }
 
