@@ -188,8 +188,6 @@ struct ProgressMessageState {
     task_title: String,
     recent_events: Vec<String>,
     final_text: Option<String>,
-    dirty: bool,
-    last_edited_at: Instant,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -355,9 +353,6 @@ impl TelegramGateway {
         self.refresh_runtime_config().await;
 
         let mut update_offset = 0i64;
-        let mut progress_tick = tokio::time::interval(Duration::from_secs(10));
-        progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        progress_tick.tick().await;
 
         loop {
             let token = self.runtime.bot_token.clone();
@@ -398,9 +393,6 @@ impl TelegramGateway {
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                     }
-                }
-                _ = progress_tick.tick() => {
-                    let _ = self.flush_progress_message_edits().await;
                 }
             }
         }
@@ -578,27 +570,6 @@ impl TelegramGateway {
             .retain(|_, state| now.duration_since(state.created_at) <= ttl);
     }
 
-    async fn flush_progress_message_edits(&mut self) -> anyhow::Result<()> {
-        self.prune_progress_messages();
-
-        let now = Instant::now();
-        let mut dirty = self
-            .progress_messages
-            .iter()
-            .filter(|(_, state)| {
-                state.dirty && now.duration_since(state.last_edited_at) >= Duration::from_secs(10)
-            })
-            .map(|(k, v)| (*k, v.created_at))
-            .collect::<Vec<_>>();
-        dirty.sort_by_key(|(_, created_at)| *created_at);
-
-        for (key, _) in dirty.into_iter().take(5) {
-            self.edit_progress_message(key).await?;
-        }
-
-        Ok(())
-    }
-
     async fn edit_progress_message(
         &mut self,
         key: (i64, Option<i64>, u64, u64),
@@ -636,13 +607,7 @@ impl TelegramGateway {
             )
             .await
         {
-            Ok(()) => {
-                if let Some(state) = self.progress_messages.get_mut(&key) {
-                    state.dirty = false;
-                    state.last_edited_at = Instant::now();
-                }
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(err) => {
                 let _ = self
                     .set_last_error(format!("telegram editMessageText failed: {err}"))
@@ -659,8 +624,6 @@ impl TelegramGateway {
                     .unwrap_or(existing_message_id);
                 if let Some(state) = self.progress_messages.get_mut(&key) {
                     state.message_id = message_id;
-                    state.dirty = false;
-                    state.last_edited_at = Instant::now();
                 }
                 self.insert_reply_route(message_id, workspace_id, thread_id);
                 Ok(())
@@ -708,6 +671,8 @@ impl TelegramGateway {
         workspace_id: u64,
         thread_id: u64,
     ) {
+        self.prune_progress_messages();
+
         let (title, last_idx) = self
             .task_title_and_last_entry_index(workspace_id, thread_id)
             .await;
@@ -742,8 +707,6 @@ impl TelegramGateway {
                 task_title: title,
                 recent_events: Vec::new(),
                 final_text: None,
-                dirty: false,
-                last_edited_at: Instant::now(),
             },
         );
         self.insert_reply_route(message_id, workspace_id, thread_id);
@@ -1826,6 +1789,8 @@ impl TelegramGateway {
         message_thread_id: Option<i64>,
         snapshot: &luban_api::ConversationSnapshot,
     ) {
+        self.prune_progress_messages();
+
         let key = (
             chat_id,
             message_thread_id,
@@ -1837,7 +1802,7 @@ impl TelegramGateway {
 
         let mut candidate = None::<(u64, String)>;
         let mut max_seen = last_seen;
-        let mut needs_immediate_edit = false;
+        let mut needs_progress_edit = false;
         let has_progress_message = self.progress_messages.contains_key(&key);
         for (idx, entry) in snapshot.entries.iter().enumerate() {
             let global_idx = start.saturating_add(idx as u64);
@@ -1853,16 +1818,8 @@ impl TelegramGateway {
                     let Some(state) = self.progress_messages.get_mut(&key) else {
                         continue;
                     };
-                    match update {
-                        ProgressUpdate::Event(line) => {
-                            push_recent_progress_event(&mut state.recent_events, line, 5);
-                            state.dirty = true;
-                        }
-                        ProgressUpdate::Final(text) => {
-                            state.final_text = Some(text);
-                            state.dirty = true;
-                            needs_immediate_edit = true;
-                        }
+                    if apply_progress_update(state, update) {
+                        needs_progress_edit = true;
                     }
                 }
                 continue;
@@ -1877,7 +1834,7 @@ impl TelegramGateway {
             if let Some(max_seen) = max_seen {
                 self.last_seen_entry_index.insert(key, max_seen);
             }
-            if needs_immediate_edit {
+            if needs_progress_edit {
                 let _ = self.edit_progress_message(key).await;
             }
             return;
@@ -2584,17 +2541,33 @@ fn format_conversation_entry_for_progress(entry: &ConversationEntry) -> Option<P
     }
 }
 
-fn push_recent_progress_event(out: &mut Vec<String>, line: String, limit: usize) {
+fn push_recent_progress_event(out: &mut Vec<String>, line: String, limit: usize) -> bool {
     let line = line.trim().to_owned();
     if line.is_empty() {
-        return;
+        return false;
     }
     if out.last().is_some_and(|prev| prev == &line) {
-        return;
+        return false;
     }
     out.push(line);
     while out.len() > limit {
         out.remove(0);
+    }
+    true
+}
+
+fn apply_progress_update(state: &mut ProgressMessageState, update: ProgressUpdate) -> bool {
+    match update {
+        ProgressUpdate::Event(line) => {
+            push_recent_progress_event(&mut state.recent_events, line, 5)
+        }
+        ProgressUpdate::Final(text) => {
+            if state.final_text.as_deref() == Some(text.as_str()) {
+                return false;
+            }
+            state.final_text = Some(text);
+            true
+        }
     }
 }
 
@@ -3048,5 +3021,54 @@ mod tests {
         });
         assert_eq!(format_conversation_entry_for_telegram(&entry), None);
         assert!(format_conversation_entry_for_progress(&entry).is_none());
+    }
+
+    #[test]
+    fn push_recent_progress_event_filters_empty_and_duplicate() {
+        let mut recent = Vec::new();
+        assert!(!push_recent_progress_event(
+            &mut recent,
+            "   ".to_owned(),
+            5
+        ));
+        assert!(push_recent_progress_event(
+            &mut recent,
+            "step 1".to_owned(),
+            5
+        ));
+        assert!(!push_recent_progress_event(
+            &mut recent,
+            "step 1".to_owned(),
+            5
+        ));
+        assert_eq!(recent, vec!["step 1".to_owned()]);
+    }
+
+    #[test]
+    fn apply_progress_update_reports_state_change() {
+        let mut state = ProgressMessageState {
+            message_id: 1,
+            created_at: Instant::now(),
+            task_title: "Task".to_owned(),
+            recent_events: Vec::new(),
+            final_text: None,
+        };
+
+        assert!(apply_progress_update(
+            &mut state,
+            ProgressUpdate::Event("run tests".to_owned())
+        ));
+        assert!(!apply_progress_update(
+            &mut state,
+            ProgressUpdate::Event("run tests".to_owned())
+        ));
+        assert!(apply_progress_update(
+            &mut state,
+            ProgressUpdate::Final("done".to_owned())
+        ));
+        assert!(!apply_progress_update(
+            &mut state,
+            ProgressUpdate::Final("done".to_owned())
+        ));
     }
 }
