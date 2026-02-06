@@ -9,7 +9,7 @@ import type {
   TaskStatus,
   ThinkingEffort,
 } from "./luban-api"
-import { AGENT_MODELS } from "./agent-settings"
+import { AGENT_MODELS, DROID_MODELS } from "./agent-settings"
 import { formatDurationMs } from "./duration-format"
 
 export { formatDurationMs } from "./duration-format"
@@ -95,7 +95,11 @@ function safeStringify(value: unknown): string {
 
 export function agentModelLabel(modelId: string | null | undefined): string {
   if (!modelId) return "Model"
-  return AGENT_MODELS.find((m) => m.id === modelId)?.label ?? modelId
+  return (
+    AGENT_MODELS.find((m) => m.id === modelId)?.label ??
+    DROID_MODELS.find((m) => m.id === modelId)?.label ??
+    modelId
+  )
 }
 
 export function agentRunnerLabel(runner: AgentRunnerKind | null | undefined): string {
@@ -103,6 +107,7 @@ export function agentRunnerLabel(runner: AgentRunnerKind | null | undefined): st
   if (runner === "codex") return "Codex"
   if (runner === "claude") return "Claude"
   if (runner === "amp") return "Amp"
+  if (runner === "droid") return "Droid"
   return runner
 }
 

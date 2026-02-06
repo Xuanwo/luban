@@ -40,12 +40,14 @@ const OPEN_BUTTON_SELECTION_KEY: &str = "open_button_selection";
 const SIDEBAR_PROJECT_ORDER_KEY: &str = "sidebar_project_order";
 const GLOBAL_ZOOM_PERCENT_KEY: &str = "global_zoom_percent";
 const AGENT_DEFAULT_MODEL_ID_KEY: &str = "agent_default_model_id";
+const AGENT_RUNNER_DEFAULT_MODELS_KEY: &str = "agent_runner_default_models";
 const AGENT_DEFAULT_THINKING_EFFORT_KEY: &str = "agent_default_thinking_effort";
 const AGENT_DEFAULT_RUNNER_KEY: &str = "agent_default_runner";
 const AGENT_AMP_MODE_KEY: &str = "agent_amp_mode";
 const AGENT_CODEX_ENABLED_KEY: &str = "agent_codex_enabled";
 const AGENT_AMP_ENABLED_KEY: &str = "agent_amp_enabled";
 const AGENT_CLAUDE_ENABLED_KEY: &str = "agent_claude_enabled";
+const AGENT_DROID_ENABLED_KEY: &str = "agent_droid_enabled";
 const TASK_PROMPT_TEMPLATE_PREFIX: &str = "task_prompt_template_";
 const APPEARANCE_THEME_KEY: &str = "appearance_theme";
 const APPEARANCE_UI_FONT_KEY: &str = "appearance_ui_font";
@@ -1516,6 +1518,18 @@ impl SqliteDatabase {
             .optional()
             .context("failed to load agent default model id")?;
 
+        let agent_runner_default_models: HashMap<String, String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings_text WHERE key = ?1",
+                params![AGENT_RUNNER_DEFAULT_MODELS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("failed to load agent runner default models")?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+
         let agent_default_thinking_effort = self
             .conn
             .query_row(
@@ -1577,6 +1591,17 @@ impl SqliteDatabase {
             )
             .optional()
             .context("failed to load agent claude enabled flag")?
+            .map(|value| value != 0);
+
+        let agent_droid_enabled = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![AGENT_DROID_ENABLED_KEY],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .context("failed to load agent droid enabled flag")?
             .map(|value| value != 0);
 
         let telegram_enabled = self
@@ -1698,12 +1723,14 @@ impl SqliteDatabase {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id,
+                agent_runner_default_models,
                 agent_default_thinking_effort,
                 agent_default_runner,
                 agent_amp_mode,
                 agent_codex_enabled,
                 agent_amp_enabled,
                 agent_claude_enabled,
+                agent_droid_enabled,
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -2111,12 +2138,14 @@ impl SqliteDatabase {
             appearance_code_font,
             appearance_terminal_font,
             agent_default_model_id,
+            agent_runner_default_models,
             agent_default_thinking_effort,
             agent_default_runner,
             agent_amp_mode,
             agent_codex_enabled,
             agent_amp_enabled,
             agent_claude_enabled,
+            agent_droid_enabled,
             last_open_workspace_id,
             open_button_selection,
             sidebar_project_order,
@@ -2436,6 +2465,24 @@ impl SqliteDatabase {
             )?;
         }
 
+        if !snapshot.agent_runner_default_models.is_empty() {
+            let json = serde_json::to_string(&snapshot.agent_runner_default_models)
+                .unwrap_or_default();
+            tx.execute(
+                "INSERT INTO app_settings_text (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![AGENT_RUNNER_DEFAULT_MODELS_KEY, json, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings_text WHERE key = ?1",
+                params![AGENT_RUNNER_DEFAULT_MODELS_KEY],
+            )?;
+        }
+
         if let Some(value) = snapshot.agent_default_thinking_effort.as_deref() {
             tx.execute(
                 "INSERT INTO app_settings_text (key, value, created_at, updated_at)
@@ -2541,6 +2588,26 @@ impl SqliteDatabase {
             tx.execute(
                 "DELETE FROM app_settings WHERE key = ?1",
                 params![AGENT_CLAUDE_ENABLED_KEY],
+            )?;
+        }
+
+        if let Some(enabled) = snapshot.agent_droid_enabled {
+            tx.execute(
+                "INSERT INTO app_settings (key, value, created_at, updated_at)
+                 VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings WHERE key = ?1), ?3), ?3)
+                 ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at",
+                params![
+                    AGENT_DROID_ENABLED_KEY,
+                    if enabled { 1i64 } else { 0i64 },
+                    now
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM app_settings WHERE key = ?1",
+                params![AGENT_DROID_ENABLED_KEY],
             )?;
         }
 
@@ -4783,12 +4850,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -4901,12 +4970,14 @@ mod tests {
             appearance_code_font: Some("Geist Mono".to_owned()),
             appearance_terminal_font: Some("Geist Mono".to_owned()),
             agent_default_model_id: Some("gpt-5.2".to_owned()),
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: Some("high".to_owned()),
             agent_default_runner: Some("amp".to_owned()),
             agent_amp_mode: Some("rush".to_owned()),
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             sidebar_project_order: vec!["/tmp/my-project".to_owned()],
@@ -4929,7 +5000,7 @@ mod tests {
                 luban_domain::PersistedWorkspaceThreadRunConfigOverride {
                     runner: Some("amp".to_owned()),
                     amp_mode: Some("rush".to_owned()),
-                    model_id: "gpt-5.3-codex".to_owned(),
+                    model_id: "gpt-5.2-codex".to_owned(),
                     thinking_effort: "high".to_owned(),
                 },
             )]),
@@ -4981,12 +5052,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -5085,7 +5158,7 @@ mod tests {
                 attachments: Vec::new(),
                 run_config: AgentRunConfig {
                     runner: luban_domain::AgentRunnerKind::Codex,
-                    model_id: "gpt-5.3-codex".to_owned(),
+                    model_id: "gpt-5.2-codex".to_owned(),
                     thinking_effort: ThinkingEffort::Minimal,
                     amp_mode: None,
                 },
@@ -5096,7 +5169,7 @@ mod tests {
                 attachments: Vec::new(),
                 run_config: AgentRunConfig {
                     runner: luban_domain::AgentRunnerKind::Codex,
-                    model_id: "gpt-5.3-codex".to_owned(),
+                    model_id: "gpt-5.2-codex".to_owned(),
                     thinking_effort: ThinkingEffort::Minimal,
                     amp_mode: None,
                 },
@@ -5148,7 +5221,7 @@ mod tests {
             "w",
             1,
             luban_domain::AgentRunnerKind::Codex,
-            "gpt-5.3-codex",
+            "gpt-5.2-codex",
             ThinkingEffort::High,
             None,
         )
@@ -5156,13 +5229,13 @@ mod tests {
 
         let snapshot = db.load_conversation("p", "w", 1).unwrap();
         assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
-        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.3-codex"));
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
         assert_eq!(snapshot.amp_mode, None);
 
         let snapshot = db.load_conversation_page("p", "w", 1, None, 10).unwrap();
         assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
-        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.3-codex"));
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
         assert_eq!(snapshot.amp_mode, None);
     }
@@ -5238,12 +5311,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -5356,12 +5431,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -5432,12 +5509,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -5503,12 +5582,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -5563,12 +5644,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

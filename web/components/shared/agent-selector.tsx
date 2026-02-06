@@ -7,7 +7,7 @@ import Image from "next/image"
 import { ChevronDown, Settings } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { AGENT_MODELS, supportedThinkingEffortsForModel } from "@/lib/agent-settings"
+import { AGENT_MODELS, DROID_MODELS, supportedThinkingEffortsForModel, supportedThinkingEffortsForRunner, isKnownModel } from "@/lib/agent-settings"
 import { agentModelLabel, thinkingEffortLabel } from "@/lib/conversation-ui"
 import { UnifiedProviderLogo } from "@/components/shared/unified-provider-logo"
 
@@ -58,12 +58,13 @@ export function CodexAgentSelector({
   const currentModelId = modelId ?? ""
   const currentEffort = thinkingEffort ?? null
 
+  const validCodexModelId = isKnownModel(modelId) ? modelId : null
   const displayName = useMemo(() => {
-    const model = agentModelLabel(modelId)
+    const model = agentModelLabel(validCodexModelId)
     const effort = thinkingEffortLabel(thinkingEffort)
     if (model === "Model" || effort === "Effort") return "Codex"
     return `${model} · ${effort}`
-  }, [modelId, thinkingEffort])
+  }, [validCodexModelId, thinkingEffort])
 
   const panelModelId = tempModelId ?? currentModelId
   const effortOptions = useMemo(() => supportedThinkingEffortsForModel(panelModelId), [panelModelId])
@@ -244,6 +245,8 @@ export function AgentSelector({
   onChangeAmpMode,
   codexEnabled = true,
   ampEnabled = true,
+  droidEnabled = true,
+  runnerDefaultModels,
 }: {
   testId?: string
   modelId: string | null | undefined
@@ -264,14 +267,21 @@ export function AgentSelector({
   onChangeAmpMode: (mode: AmpMode) => void
   codexEnabled?: boolean
   ampEnabled?: boolean
+  droidEnabled?: boolean
+  runnerDefaultModels?: Record<string, string> | null
 }) {
   const resolvedDefaultRunner: AgentRunnerKind = defaultRunner ?? "codex"
   const resolvedRunner: AgentRunnerKind = runner ?? resolvedDefaultRunner
   const isAmp = resolvedRunner === "amp"
   const isClaude = resolvedRunner === "claude"
+  const isDroid = resolvedRunner === "droid"
   const resolvedDefaultAmpMode: AmpMode =
     defaultAmpMode === "rush" ? "rush" : defaultAmpMode === "smart" ? "smart" : null
   const resolvedAmpMode: AmpMode = ampMode === "rush" ? "rush" : ampMode === "smart" ? "smart" : null
+
+  // Reason: If the persisted modelId was removed from catalogs (e.g. gpt-5.3-codex),
+  // treat it as unset so we show the agent name instead of a raw invalid ID.
+  const validModelId = isKnownModel(modelId) ? modelId : null
 
   const displayName = useMemo(() => {
     if (isAmp) {
@@ -280,16 +290,25 @@ export function AgentSelector({
       return "Amp"
     }
     if (isClaude) return "Claude"
-    const model = agentModelLabel(modelId)
+    const model = agentModelLabel(validModelId)
     const effort = thinkingEffortLabel(thinkingEffort)
+    if (isDroid) {
+      if (model === "Model") return "Droid"
+      const droidEfforts = supportedThinkingEffortsForRunner("droid", validModelId)
+      if (droidEfforts.length === 0) return model
+      if (effort === "Effort") return model
+      return `${model} · ${effort}`
+    }
     if (model === "Model" || effort === "Effort") return "Codex"
     return `${model} · ${effort}`
-  }, [isAmp, isClaude, modelId, resolvedAmpMode, thinkingEffort])
+  }, [isAmp, isClaude, isDroid, validModelId, resolvedAmpMode, thinkingEffort])
 
   const icon = isAmp ? (
     <AmpMark className="w-3.5 h-3.5" />
   ) : isClaude ? (
     <UnifiedProviderLogo providerId="anthropic" className="w-3.5 h-3.5" />
+  ) : isDroid ? (
+    <UnifiedProviderLogo providerId="factory" className="w-3.5 h-3.5" />
   ) : (
     <UnifiedProviderLogo providerId="openai" className="w-3.5 h-3.5" />
   )
@@ -302,7 +321,12 @@ export function AgentSelector({
   const currentEffort = thinkingEffort ?? null
 
   const panelModelId = tempModelId ?? currentModelId
-  const effortOptions = useMemo(() => supportedThinkingEffortsForModel(panelModelId), [panelModelId])
+  // Reason: Use runner-aware lookup so Droid models (which have fixed reasoning)
+  // correctly return an empty list, hiding the Reasoning column.
+  const effortOptions = useMemo(
+    () => supportedThinkingEffortsForRunner(tempRunner, panelModelId),
+    [tempRunner, panelModelId],
+  )
 
   const close = () => {
     setOpen(false)
@@ -323,7 +347,7 @@ export function AgentSelector({
   }
 
   const claudeEnabled = true
-  const noAgentsEnabled = !codexEnabled && !ampEnabled && !claudeEnabled
+  const noAgentsEnabled = !codexEnabled && !ampEnabled && !claudeEnabled && !droidEnabled
 
   if (noAgentsEnabled) {
     return (
@@ -401,13 +425,18 @@ export function AgentSelector({
                     icon: <UnifiedProviderLogo providerId="anthropic" className="w-3.5 h-3.5 flex-shrink-0" />,
                     enabled: true,
                   },
+                  {
+                    id: "droid" as const,
+                    label: "Droid",
+                    icon: <UnifiedProviderLogo providerId="factory" className="w-3.5 h-3.5 flex-shrink-0" />,
+                    enabled: droidEnabled,
+                  },
                 ] as const)
                   .filter((opt) => opt.enabled)
                   .map((opt) => {
                   const selected = opt.id === tempRunner
-                  const isDefault = opt.id === resolvedDefaultRunner
                   return (
-                    <div key={opt.id} className="relative group">
+                    <div key={opt.id}>
                       <button
                         data-testid={`agent-runner-option-${opt.id}`}
                         onMouseDown={(e) => e.preventDefault()}
@@ -418,27 +447,8 @@ export function AgentSelector({
                         )}
                       >
                         {opt.icon}
-                        <span className="pr-10">{opt.label}</span>
+                        {opt.label}
                       </button>
-                      {isDefault && (
-                        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity bg-popover/95 rounded">
-                          <span className="text-[10px] text-muted-foreground pointer-events-none select-none">default</span>
-                          {onOpenAgentSettings && (
-                            <button
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                close()
-                                onOpenAgentSettings(resolvedDefaultRunner)
-                              }}
-                              className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors pointer-events-auto"
-                              title="Edit default agent"
-                            >
-                              <Settings className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      )}
                     </div>
                   )
                 })}
@@ -587,6 +597,114 @@ export function AgentSelector({
                     )
                   })}
                 </div>
+              ) : tempRunner === "droid" ? (
+                <>
+                  <div className="p-1">
+                    <div className="px-2.5 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                      Model
+                    </div>
+                    {DROID_MODELS.map((m) => {
+                      const selected = m.id === panelModelId || (panelModelId === "" && m.id === currentModelId)
+                      // Reason: Use the per-runner default so the badge shows
+                      // the user's last-chosen model for this runner.
+                      const droidDefault = runnerDefaultModels?.["droid"]
+                      const isDefault = droidDefault != null && m.id === droidDefault
+                      // Reason: Use runner-aware lookup so models shared with
+                      // Codex (gpt-5.2, gpt-5.2-codex) resolve to the Droid
+                      // entry (empty efforts) and apply directly on click.
+                      const modelEfforts = supportedThinkingEffortsForRunner("droid", m.id)
+                      return (
+                        <div key={m.id} className="relative group">
+                          <button
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              if (modelEfforts.length === 0) {
+                                // Reason: No reasoning column for this model, apply directly.
+                                apply(m.id, currentEffort ?? "medium")
+                              } else {
+                                setTempModelId(m.id)
+                              }
+                            }}
+                            className={cn(
+                              "w-full flex items-center px-2.5 py-1.5 text-left text-xs transition-colors rounded-md whitespace-nowrap",
+                              selected ? "bg-primary/10 text-primary" : "text-foreground hover:bg-accent",
+                            )}
+                          >
+                            <span className="pr-10">{m.label}</span>
+                          </button>
+                          {isDefault && (
+                            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity bg-popover/95 rounded">
+                              <span className="text-[10px] text-muted-foreground pointer-events-none select-none">
+                                default
+                              </span>
+                              {onOpenAgentSettings && (
+                                <button
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    close()
+                                    onOpenAgentSettings("droid", "settings.json")
+                                  }}
+                                  className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors pointer-events-auto"
+                                  title="Edit Droid defaults"
+                                >
+                                  <Settings className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {effortOptions.length > 0 && (
+                    <div className="p-1">
+                      <div className="px-2.5 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                        Reasoning
+                      </div>
+                      {effortOptions.map((effort) => {
+                        const selected = effort === (currentEffort ?? "")
+                        const isDefault = defaultThinkingEffort != null && effort === defaultThinkingEffort
+                        return (
+                          <div key={effort} className="relative group">
+                            <button
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => apply(panelModelId, effort)}
+                              className={cn(
+                                "w-full flex items-center px-2.5 py-1.5 text-left text-xs transition-colors rounded-md whitespace-nowrap",
+                                selected ? "bg-primary/10 text-primary" : "text-foreground hover:bg-accent",
+                              )}
+                            >
+                              <span className="pr-10">{thinkingEffortLabel(effort)}</span>
+                            </button>
+                            {isDefault && (
+                              <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity bg-popover/95 rounded">
+                                <span className="text-[10px] text-muted-foreground pointer-events-none select-none">
+                                  default
+                                </span>
+                                {onOpenAgentSettings && (
+                                  <button
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      close()
+                                      onOpenAgentSettings("droid", "settings.json")
+                                    }}
+                                    className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors pointer-events-auto"
+                                    title="Edit Droid defaults"
+                                  >
+                                    <Settings className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="p-3 text-xs text-muted-foreground whitespace-nowrap">Uses Claude Code local settings.</div>
               )}

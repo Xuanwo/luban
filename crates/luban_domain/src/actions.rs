@@ -322,6 +322,9 @@ pub enum Action {
     AgentClaudeEnabledChanged {
         enabled: bool,
     },
+    AgentDroidEnabledChanged {
+        enabled: bool,
+    },
     AgentRunnerChanged {
         runner: AgentRunnerKind,
     },

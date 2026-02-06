@@ -19,13 +19,15 @@ export type AppearanceSnapshot = {
   global_zoom: number
 }
 
-export type AgentRunnerKind = "codex" | "amp" | "claude"
+export type AgentRunnerKind = "codex" | "amp" | "claude" | "droid"
 
 export type AgentSettingsSnapshot = {
   codex_enabled: boolean
   amp_enabled: boolean
   claude_enabled: boolean
+  droid_enabled: boolean
   default_model_id?: string
+  runner_default_models?: Record<string, string>
   default_thinking_effort?: ThinkingEffort
   default_runner?: AgentRunnerKind
   amp_mode?: string
@@ -371,6 +373,15 @@ export type ClaudeConfigEntrySnapshot = {
   children: ClaudeConfigEntrySnapshot[]
 }
 
+export type DroidConfigEntryKind = "file" | "folder"
+
+export type DroidConfigEntrySnapshot = {
+  path: string
+  name: string
+  kind: DroidConfigEntryKind
+  children: DroidConfigEntrySnapshot[]
+}
+
 export type AgentItemKind =
   | "reasoning"
   | "command_execution"
@@ -516,6 +527,7 @@ export type ClientAction =
   | { type: "codex_enabled_changed"; enabled: boolean }
   | { type: "amp_enabled_changed"; enabled: boolean }
   | { type: "claude_enabled_changed"; enabled: boolean }
+  | { type: "droid_enabled_changed"; enabled: boolean }
   | { type: "agent_runner_changed"; runner: AgentRunnerKind }
   | { type: "agent_amp_mode_changed"; mode: string }
   | { type: "task_prompt_template_changed"; intent_kind: TaskIntentKind; template: string }
@@ -535,6 +547,11 @@ export type ClientAction =
   | { type: "claude_config_list_dir"; path: string }
   | { type: "claude_config_read_file"; path: string }
   | { type: "claude_config_write_file"; path: string; contents: string }
+  | { type: "droid_check" }
+  | { type: "droid_config_tree" }
+  | { type: "droid_config_list_dir"; path: string }
+  | { type: "droid_config_read_file"; path: string }
+  | { type: "droid_config_write_file"; path: string; contents: string }
 
 export type ServerEvent =
   | { type: "app_changed"; rev: number; snapshot: AppSnapshot }
@@ -567,6 +584,11 @@ export type ServerEvent =
   | { type: "claude_config_list_dir_ready"; request_id: string; path: string; entries: ClaudeConfigEntrySnapshot[] }
   | { type: "claude_config_file_ready"; request_id: string; path: string; contents: string }
   | { type: "claude_config_file_saved"; request_id: string; path: string }
+  | { type: "droid_check_ready"; request_id: string; ok: boolean; message: string | null }
+  | { type: "droid_config_tree_ready"; request_id: string; tree: DroidConfigEntrySnapshot[] }
+  | { type: "droid_config_list_dir_ready"; request_id: string; path: string; entries: DroidConfigEntrySnapshot[] }
+  | { type: "droid_config_file_ready"; request_id: string; path: string; contents: string }
+  | { type: "droid_config_file_saved"; request_id: string; path: string }
 
 export type WsClientMessage =
   | { type: "hello"; protocol_version: number; last_seen_rev: number | null }

@@ -65,9 +65,22 @@ pub(super) fn resolve_claude_root() -> anyhow::Result<PathBuf> {
     })
 }
 
+pub(super) fn resolve_droid_root() -> anyhow::Result<PathBuf> {
+    resolve_root_from_env_or_default(paths::LUBAN_DROID_ROOT_ENV, || {
+        if cfg!(test) {
+            return Ok(PathBuf::from(".factory"));
+        }
+
+        Ok(home_dir()?.join(".factory"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
+    use super::{
+        resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_droid_root,
+        resolve_luban_root,
+    };
     use luban_domain::paths;
     use std::path::PathBuf;
 
@@ -188,5 +201,25 @@ mod tests {
         );
 
         restore_env(paths::LUBAN_ROOT_ENV, prev);
+    }
+
+    #[test]
+    fn resolve_droid_root_uses_env_override() {
+        let _guard = crate::env::lock_env_for_tests();
+
+        let prev = set_env(paths::LUBAN_DROID_ROOT_ENV, " droid-root ");
+        let loaded = resolve_droid_root().expect("droid root should resolve");
+        assert_eq!(loaded, PathBuf::from("droid-root"));
+        restore_env(paths::LUBAN_DROID_ROOT_ENV, prev);
+    }
+
+    #[test]
+    fn resolve_droid_root_defaults_in_tests() {
+        let _guard = crate::env::lock_env_for_tests();
+
+        let prev = unset_env(paths::LUBAN_DROID_ROOT_ENV);
+        let loaded = resolve_droid_root().expect("droid root should resolve");
+        assert_eq!(loaded, PathBuf::from(".factory"));
+        restore_env(paths::LUBAN_DROID_ROOT_ENV, prev);
     }
 }

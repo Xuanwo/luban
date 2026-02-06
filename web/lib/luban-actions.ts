@@ -5,6 +5,7 @@ import type {
   AgentRunnerKind,
   AmpConfigEntrySnapshot,
   ClaudeConfigEntrySnapshot,
+  DroidConfigEntrySnapshot,
   AppearanceFontsSnapshot,
   AppearanceTheme,
   AttachmentRef,
@@ -30,6 +31,7 @@ import { waitForNewThread } from "./luban-thread-flow"
 import { prependConversationSnapshot } from "./conversation-pagination"
 import { pickThreadId } from "./thread-ui"
 import { normalizeWorkspaceTabsSnapshot } from "./workspace-tabs"
+import { AGENT_MODELS, DROID_MODELS } from "./agent-settings"
 
 export type LubanActions = {
   pickProjectPath: () => Promise<string | null>
@@ -47,6 +49,7 @@ export type LubanActions = {
   setCodexEnabled: (enabled: boolean) => void
   setAmpEnabled: (enabled: boolean) => void
   setClaudeEnabled: (enabled: boolean) => void
+  setDroidEnabled: (enabled: boolean) => void
   setAgentRunner: (runner: AgentRunnerKind) => void
   setAgentAmpMode: (mode: string) => void
   setTelegramBotToken: (token: string) => void
@@ -70,6 +73,11 @@ export type LubanActions = {
   listClaudeConfigDir: (path: string) => Promise<{ path: string; entries: ClaudeConfigEntrySnapshot[] }>
   readClaudeConfigFile: (path: string) => Promise<string>
   writeClaudeConfigFile: (path: string, contents: string) => Promise<void>
+  checkDroid: () => Promise<{ ok: boolean; message: string | null }>
+  getDroidConfigTree: () => Promise<DroidConfigEntrySnapshot[]>
+  listDroidConfigDir: (path: string) => Promise<{ path: string; entries: DroidConfigEntrySnapshot[] }>
+  readDroidConfigFile: (path: string) => Promise<string>
+  writeDroidConfigFile: (path: string, contents: string) => Promise<void>
 
   executeTask: (
     prompt: string,
@@ -224,6 +232,10 @@ export function createLubanActions(args: {
     args.sendAction({ type: "claude_enabled_changed", enabled })
   }
 
+  function setDroidEnabled(enabled: boolean) {
+    args.sendAction({ type: "droid_enabled_changed", enabled })
+  }
+
   function setAgentRunner(runner: AgentRunnerKind) {
     args.sendAction({ type: "agent_runner_changed", runner })
   }
@@ -375,6 +387,29 @@ export function createLubanActions(args: {
 
   async function writeClaudeConfigFile(path: string, contents: string): Promise<void> {
     await args.request<null>({ type: "claude_config_write_file", path, contents })
+  }
+
+  function checkDroid(): Promise<{ ok: boolean; message: string | null }> {
+    return args.request<{ ok: boolean; message: string | null }>({ type: "droid_check" })
+  }
+
+  function getDroidConfigTree(): Promise<DroidConfigEntrySnapshot[]> {
+    return args.request<DroidConfigEntrySnapshot[]>({ type: "droid_config_tree" })
+  }
+
+  function listDroidConfigDir(path: string): Promise<{ path: string; entries: DroidConfigEntrySnapshot[] }> {
+    return args.request<{ path: string; entries: DroidConfigEntrySnapshot[] }>({
+      type: "droid_config_list_dir",
+      path,
+    })
+  }
+
+  function readDroidConfigFile(path: string): Promise<string> {
+    return args.request<string>({ type: "droid_config_read_file", path })
+  }
+
+  async function writeDroidConfigFile(path: string, contents: string): Promise<void> {
+    await args.request<null>({ type: "droid_config_write_file", path, contents })
   }
 
   function executeTask(
@@ -814,9 +849,18 @@ export function createLubanActions(args: {
       if (prev.workdir_id !== workdirId || prev.task_id !== taskId) return prev
       const nextAmpMode =
         runner === "amp" ? (prev.amp_mode ?? store.state.app?.agent.amp_mode ?? null) : null
+      // Reason: When switching runners, reset model to one in the target catalog
+      // so the CLI doesn't receive an invalid model ID.
+      const catalog = runner === "codex" ? AGENT_MODELS : runner === "droid" ? DROID_MODELS : []
+      const currentModelValid =
+        catalog.length === 0 || catalog.some((m) => m.id === prev.agent_model_id)
+      const nextModelId = currentModelValid
+        ? prev.agent_model_id
+        : (catalog[0]?.id ?? prev.agent_model_id)
       return {
         ...prev,
         agent_runner: runner,
+        agent_model_id: nextModelId,
         amp_mode: nextAmpMode,
       }
     })
@@ -881,6 +925,7 @@ export function createLubanActions(args: {
     setCodexEnabled,
     setAmpEnabled,
     setClaudeEnabled,
+    setDroidEnabled,
     setAgentRunner,
     setAgentAmpMode,
     setTelegramBotToken,
@@ -904,6 +949,11 @@ export function createLubanActions(args: {
     listClaudeConfigDir,
     readClaudeConfigFile,
     writeClaudeConfigFile,
+    checkDroid,
+    getDroidConfigTree,
+    listDroidConfigDir,
+    readDroidConfigFile,
+    writeDroidConfigFile,
     executeTask,
     setTaskStarred,
     setTaskStatus,

@@ -848,21 +848,9 @@ impl Engine {
             return Err("failed to determine created task id".to_owned());
         };
 
-        let default_model_id = self.state.agent_default_model_id().to_owned();
-        let default_effort = self.state.agent_default_thinking_effort();
-
-        self.process_action_queue(Action::ChatModelChanged {
-            workspace_id,
-            thread_id,
-            model_id: default_model_id,
-        })
-        .await;
-        self.process_action_queue(Action::ThinkingEffortChanged {
-            workspace_id,
-            thread_id,
-            thinking_effort: default_effort,
-        })
-        .await;
+        // Reason: CreateWorkspaceThread already sets the correct per-runner
+        // model and thinking effort via resolve_default_model_for_runner, so
+        // we no longer override them here with the global Codex default.
 
         if mode == luban_api::TaskExecuteMode::Start {
             let attachments = attachments.into_iter().map(map_api_attachment).collect();
@@ -2101,6 +2089,236 @@ impl Engine {
                     return;
                 }
 
+                // --- Droid config handlers ---
+
+                if matches!(action, luban_api::ClientAction::DroidCheck) {
+                    let services = self.services.clone();
+                    let events = self.events.clone();
+                    let request_id = request_id.clone();
+                    let rev = self.rev;
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || services.droid_check())
+                            .await
+                            .ok()
+                            .unwrap_or_else(|| Err("failed to join droid check task".to_owned()));
+
+                        let (ok, message) = match result {
+                            Ok(()) => (true, None),
+                            Err(message) => (false, Some(message)),
+                        };
+
+                        let _ = events.send(WsServerMessage::Event {
+                            rev,
+                            event: Box::new(luban_api::ServerEvent::DroidCheckReady {
+                                request_id,
+                                ok,
+                                message,
+                            }),
+                        });
+                    });
+
+                    let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
+                if matches!(action, luban_api::ClientAction::DroidConfigTree) {
+                    fn map_entry(
+                        entry: luban_domain::DroidConfigEntry,
+                    ) -> luban_api::DroidConfigEntrySnapshot {
+                        luban_api::DroidConfigEntrySnapshot {
+                            path: entry.path,
+                            name: entry.name,
+                            kind: match entry.kind {
+                                luban_domain::DroidConfigEntryKind::File => {
+                                    luban_api::DroidConfigEntryKind::File
+                                }
+                                luban_domain::DroidConfigEntryKind::Folder => {
+                                    luban_api::DroidConfigEntryKind::Folder
+                                }
+                            },
+                            children: entry.children.into_iter().map(map_entry).collect(),
+                        }
+                    }
+
+                    let services = self.services.clone();
+                    let events = self.events.clone();
+                    let request_id = request_id.clone();
+                    let rev = self.rev;
+                    tokio::spawn(async move {
+                        let result =
+                            tokio::task::spawn_blocking(move || services.droid_config_tree())
+                                .await
+                                .ok()
+                                .unwrap_or_else(|| {
+                                    Err("failed to join droid config tree task".to_owned())
+                                });
+
+                        match result {
+                            Ok(entries) => {
+                                let tree = entries.into_iter().map(map_entry).collect();
+                                let _ = events.send(WsServerMessage::Event {
+                                    rev,
+                                    event: Box::new(luban_api::ServerEvent::DroidConfigTreeReady {
+                                        request_id,
+                                        tree,
+                                    }),
+                                });
+                            }
+                            Err(message) => {
+                                let _ = events.send(WsServerMessage::Error {
+                                    request_id: Some(request_id),
+                                    message,
+                                });
+                            }
+                        }
+                    });
+
+                    let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
+                if let luban_api::ClientAction::DroidConfigListDir { path } = &action {
+                    fn map_entry(
+                        entry: luban_domain::DroidConfigEntry,
+                    ) -> luban_api::DroidConfigEntrySnapshot {
+                        luban_api::DroidConfigEntrySnapshot {
+                            path: entry.path,
+                            name: entry.name,
+                            kind: match entry.kind {
+                                luban_domain::DroidConfigEntryKind::File => {
+                                    luban_api::DroidConfigEntryKind::File
+                                }
+                                luban_domain::DroidConfigEntryKind::Folder => {
+                                    luban_api::DroidConfigEntryKind::Folder
+                                }
+                            },
+                            children: entry.children.into_iter().map(map_entry).collect(),
+                        }
+                    }
+
+                    let services = self.services.clone();
+                    let events = self.events.clone();
+                    let request_id = request_id.clone();
+                    let rev = self.rev;
+                    let path = path.clone();
+                    tokio::spawn(async move {
+                        let path_for_task = path.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            services.droid_config_list_dir(path_for_task)
+                        })
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| {
+                            Err("failed to join droid config list dir task".to_owned())
+                        });
+
+                        match result {
+                            Ok(entries) => {
+                                let entries = entries.into_iter().map(map_entry).collect();
+                                let _ = events.send(WsServerMessage::Event {
+                                    rev,
+                                    event: Box::new(
+                                        luban_api::ServerEvent::DroidConfigListDirReady {
+                                            request_id,
+                                            path,
+                                            entries,
+                                        },
+                                    ),
+                                });
+                            }
+                            Err(message) => {
+                                let _ = events.send(WsServerMessage::Error {
+                                    request_id: Some(request_id),
+                                    message,
+                                });
+                            }
+                        }
+                    });
+
+                    let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
+                if let luban_api::ClientAction::DroidConfigReadFile { path } = &action {
+                    let services = self.services.clone();
+                    let events = self.events.clone();
+                    let request_id = request_id.clone();
+                    let rev = self.rev;
+                    let path = path.clone();
+                    tokio::spawn(async move {
+                        let path_for_task = path.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            services.droid_config_read_file(path_for_task)
+                        })
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| Err("failed to join droid config read task".to_owned()));
+
+                        match result {
+                            Ok(contents) => {
+                                let _ = events.send(WsServerMessage::Event {
+                                    rev,
+                                    event: Box::new(luban_api::ServerEvent::DroidConfigFileReady {
+                                        request_id,
+                                        path,
+                                        contents,
+                                    }),
+                                });
+                            }
+                            Err(message) => {
+                                let _ = events.send(WsServerMessage::Error {
+                                    request_id: Some(request_id),
+                                    message,
+                                });
+                            }
+                        }
+                    });
+
+                    let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
+                if let luban_api::ClientAction::DroidConfigWriteFile { path, contents } = &action {
+                    let services = self.services.clone();
+                    let events = self.events.clone();
+                    let request_id = request_id.clone();
+                    let rev = self.rev;
+                    let path = path.clone();
+                    let contents = contents.clone();
+                    tokio::spawn(async move {
+                        let path_for_task = path.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            services.droid_config_write_file(path_for_task, contents)
+                        })
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| {
+                            Err("failed to join droid config write task".to_owned())
+                        });
+
+                        match result {
+                            Ok(()) => {
+                                let _ = events.send(WsServerMessage::Event {
+                                    rev,
+                                    event: Box::new(luban_api::ServerEvent::DroidConfigFileSaved {
+                                        request_id,
+                                        path,
+                                    }),
+                                });
+                            }
+                            Err(message) => {
+                                let _ = events.send(WsServerMessage::Error {
+                                    request_id: Some(request_id),
+                                    message,
+                                });
+                            }
+                        }
+                    });
+
+                    let _ = reply.send(Ok(self.rev));
+                    return;
+                }
+
                 if let luban_api::ClientAction::OpenWorkspace { workspace_id } = &action {
                     self.maybe_refresh_pull_request(WorkspaceId::from_u64(workspace_id.0));
                 }
@@ -2419,6 +2637,7 @@ impl Engine {
                 luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                 luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                 luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+                luban_domain::AgentRunnerKind::Droid => luban_api::AgentRunnerKind::Droid,
             },
             agent_model_id: model_id.clone(),
             thinking_effort: match thinking_effort {
@@ -2451,6 +2670,9 @@ impl Engine {
                             luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                             luban_domain::AgentRunnerKind::Claude => {
                                 luban_api::AgentRunnerKind::Claude
+                            }
+                            luban_domain::AgentRunnerKind::Droid => {
+                                luban_api::AgentRunnerKind::Droid
                             }
                         },
                         model_id: prompt.run_config.model_id.clone(),
@@ -4500,7 +4722,12 @@ impl Engine {
                 codex_enabled: self.state.agent_codex_enabled(),
                 amp_enabled: self.state.agent_amp_enabled(),
                 claude_enabled: self.state.agent_claude_enabled(),
+                droid_enabled: self.state.agent_droid_enabled(),
                 default_model_id: Some(self.state.agent_default_model_id().to_owned()),
+                runner_default_models: self.state.agent_runner_default_models()
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_owned(), v.clone()))
+                    .collect(),
                 default_thinking_effort: Some(match self.state.agent_default_thinking_effort() {
                     ThinkingEffort::Minimal => luban_api::ThinkingEffort::Minimal,
                     ThinkingEffort::Low => luban_api::ThinkingEffort::Low,
@@ -4512,6 +4739,7 @@ impl Engine {
                     luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                     luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                     luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+                    luban_domain::AgentRunnerKind::Droid => luban_api::AgentRunnerKind::Droid,
                 }),
                 amp_mode: Some(self.state.agent_amp_mode().to_owned()),
             },
@@ -4651,6 +4879,7 @@ impl Engine {
                 luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                 luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                 luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+                luban_domain::AgentRunnerKind::Droid => luban_api::AgentRunnerKind::Droid,
             },
             agent_model_id: conversation.agent_model_id.clone(),
             thinking_effort: match conversation.thinking_effort {
@@ -4699,6 +4928,9 @@ impl Engine {
                             luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                             luban_domain::AgentRunnerKind::Claude => {
                                 luban_api::AgentRunnerKind::Claude
+                            }
+                            luban_domain::AgentRunnerKind::Droid => {
+                                luban_api::AgentRunnerKind::Droid
                             }
                         },
                         model_id: prompt.run_config.model_id.clone(),
@@ -5826,12 +6058,16 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         luban_api::ClientAction::ClaudeEnabledChanged { enabled } => {
             Some(Action::AgentClaudeEnabledChanged { enabled })
         }
+        luban_api::ClientAction::DroidEnabledChanged { enabled } => {
+            Some(Action::AgentDroidEnabledChanged { enabled })
+        }
         luban_api::ClientAction::AgentRunnerChanged { runner } => {
             Some(Action::AgentRunnerChanged {
                 runner: match runner {
                     luban_api::AgentRunnerKind::Codex => luban_domain::AgentRunnerKind::Codex,
                     luban_api::AgentRunnerKind::Amp => luban_domain::AgentRunnerKind::Amp,
                     luban_api::AgentRunnerKind::Claude => luban_domain::AgentRunnerKind::Claude,
+                    luban_api::AgentRunnerKind::Droid => luban_domain::AgentRunnerKind::Droid,
                 },
             })
         }
@@ -5882,7 +6118,12 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
         | luban_api::ClientAction::ClaudeConfigTree
         | luban_api::ClientAction::ClaudeConfigListDir { .. }
         | luban_api::ClientAction::ClaudeConfigReadFile { .. }
-        | luban_api::ClientAction::ClaudeConfigWriteFile { .. } => None,
+        | luban_api::ClientAction::ClaudeConfigWriteFile { .. }
+        | luban_api::ClientAction::DroidCheck
+        | luban_api::ClientAction::DroidConfigTree
+        | luban_api::ClientAction::DroidConfigListDir { .. }
+        | luban_api::ClientAction::DroidConfigReadFile { .. }
+        | luban_api::ClientAction::DroidConfigWriteFile { .. } => None,
     }
 }
 
@@ -5924,6 +6165,7 @@ fn map_api_agent_runner_kind(kind: luban_api::AgentRunnerKind) -> luban_domain::
         luban_api::AgentRunnerKind::Codex => luban_domain::AgentRunnerKind::Codex,
         luban_api::AgentRunnerKind::Amp => luban_domain::AgentRunnerKind::Amp,
         luban_api::AgentRunnerKind::Claude => luban_domain::AgentRunnerKind::Claude,
+        luban_api::AgentRunnerKind::Droid => luban_domain::AgentRunnerKind::Droid,
     }
 }
 
@@ -6383,12 +6625,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -6919,12 +7163,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: Some(10),
             open_button_selection: None,
             sidebar_project_order: Vec::new(),
@@ -7605,12 +7851,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -7984,12 +8232,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -8313,12 +8563,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -8523,12 +8775,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -9075,12 +9329,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

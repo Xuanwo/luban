@@ -82,8 +82,12 @@ pub struct AgentSettingsSnapshot {
     pub codex_enabled: bool,
     pub amp_enabled: bool,
     pub claude_enabled: bool,
+    #[serde(default = "default_true")]
+    pub droid_enabled: bool,
     #[serde(default)]
     pub default_model_id: Option<String>,
+    #[serde(default)]
+    pub runner_default_models: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub default_thinking_effort: Option<ThinkingEffort>,
     #[serde(default)]
@@ -92,13 +96,19 @@ pub struct AgentSettingsSnapshot {
     pub amp_mode: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for AgentSettingsSnapshot {
     fn default() -> Self {
         Self {
             codex_enabled: true,
             amp_enabled: true,
             claude_enabled: true,
+            droid_enabled: true,
             default_model_id: None,
+            runner_default_models: std::collections::HashMap::new(),
             default_thinking_effort: None,
             default_runner: None,
             amp_mode: None,
@@ -112,6 +122,7 @@ pub enum AgentRunnerKind {
     Codex,
     Amp,
     Claude,
+    Droid,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -193,6 +204,22 @@ pub struct ClaudeConfigEntrySnapshot {
     pub kind: ClaudeConfigEntryKind,
     #[serde(default)]
     pub children: Vec<ClaudeConfigEntrySnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DroidConfigEntryKind {
+    File,
+    Folder,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DroidConfigEntrySnapshot {
+    pub path: String,
+    pub name: String,
+    pub kind: DroidConfigEntryKind,
+    #[serde(default)]
+    pub children: Vec<DroidConfigEntrySnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1123,6 +1150,9 @@ pub enum ClientAction {
     ClaudeEnabledChanged {
         enabled: bool,
     },
+    DroidEnabledChanged {
+        enabled: bool,
+    },
     AgentRunnerChanged {
         runner: AgentRunnerKind,
     },
@@ -1170,6 +1200,18 @@ pub enum ClientAction {
         path: String,
     },
     ClaudeConfigWriteFile {
+        path: String,
+        contents: String,
+    },
+    DroidCheck,
+    DroidConfigTree,
+    DroidConfigListDir {
+        path: String,
+    },
+    DroidConfigReadFile {
+        path: String,
+    },
+    DroidConfigWriteFile {
         path: String,
         contents: String,
     },
@@ -1291,6 +1333,29 @@ pub enum ServerEvent {
         contents: String,
     },
     ClaudeConfigFileSaved {
+        request_id: String,
+        path: String,
+    },
+    DroidCheckReady {
+        request_id: String,
+        ok: bool,
+        message: Option<String>,
+    },
+    DroidConfigTreeReady {
+        request_id: String,
+        tree: Vec<DroidConfigEntrySnapshot>,
+    },
+    DroidConfigListDirReady {
+        request_id: String,
+        path: String,
+        entries: Vec<DroidConfigEntrySnapshot>,
+    },
+    DroidConfigFileReady {
+        request_id: String,
+        path: String,
+        contents: String,
+    },
+    DroidConfigFileSaved {
         request_id: String,
         path: String,
     },

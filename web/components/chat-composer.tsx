@@ -42,6 +42,7 @@ export function ChatComposer({
   canSend,
   codexEnabled = true,
   ampEnabled = true,
+  runnerDefaultModels,
   compact = false,
 }: {
   value: string
@@ -82,6 +83,7 @@ export function ChatComposer({
   canSend: boolean
   codexEnabled?: boolean
   ampEnabled?: boolean
+  runnerDefaultModels?: Record<string, string> | null
   /** When true, removes padding and max-width constraints for embedding in cards */
   compact?: boolean
 }) {
@@ -112,6 +114,7 @@ export function ChatComposer({
       onChangeAmpMode={onChangeAmpMode}
       codexEnabled={codexEnabled}
       ampEnabled={ampEnabled}
+      runnerDefaultModels={runnerDefaultModels}
     />
   ) : null
 

@@ -230,6 +230,20 @@ pub struct ClaudeConfigEntry {
     pub children: Vec<ClaudeConfigEntry>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DroidConfigEntryKind {
+    File,
+    Folder,
+}
+
+#[derive(Clone, Debug)]
+pub struct DroidConfigEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: DroidConfigEntryKind,
+    pub children: Vec<DroidConfigEntry>,
+}
+
 #[derive(Clone, Debug)]
 pub struct NewTaskDraft {
     pub id: String,
@@ -681,6 +695,26 @@ pub trait ProjectWorkspaceService: Send + Sync {
     }
 
     fn claude_config_write_file(&self, _path: String, _contents: String) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn droid_check(&self) -> Result<(), String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn droid_config_tree(&self) -> Result<Vec<DroidConfigEntry>, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn droid_config_list_dir(&self, _path: String) -> Result<Vec<DroidConfigEntry>, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn droid_config_read_file(&self, _path: String) -> Result<String, String> {
+        Err("unimplemented".to_owned())
+    }
+
+    fn droid_config_write_file(&self, _path: String, _contents: String) -> Result<(), String> {
         Err("unimplemented".to_owned())
     }
 

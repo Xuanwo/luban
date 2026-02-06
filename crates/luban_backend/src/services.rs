@@ -3,8 +3,9 @@ use luban_domain::paths;
 use luban_domain::{
     AgentThreadEvent, AttachmentKind, AttachmentRef, ClaudeConfigEntry, CodexConfigEntry,
     CodexThreadEvent, CodexThreadItem, ContextImage, ConversationEntry, ConversationSnapshot,
-    CreatedWorkspace, OpenTarget, PersistedAppState, ProjectWorkspaceService, PullRequestCiState,
-    PullRequestInfo, PullRequestState, RunAgentTurnRequest, SystemTaskKind, TaskIntentKind,
+    CreatedWorkspace, DroidConfigEntry, OpenTarget, PersistedAppState, ProjectWorkspaceService,
+    PullRequestCiState, PullRequestInfo, PullRequestState, RunAgentTurnRequest, SystemTaskKind,
+    TaskIntentKind,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -36,6 +37,7 @@ mod config_path;
 mod config_tree;
 mod context_blobs;
 mod conversations;
+mod droid_cli;
 mod feedback;
 mod gh_cli;
 mod git;
@@ -59,12 +61,17 @@ use codex_cli::CodexTurnParams;
 use codex_thread::{codex_item_id, generate_turn_scope_id, qualify_codex_item, qualify_event};
 use config_entries::{
     amp_entries_from_shallow, claude_entries_from_shallow, codex_entries_from_shallow,
+    droid_entries_from_shallow,
 };
+use droid_cli::DroidTurnParams;
 use git_branch::{branch_exists, normalize_branch_suffix};
 use prompt::{format_amp_prompt, format_codex_prompt, resolve_prompt_attachments};
 use pull_request::pull_request_ci_state_from_check_buckets;
 use reconnect_notice::is_transient_reconnect_notice;
-use roots::{resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_luban_root};
+use roots::{
+    resolve_amp_root, resolve_claude_root, resolve_codex_root, resolve_droid_root,
+    resolve_luban_root,
+};
 
 fn anyhow_error_to_string(e: anyhow::Error) -> String {
     format!("{e:#}")
@@ -251,6 +258,16 @@ impl GitWorkspaceService {
         on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         claude_cli::run_claude_turn_streamed_via_cli(params, cancel, on_event)
+    }
+
+    #[allow(dead_code)]
+    fn run_droid_turn_streamed_via_cli(
+        &self,
+        params: DroidTurnParams,
+        cancel: Arc<AtomicBool>,
+        on_event: impl FnMut(CodexThreadEvent) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        droid_cli::run_droid_turn_streamed_via_cli(params, cancel, on_event)
     }
 
     /// Run a Claude turn with process reuse.
@@ -1666,6 +1683,186 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                         Ok(())
                     },
                 )
+            } else if runner == luban_domain::AgentRunnerKind::Droid {
+                droid_cli::run_droid_turn_streamed_via_cli(
+                    DroidTurnParams {
+                        session_id: resolved_thread_id,
+                        worktree_path: worktree_path.clone(),
+                        prompt: codex_prompt.clone(),
+                        model: model.clone(),
+                        reasoning_effort: model_reasoning_effort.clone(),
+                        auto_level: None,
+                    },
+                    cancel.clone(),
+                    |event| {
+                        let event = qualify_event(&turn_scope_id, event);
+                        on_event(event.clone());
+
+                        if let CodexThreadEvent::ItemStarted { item }
+                        | CodexThreadEvent::ItemUpdated { item }
+                        | CodexThreadEvent::ItemCompleted { item } = &event
+                            && matches!(item, CodexThreadItem::AgentMessage { .. })
+                        {
+                            saw_agent_message = true;
+                        }
+
+                        match &event {
+                            CodexThreadEvent::ThreadStarted { thread_id } => {
+                                self.sqlite.set_conversation_thread_id(
+                                    project_slug.clone(),
+                                    workspace_name.clone(),
+                                    thread_local_id,
+                                    thread_id.clone(),
+                                )?;
+                            }
+                            CodexThreadEvent::ItemCompleted { item } => {
+                                let id = codex_item_id(item).to_owned();
+                                if appended_item_ids.insert(id) {
+                                    let entry = match item {
+                                        CodexThreadItem::AgentMessage { id, text } => {
+                                            ConversationEntry::AgentEvent {
+                                                entry_id: String::new(),
+                                                created_at_unix_ms: 0,
+                                                event: luban_domain::AgentEvent::Message {
+                                                    id: id.clone(),
+                                                    text: text.clone(),
+                                                },
+                                            }
+                                        }
+                                        _ => ConversationEntry::AgentEvent {
+                                            entry_id: String::new(),
+                                            created_at_unix_ms: 0,
+                                            event: luban_domain::AgentEvent::Item {
+                                                item: Box::new(item.clone()),
+                                            },
+                                        },
+                                    };
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        thread_local_id,
+                                        vec![entry],
+                                    )?;
+                                }
+                            }
+                            CodexThreadEvent::TurnCompleted { usage } => {
+                                let _ = usage;
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        thread_local_id,
+                                        vec![ConversationEntry::AgentEvent {
+                                            entry_id: String::new(),
+                                            created_at_unix_ms: 0,
+                                            event: luban_domain::AgentEvent::TurnDuration {
+                                                duration_ms,
+                                            },
+                                        }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
+                            }
+                            CodexThreadEvent::TurnFailed { error } => {
+                                if turn_error.is_none() {
+                                    turn_error = Some(error.message.clone());
+                                }
+                                self.sqlite.append_conversation_entries(
+                                    project_slug.clone(),
+                                    workspace_name.clone(),
+                                    thread_local_id,
+                                    vec![ConversationEntry::AgentEvent {
+                                        entry_id: String::new(),
+                                        created_at_unix_ms: 0,
+                                        event: luban_domain::AgentEvent::TurnError {
+                                            message: error.message.clone(),
+                                        },
+                                    }],
+                                )?;
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        thread_local_id,
+                                        vec![ConversationEntry::AgentEvent {
+                                            entry_id: String::new(),
+                                            created_at_unix_ms: 0,
+                                            event: luban_domain::AgentEvent::TurnDuration {
+                                                duration_ms,
+                                            },
+                                        }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
+                            }
+                            CodexThreadEvent::Error { message } => {
+                                if turn_error.is_none() {
+                                    turn_error = Some(message.clone());
+                                }
+                                self.sqlite.append_conversation_entries(
+                                    project_slug.clone(),
+                                    workspace_name.clone(),
+                                    thread_local_id,
+                                    vec![ConversationEntry::AgentEvent {
+                                        entry_id: String::new(),
+                                        created_at_unix_ms: 0,
+                                        event: luban_domain::AgentEvent::TurnError {
+                                            message: message.clone(),
+                                        },
+                                    }],
+                                )?;
+                                if duration_appended_for_events
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    let duration_ms = turn_started_at.elapsed().as_millis() as u64;
+                                    self.sqlite.append_conversation_entries(
+                                        project_slug.clone(),
+                                        workspace_name.clone(),
+                                        thread_local_id,
+                                        vec![ConversationEntry::AgentEvent {
+                                            entry_id: String::new(),
+                                            created_at_unix_ms: 0,
+                                            event: luban_domain::AgentEvent::TurnDuration {
+                                                duration_ms,
+                                            },
+                                        }],
+                                    )?;
+                                    on_event(CodexThreadEvent::TurnDuration { duration_ms });
+                                }
+                            }
+                            CodexThreadEvent::TurnStarted
+                            | CodexThreadEvent::TurnDuration { .. }
+                            | CodexThreadEvent::ItemStarted { .. }
+                            | CodexThreadEvent::ItemUpdated { .. } => {}
+                        }
+
+                        Ok(())
+                    },
+                )
             } else {
                 self.run_codex_turn_streamed_via_cli(
                     CodexTurnParams {
@@ -2670,6 +2867,84 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         result.map_err(anyhow_error_to_string)
     }
 
+    fn droid_check(&self) -> Result<(), String> {
+        let result: anyhow::Result<()> = {
+            let droid = std::env::var_os(paths::LUBAN_DROID_BIN_ENV)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("droid"));
+            cli_check::check_cli_version(&droid, "droid")
+        };
+
+        result.map_err(anyhow_error_to_string)
+    }
+
+    fn droid_config_tree(&self) -> Result<Vec<DroidConfigEntry>, String> {
+        let result: anyhow::Result<Vec<DroidConfigEntry>> = (|| {
+            let root = resolve_droid_root()?;
+
+            let entries = config_tree::read_optional_root_shallow_entries(
+                &root,
+                "failed to stat droid config root",
+                "droid config root",
+            )?;
+
+            Ok(droid_entries_from_shallow(entries))
+        })();
+
+        result.map_err(anyhow_error_to_string)
+    }
+
+    fn droid_config_list_dir(&self, path: String) -> Result<Vec<DroidConfigEntry>, String> {
+        let result: anyhow::Result<Vec<DroidConfigEntry>> = (|| {
+            let root = resolve_droid_root()?;
+
+            if !root.exists() {
+                return Ok(Vec::new());
+            }
+
+            let rel_path = config_path::parse_lenient_relative_list_dir_path(&path)?;
+
+            let abs = root.join(&rel_path);
+            let meta = std::fs::metadata(&abs)
+                .with_context(|| format!("failed to stat {}", abs.display()))?;
+            if !meta.is_dir() {
+                return Err(anyhow!("not a directory: {}", abs.display()));
+            }
+
+            let entries = config_tree::read_shallow_entries_in_dir(&abs, &rel_path)?;
+
+            Ok(droid_entries_from_shallow(entries))
+        })();
+
+        result.map_err(anyhow_error_to_string)
+    }
+
+    fn droid_config_read_file(&self, path: String) -> Result<String, String> {
+        let result: anyhow::Result<String> = (|| {
+            let root = resolve_droid_root()?;
+
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
+
+            let abs = root.join(rel_path);
+            config_file_io::read_small_utf8_file(&abs)
+        })();
+
+        result.map_err(anyhow_error_to_string)
+    }
+
+    fn droid_config_write_file(&self, path: String, contents: String) -> Result<(), String> {
+        let result: anyhow::Result<()> = (|| {
+            let root = resolve_droid_root()?;
+
+            let rel_path = config_path::parse_strict_relative_file_path(&path)?;
+
+            let abs = root.join(rel_path);
+            config_file_io::write_file_creating_parent_dirs(&abs, &contents)
+        })();
+
+        result.map_err(anyhow_error_to_string)
+    }
+
     fn project_identity(&self, path: PathBuf) -> Result<luban_domain::ProjectIdentity, String> {
         let result: anyhow::Result<luban_domain::ProjectIdentity> = (|| {
             if !path.exists() {
@@ -2953,7 +3228,7 @@ mod tests {
                 .expect("write cache file");
         }
 
-        std::fs::write(root.join("config.toml"), "model = \"gpt-5.3-codex\"")
+        std::fs::write(root.join("config.toml"), "model = \"gpt-5.2-codex\"")
             .expect("write config.toml");
         let prompts_dir = root.join("prompts");
         std::fs::create_dir_all(&prompts_dir).expect("prompts dir should be created");
@@ -3374,6 +3649,61 @@ mod tests {
         );
 
         assert_eq!(contents, "{ \"ok\": true }\n");
+
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn droid_config_tree_is_shallow_and_droid_config_list_dir_pages() {
+        let _guard = lock_env();
+
+        let unique = unix_epoch_nanos_now();
+        let root = std::env::temp_dir().join(format!(
+            "luban-droid-config-tree-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).expect("temp dir should be created");
+
+        std::fs::write(root.join("settings.json"), "{ \"api_key\": \"test\" }\n")
+            .expect("write settings.json");
+
+        let base_dir = temp_services_dir(unique);
+        std::fs::create_dir_all(&base_dir).expect("luban root should exist");
+        let sqlite =
+            SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: paths::worktrees_root(&base_dir),
+            conversations_root: paths::conversations_root(&base_dir),
+            task_prompts_root: paths::task_prompts_root(&base_dir),
+            sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
+        };
+
+        let tree = {
+            let _env = EnvVarGuard::set(paths::LUBAN_DROID_ROOT_ENV, &root);
+
+            let tree = ProjectWorkspaceService::droid_config_tree(&service)
+                .expect("droid_config_tree should succeed");
+
+            tree
+        };
+
+        let mut paths = Vec::new();
+        fn collect(out: &mut Vec<String>, entries: &[DroidConfigEntry]) {
+            for entry in entries {
+                out.push(entry.path.clone());
+                collect(out, &entry.children);
+            }
+        }
+        collect(&mut paths, &tree);
+
+        assert!(
+            paths.iter().any(|p| p == "settings.json"),
+            "tree should include settings.json"
+        );
 
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
@@ -3916,12 +4246,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: Some(true),
             agent_amp_enabled: Some(true),
             agent_claude_enabled: Some(true),
+            agent_droid_enabled: Some(true),
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

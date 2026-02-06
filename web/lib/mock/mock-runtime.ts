@@ -8,6 +8,7 @@ import type {
   ClientAction,
   ClaudeConfigEntrySnapshot,
   CodexConfigEntrySnapshot,
+  DroidConfigEntrySnapshot,
   CodexCustomPromptSnapshot,
   ConversationEntry,
   ConversationSnapshot,
@@ -48,6 +49,7 @@ type RuntimeState = {
   codexConfig: { tree: CodexConfigEntrySnapshot[]; files: Map<string, string> }
   ampConfig: { tree: AmpConfigEntrySnapshot[]; files: Map<string, string> }
   claudeConfig: { tree: ClaudeConfigEntrySnapshot[]; files: Map<string, string> }
+  droidConfig: { tree: DroidConfigEntrySnapshot[]; files: Map<string, string> }
   nextWorkdirId: number
   nextTaskId: number
   newTaskDrafts: NewTaskDraftSnapshot[]
@@ -117,6 +119,8 @@ function initRuntime(): RuntimeState {
   for (const [k, v] of Object.entries(fixtures.ampConfig.files)) ampFiles.set(k, v)
   const claudeFiles = new Map<string, string>()
   for (const [k, v] of Object.entries(fixtures.claudeConfig.files)) claudeFiles.set(k, v)
+  const droidFiles = new Map<string, string>()
+  for (const [k, v] of Object.entries(fixtures.droidConfig.files)) droidFiles.set(k, v)
 
   const nextWorkdirId = Math.max(0, ...allWorkdirIds(fixtures.app)) + 1
   const nextTaskId = Math.max(0, ...allTaskIds(threadsByWorkdir)) + 1
@@ -135,6 +139,7 @@ function initRuntime(): RuntimeState {
     codexConfig: { tree: clone(fixtures.codexConfig.tree), files: codexFiles },
     ampConfig: { tree: clone(fixtures.ampConfig.tree), files: ampFiles },
     claudeConfig: { tree: clone(fixtures.claudeConfig.tree), files: claudeFiles },
+    droidConfig: { tree: clone(fixtures.droidConfig.tree), files: droidFiles },
     nextWorkdirId,
     nextTaskId,
     newTaskDrafts: [],
@@ -1121,7 +1126,7 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
     return clone(result) as unknown as T
   }
 
-  if (action.type === "codex_check" || action.type === "amp_check" || action.type === "claude_check") {
+  if (action.type === "codex_check" || action.type === "amp_check" || action.type === "claude_check" || action.type === "droid_check") {
     return { ok: true, message: "Mock check ok" } as T
   }
 
@@ -1146,6 +1151,14 @@ export async function mockRequest<T>(action: ClientAction): Promise<T> {
   if (action.type === "claude_config_read_file") return (state.claudeConfig.files.get(action.path) ?? "") as unknown as T
   if (action.type === "claude_config_write_file") {
     state.claudeConfig.files.set(action.path, action.contents)
+    return null as unknown as T
+  }
+
+  if (action.type === "droid_config_tree") return clone(state.droidConfig.tree) as unknown as T
+  if (action.type === "droid_config_list_dir") return { path: action.path, entries: [] } as unknown as T
+  if (action.type === "droid_config_read_file") return (state.droidConfig.files.get(action.path) ?? "") as unknown as T
+  if (action.type === "droid_config_write_file") {
+    state.droidConfig.files.set(action.path, action.contents)
     return null as unknown as T
   }
 

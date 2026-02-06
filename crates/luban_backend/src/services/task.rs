@@ -203,6 +203,28 @@ fn run_system_task_and_collect_messages(
                 },
             )?;
         }
+        AgentRunnerKind::Droid => {
+            service.run_droid_turn_streamed_via_cli(
+                super::DroidTurnParams {
+                    session_id: None,
+                    worktree_path,
+                    prompt,
+                    model: Some(model_id.to_owned()),
+                    reasoning_effort: Some(thinking_effort.as_str().to_owned()),
+                    auto_level: None,
+                },
+                cancel,
+                |event| {
+                    if let luban_domain::CodexThreadEvent::ItemCompleted {
+                        item: luban_domain::CodexThreadItem::AgentMessage { text, .. },
+                    } = event
+                    {
+                        agent_messages.push(text);
+                    }
+                    Ok(())
+                },
+            )?;
+        }
     }
 
     Ok(agent_messages)

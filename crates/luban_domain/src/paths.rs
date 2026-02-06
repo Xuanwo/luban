@@ -5,6 +5,8 @@ pub const LUBAN_CODEX_ROOT_ENV: &str = "LUBAN_CODEX_ROOT";
 pub const LUBAN_AMP_ROOT_ENV: &str = "LUBAN_AMP_ROOT";
 pub const LUBAN_CLAUDE_BIN_ENV: &str = "LUBAN_CLAUDE_BIN";
 pub const LUBAN_CLAUDE_ROOT_ENV: &str = "LUBAN_CLAUDE_ROOT";
+pub const LUBAN_DROID_BIN_ENV: &str = "LUBAN_DROID_BIN";
+pub const LUBAN_DROID_ROOT_ENV: &str = "LUBAN_DROID_ROOT";
 pub const LUBAN_ROOT_ENV: &str = "LUBAN_ROOT";
 
 pub fn worktrees_root(luban_root: &Path) -> PathBuf {
@@ -79,6 +81,8 @@ mod tests {
         assert_eq!(LUBAN_AMP_ROOT_ENV, "LUBAN_AMP_ROOT");
         assert_eq!(LUBAN_CLAUDE_BIN_ENV, "LUBAN_CLAUDE_BIN");
         assert_eq!(LUBAN_CLAUDE_ROOT_ENV, "LUBAN_CLAUDE_ROOT");
+        assert_eq!(LUBAN_DROID_BIN_ENV, "LUBAN_DROID_BIN");
+        assert_eq!(LUBAN_DROID_ROOT_ENV, "LUBAN_DROID_ROOT");
         assert_eq!(LUBAN_ROOT_ENV, "LUBAN_ROOT");
     }
 

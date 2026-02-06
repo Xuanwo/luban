@@ -75,12 +75,27 @@ pub(crate) fn apply_persisted_app_state(
         .unwrap_or_else(|| default_amp_mode().to_owned());
 
     state.agent_default_model_id = agent_default_model_id;
+    // Reason: Restore per-runner model overrides so new tasks use the user's
+    // last-chosen model for each runner instead of the global default.
+    state.agent_runner_default_models = persisted
+        .agent_runner_default_models
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let runner = parse_agent_runner_kind(&key)?;
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some((runner, trimmed.to_owned()))
+        })
+        .collect();
     state.agent_default_thinking_effort = agent_default_thinking_effort;
     state.agent_default_runner = agent_default_runner;
     state.agent_amp_mode = agent_amp_mode;
     state.agent_codex_enabled = persisted.agent_codex_enabled.unwrap_or(true);
     state.agent_amp_enabled = persisted.agent_amp_enabled.unwrap_or(true);
     state.agent_claude_enabled = persisted.agent_claude_enabled.unwrap_or(true);
+    state.agent_droid_enabled = persisted.agent_droid_enabled.unwrap_or(true);
 
     let telegram_bot_token =
         normalize_optional_string(persisted.telegram_bot_token.as_deref(), 256);
@@ -768,12 +783,14 @@ mod tests {
             appearance_code_font: None,
             appearance_terminal_font: None,
             agent_default_model_id: None,
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: None,
             agent_default_runner: None,
             agent_amp_mode: None,
             agent_codex_enabled: None,
             agent_amp_enabled: None,
             agent_claude_enabled: None,
+            agent_droid_enabled: None,
             last_open_workspace_id: None,
             open_button_selection: None,
             sidebar_project_order: Vec::new(),

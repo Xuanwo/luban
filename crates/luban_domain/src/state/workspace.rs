@@ -56,12 +56,16 @@ pub struct AppState {
     pub appearance_theme: AppearanceTheme,
     pub appearance_fonts: AppearanceFonts,
     pub(crate) agent_default_model_id: String,
+    /// Per-runner model chosen by the user (e.g. Droid → "claude-opus-4-6").
+    /// Takes precedence over `agent_default_model_id` when creating new tasks.
+    pub(crate) agent_runner_default_models: HashMap<crate::AgentRunnerKind, String>,
     pub(crate) agent_default_thinking_effort: crate::ThinkingEffort,
     pub(crate) agent_default_runner: crate::AgentRunnerKind,
     pub(crate) agent_amp_mode: String,
     pub(crate) agent_codex_enabled: bool,
     pub(crate) agent_amp_enabled: bool,
     pub(crate) agent_claude_enabled: bool,
+    pub(crate) agent_droid_enabled: bool,
     pub conversations: HashMap<(WorkspaceId, WorkspaceThreadId), WorkspaceConversation>,
     pub workspace_tabs: HashMap<WorkspaceId, WorkspaceTabs>,
     pub dashboard_preview_workspace_id: Option<WorkspaceId>,
@@ -99,8 +103,18 @@ impl AppState {
         self.agent_claude_enabled
     }
 
+    pub fn agent_droid_enabled(&self) -> bool {
+        self.agent_droid_enabled
+    }
+
     pub fn agent_default_model_id(&self) -> &str {
         &self.agent_default_model_id
+    }
+
+    pub fn agent_runner_default_models(
+        &self,
+    ) -> &HashMap<crate::AgentRunnerKind, String> {
+        &self.agent_runner_default_models
     }
 
     pub fn agent_default_thinking_effort(&self) -> crate::ThinkingEffort {

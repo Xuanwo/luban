@@ -209,7 +209,12 @@ export function useLubanTransport(args: {
             event.type === "claude_config_tree_ready" ||
             event.type === "claude_config_list_dir_ready" ||
             event.type === "claude_config_file_ready" ||
-            event.type === "claude_config_file_saved"
+            event.type === "claude_config_file_saved" ||
+            event.type === "droid_check_ready" ||
+            event.type === "droid_config_tree_ready" ||
+            event.type === "droid_config_list_dir_ready" ||
+            event.type === "droid_config_file_ready" ||
+            event.type === "droid_config_file_saved"
           ) {
             const pending = pendingResponsesRef.current.get(event.request_id)
             if (pending) {
@@ -238,6 +243,12 @@ export function useLubanTransport(args: {
                 pending.resolve({ path: event.path, entries: event.entries })
               if (event.type === "claude_config_file_ready") pending.resolve(event.contents)
               if (event.type === "claude_config_file_saved") pending.resolve(null)
+              if (event.type === "droid_check_ready") pending.resolve({ ok: event.ok, message: event.message })
+              if (event.type === "droid_config_tree_ready") pending.resolve(event.tree)
+              if (event.type === "droid_config_list_dir_ready")
+                pending.resolve({ path: event.path, entries: event.entries })
+              if (event.type === "droid_config_file_ready") pending.resolve(event.contents)
+              if (event.type === "droid_config_file_saved") pending.resolve(null)
             }
             return
           }

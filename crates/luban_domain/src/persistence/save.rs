@@ -61,6 +61,11 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         appearance_code_font: Some(state.appearance_fonts.code_font.clone()),
         appearance_terminal_font: Some(state.appearance_fonts.terminal_font.clone()),
         agent_default_model_id: Some(state.agent_default_model_id.clone()),
+        agent_runner_default_models: state
+            .agent_runner_default_models
+            .iter()
+            .map(|(runner, model)| (runner.as_str().to_owned(), model.clone()))
+            .collect(),
         agent_default_thinking_effort: Some(
             state.agent_default_thinking_effort.as_str().to_owned(),
         ),
@@ -69,6 +74,7 @@ pub(crate) fn to_persisted_app_state(state: &AppState) -> PersistedAppState {
         agent_codex_enabled: Some(state.agent_codex_enabled),
         agent_amp_enabled: Some(state.agent_amp_enabled),
         agent_claude_enabled: Some(state.agent_claude_enabled),
+        agent_droid_enabled: Some(state.agent_droid_enabled),
         last_open_workspace_id: state.last_open_workspace_id.map(|id| id.0),
         open_button_selection: state.open_button_selection.clone(),
         sidebar_project_order: state.sidebar_project_order.clone(),

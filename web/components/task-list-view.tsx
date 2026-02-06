@@ -165,6 +165,9 @@ function TaskAgentPill({
     if (runner === "claude") {
       return <UnifiedProviderLogo providerId="anthropic" className="w-3.5 h-3.5" />
     }
+    if (runner === "droid") {
+      return <UnifiedProviderLogo providerId="factory" className="w-3.5 h-3.5" />
+    }
     return <UnifiedProviderLogo providerId="openai" className="w-3.5 h-3.5" />
   })()
 

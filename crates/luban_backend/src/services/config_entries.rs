@@ -1,6 +1,7 @@
 use super::config_tree;
 use luban_domain::{
     ClaudeConfigEntry, ClaudeConfigEntryKind, CodexConfigEntry, CodexConfigEntryKind,
+    DroidConfigEntry, DroidConfigEntryKind,
 };
 
 pub(super) fn codex_entries_from_shallow(
@@ -48,6 +49,23 @@ pub(super) fn claude_entries_from_shallow(
             kind: match entry.kind {
                 config_tree::ShallowEntryKind::Folder => ClaudeConfigEntryKind::Folder,
                 config_tree::ShallowEntryKind::File => ClaudeConfigEntryKind::File,
+            },
+            children: Vec::new(),
+        })
+        .collect()
+}
+
+pub(super) fn droid_entries_from_shallow(
+    entries: Vec<config_tree::ShallowEntry>,
+) -> Vec<DroidConfigEntry> {
+    entries
+        .into_iter()
+        .map(|entry| DroidConfigEntry {
+            path: entry.path,
+            name: entry.name,
+            kind: match entry.kind {
+                config_tree::ShallowEntryKind::Folder => DroidConfigEntryKind::Folder,
+                config_tree::ShallowEntryKind::File => DroidConfigEntryKind::File,
             },
             children: Vec::new(),
         })

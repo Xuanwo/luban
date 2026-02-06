@@ -61,6 +61,10 @@ function AgentRunnerIcon({
     return <UnifiedProviderLogo providerId="anthropic" className={className} />
   }
 
+  if (runner === "droid") {
+    return <UnifiedProviderLogo providerId="factory" className={className} />
+  }
+
   return <UnifiedProviderLogo providerId="openai" className={className} />
 }
 

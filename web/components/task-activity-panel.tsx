@@ -371,6 +371,7 @@ export function TaskActivityPanel() {
           agentModelId={conversation?.agent_model_id}
           agentThinkingEffort={conversation?.thinking_effort}
           defaultModelId={app?.agent.default_model_id ?? null}
+          runnerDefaultModels={app?.agent.runner_default_models ?? null}
           defaultThinkingEffort={app?.agent.default_thinking_effort ?? null}
           defaultAmpMode={app?.agent.amp_mode ?? null}
           defaultRunner={app?.agent.default_runner ?? null}

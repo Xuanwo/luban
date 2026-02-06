@@ -8,6 +8,7 @@ import type {
   ChangedFileSnapshot,
   ClaudeConfigEntrySnapshot,
   CodexConfigEntrySnapshot,
+  DroidConfigEntrySnapshot,
   CodexCustomPromptSnapshot,
   ConversationEntry,
   ConversationSnapshot,
@@ -53,6 +54,10 @@ export type MockFixtures = {
   }
   claudeConfig: {
     tree: ClaudeConfigEntrySnapshot[]
+    files: Record<string, string>
+  }
+  droidConfig: {
+    tree: DroidConfigEntrySnapshot[]
     files: Record<string, string>
   }
 }
@@ -413,6 +418,7 @@ export function defaultMockFixtures(): MockFixtures {
       codex_enabled: true,
       amp_enabled: true,
       claude_enabled: true,
+      droid_enabled: true,
       default_model_id: "gpt-5.2",
       default_thinking_effort: "medium",
       default_runner: "codex",
@@ -1427,6 +1433,10 @@ export function defaultMockFixtures(): MockFixtures {
     { path: "claude.yaml", name: "claude.yaml", kind: "file", children: [] },
   ]
 
+  const droidConfigTree: DroidConfigEntrySnapshot[] = [
+    { path: "settings.json", name: "settings.json", kind: "file", children: [] },
+  ]
+
   const tasksSnapshot: TasksSnapshot = {
     rev: 1,
     tasks: [
@@ -1766,5 +1776,6 @@ export function defaultMockFixtures(): MockFixtures {
     codexConfig: { tree: codexConfigTree, files: { "prompts/default.md": "Default prompt\n" } },
     ampConfig: { tree: ampConfigTree, files: { "config.toml": "amp = true\n" } },
     claudeConfig: { tree: claudeConfigTree, files: { "claude.yaml": "claude: true\n" } },
+    droidConfig: { tree: droidConfigTree, files: { "settings.json": "{\n  \"model\": \"claude-opus-4-6\",\n  \"reasoning\": \"medium\"\n}\n" } },
   }
 }

@@ -53,7 +53,29 @@ fn runner_is_enabled(state: &AppState, runner: crate::AgentRunnerKind) -> bool {
         crate::AgentRunnerKind::Codex => state.agent_codex_enabled,
         crate::AgentRunnerKind::Amp => state.agent_amp_enabled,
         crate::AgentRunnerKind::Claude => state.agent_claude_enabled,
+        crate::AgentRunnerKind::Droid => state.agent_droid_enabled,
     }
+}
+
+/// Resolve the effective default runner: use `agent_default_runner` if enabled,
+/// otherwise fall back to the first enabled runner.
+fn resolve_enabled_runner(state: &AppState) -> crate::AgentRunnerKind {
+    if runner_is_enabled(state, state.agent_default_runner) {
+        return state.agent_default_runner;
+    }
+    // Reason: When the user disables the default runner but enables another,
+    // new conversations should use the only available runner automatically.
+    for runner in [
+        crate::AgentRunnerKind::Droid,
+        crate::AgentRunnerKind::Codex,
+        crate::AgentRunnerKind::Claude,
+        crate::AgentRunnerKind::Amp,
+    ] {
+        if runner_is_enabled(state, runner) {
+            return runner;
+        }
+    }
+    state.agent_default_runner
 }
 
 fn truncate_for_system_task(input: &str, max_chars: usize) -> String {
@@ -164,12 +186,14 @@ impl AppState {
             appearance_theme: crate::AppearanceTheme::default(),
             appearance_fonts: crate::AppearanceFonts::default(),
             agent_default_model_id: default_agent_model_id().to_owned(),
+            agent_runner_default_models: HashMap::new(),
             agent_default_thinking_effort: default_thinking_effort(),
             agent_default_runner: crate::default_agent_runner_kind(),
             agent_amp_mode: crate::default_amp_mode().to_owned(),
             agent_codex_enabled: true,
             agent_amp_enabled: true,
             agent_claude_enabled: true,
+            agent_droid_enabled: true,
             conversations: HashMap::new(),
             workspace_tabs: HashMap::new(),
             dashboard_preview_workspace_id: None,
@@ -1090,6 +1114,9 @@ impl AppState {
                     };
                     (normalized, runner, amp_mode)
                 };
+                // Reason: Remember the user's model choice per runner so new
+                // tasks default to this model instead of the global default.
+                self.agent_runner_default_models.insert(runner, model_id.clone());
                 self.workspace_thread_run_config_overrides.insert(
                     (workspace_id, thread_id),
                     crate::PersistedWorkspaceThreadRunConfigOverride {
@@ -1117,12 +1144,25 @@ impl AppState {
                 runner,
             } => {
                 let default_amp_mode = self.agent_amp_mode.clone();
+                // Reason: Pre-compute the per-runner default before borrowing
+                // the conversation mutably (avoids double borrow on self).
+                let runner_default_model = self.resolve_default_model_for_runner(runner);
                 let (model_id, thinking_effort, amp_mode) = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
                     conversation.run_config_overridden_by_user = true;
                     conversation.agent_runner = runner;
                     if runner == crate::AgentRunnerKind::Amp && conversation.amp_mode.is_none() {
                         conversation.amp_mode = Some(default_amp_mode);
+                    }
+                    // Reason: When switching runners, the current model may not exist
+                    // in the target runner's catalog (e.g. gpt-5.2-codex is Codex-only).
+                    // Use the per-runner default so Droid gets the user's last choice.
+                    if !crate::model_valid_for_runner(runner, &conversation.agent_model_id) {
+                        conversation.agent_model_id = runner_default_model;
+                        conversation.thinking_effort = normalize_thinking_effort(
+                            &conversation.agent_model_id,
+                            conversation.thinking_effort,
+                        );
                     }
                     let model_id = conversation.agent_model_id.clone();
                     let thinking_effort = conversation.thinking_effort;
@@ -1458,6 +1498,7 @@ impl AppState {
                 let agent_codex_enabled = self.agent_codex_enabled;
                 let agent_amp_enabled = self.agent_amp_enabled;
                 let agent_claude_enabled = self.agent_claude_enabled;
+                let agent_droid_enabled = self.agent_droid_enabled;
                 let mut last_error_message: Option<String> = None;
                 let effects = {
                     let conversation = self.ensure_conversation_mut(workspace_id, thread_id);
@@ -1501,6 +1542,7 @@ impl AppState {
                                 crate::AgentRunnerKind::Codex => agent_codex_enabled,
                                 crate::AgentRunnerKind::Amp => agent_amp_enabled,
                                 crate::AgentRunnerKind::Claude => agent_claude_enabled,
+                                crate::AgentRunnerKind::Droid => agent_droid_enabled,
                             };
                             if !runner_enabled {
                                 return Vec::new();
@@ -1562,6 +1604,7 @@ impl AppState {
                                 crate::AgentRunnerKind::Codex => agent_codex_enabled,
                                 crate::AgentRunnerKind::Amp => agent_amp_enabled,
                                 crate::AgentRunnerKind::Claude => agent_claude_enabled,
+                                crate::AgentRunnerKind::Droid => agent_droid_enabled,
                             };
 
                             if should_auto_update && runner_enabled {
@@ -1670,7 +1713,16 @@ impl AppState {
                     let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                     tabs.allocate_thread_id()
                 };
-                let mut conversation = self.default_conversation(thread_id);
+                // Reason: Use resolve_enabled_runner so new tasks respect
+                // which runners the user has enabled in settings.
+                let effective_runner = resolve_enabled_runner(self);
+                let model_id = self.resolve_default_model_for_runner(effective_runner);
+                let mut conversation = Self::default_conversation_with_defaults(
+                    thread_id,
+                    model_id,
+                    self.agent_default_thinking_effort,
+                    effective_runner,
+                );
                 conversation.task_status = crate::TaskStatus::Backlog;
                 conversation.push_entry(ConversationEntry::SystemEvent {
                     entry_id: format!("sys_{}", conversation.entries_total.saturating_add(1)),
@@ -2040,6 +2092,13 @@ impl AppState {
                     return Vec::new();
                 }
                 self.agent_claude_enabled = enabled;
+                vec![Effect::SaveAppState]
+            }
+            Action::AgentDroidEnabledChanged { enabled } => {
+                if self.agent_droid_enabled == enabled {
+                    return Vec::new();
+                }
+                self.agent_droid_enabled = enabled;
                 vec![Effect::SaveAppState]
             }
             Action::AgentRunnerChanged { runner } => {
@@ -2631,20 +2690,23 @@ impl AppState {
         use std::collections::hash_map::Entry;
 
         self.ensure_workspace_tabs_mut(workspace_id);
-        let default_model_id = self.agent_default_model_id.clone();
         let default_thinking_effort = self.agent_default_thinking_effort;
         let run_config_override = self
             .workspace_thread_run_config_overrides
             .get(&(workspace_id, thread_id))
             .cloned();
+        let effective_runner = resolve_enabled_runner(self);
+        // Reason: Compute before the match to avoid borrowing self while
+        // self.conversations is mutably borrowed by HashMap::entry().
+        let runner_model_id = self.resolve_default_model_for_runner(effective_runner);
         match self.conversations.entry((workspace_id, thread_id)) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let mut conversation = Self::default_conversation_with_defaults(
                     thread_id,
-                    default_model_id.clone(),
+                    runner_model_id,
                     default_thinking_effort,
-                    self.agent_default_runner,
+                    effective_runner,
                 );
                 if let Some(run_config) = run_config_override {
                     let mut overridden = false;
@@ -2689,6 +2751,26 @@ impl AppState {
         }
     }
 
+    /// Resolve the default model ID for a runner: per-runner override →
+    /// global default → catalog first entry.
+    fn resolve_default_model_for_runner(&self, runner: crate::AgentRunnerKind) -> String {
+        // Reason: Check the per-runner remembered model first so new tasks
+        // use the user's last choice for that runner.
+        if let Some(model) = self
+            .agent_runner_default_models
+            .get(&runner)
+            .filter(|m| crate::model_valid_for_runner(runner, m))
+        {
+            return model.clone();
+        }
+        // Fall back to global default if valid for this runner.
+        if crate::model_valid_for_runner(runner, &self.agent_default_model_id) {
+            self.agent_default_model_id.clone()
+        } else {
+            crate::default_model_for_runner(runner).to_owned()
+        }
+    }
+
     fn default_conversation_with_defaults(
         thread_id: WorkspaceThreadId,
         model_id: String,
@@ -2726,11 +2808,13 @@ impl AppState {
         &self,
         thread_id: WorkspaceThreadId,
     ) -> WorkspaceConversation {
+        let effective_runner = resolve_enabled_runner(self);
+        let model_id = self.resolve_default_model_for_runner(effective_runner);
         Self::default_conversation_with_defaults(
             thread_id,
-            self.agent_default_model_id.clone(),
+            model_id,
             self.agent_default_thinking_effort,
-            self.agent_default_runner,
+            effective_runner,
         )
     }
 
@@ -3062,7 +3146,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.3-codex".to_owned(),
+            model_id: "gpt-5.2-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3071,7 +3155,7 @@ mod tests {
         });
 
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.3-codex".to_owned()),
+            model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
 
@@ -3085,7 +3169,7 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, created_thread_id)
             .expect("missing conversation");
-        assert_eq!(conversation.agent_model_id, "gpt-5.3-codex");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
         assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
     }
 
@@ -3272,7 +3356,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.3-codex".to_owned(),
+            model_id: "gpt-5.2-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3297,7 +3381,7 @@ mod tests {
                 _ => None,
             })
             .expect("missing RunAgentTurn effect");
-        assert_eq!(sent_model_id, "gpt-5.3-codex");
+        assert_eq!(sent_model_id, "gpt-5.2-codex");
         assert_eq!(sent_effort, ThinkingEffort::High);
 
         state.apply(Action::ChatModelChanged {
@@ -3314,7 +3398,7 @@ mod tests {
             .current_run_config
             .as_ref()
             .expect("missing current run config");
-        assert_eq!(running.model_id, "gpt-5.3-codex");
+        assert_eq!(running.model_id, "gpt-5.2-codex");
         assert_eq!(running.thinking_effort, ThinkingEffort::High);
     }
 
@@ -3470,7 +3554,7 @@ mod tests {
             is_git: true,
         });
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.3-codex".to_owned()),
+            model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
         let project_id = state.projects[0].id;
@@ -3505,7 +3589,7 @@ mod tests {
             thread_id: None,
             task_status: crate::TaskStatus::Todo,
             runner: None,
-            agent_model_id: Some("gpt-5.3-codex".to_owned()),
+            agent_model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
             amp_mode: None,
             entries: Vec::new(),
@@ -3537,7 +3621,7 @@ mod tests {
             is_git: true,
         });
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.3-codex".to_owned()),
+            model_id: Some("gpt-5.2-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
         let project_id = state.projects[0].id;
@@ -3605,7 +3689,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.3-codex".to_owned(),
+            model_id: "gpt-5.2-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3657,7 +3741,7 @@ mod tests {
         assert_eq!(effects.len(), 1);
         match &effects[0] {
             Effect::RunAgentTurn { run_config, .. } => {
-                assert_eq!(run_config.model_id, "gpt-5.3-codex");
+                assert_eq!(run_config.model_id, "gpt-5.2-codex");
                 assert_eq!(run_config.thinking_effort, ThinkingEffort::Minimal);
             }
             other => panic!("unexpected effect: {other:?}"),
@@ -3670,7 +3754,7 @@ mod tests {
             .current_run_config
             .as_ref()
             .expect("missing current run config");
-        assert_eq!(running.model_id, "gpt-5.3-codex");
+        assert_eq!(running.model_id, "gpt-5.2-codex");
         assert_eq!(running.thinking_effort, ThinkingEffort::Minimal);
     }
 
@@ -4034,12 +4118,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -4087,12 +4173,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -4140,12 +4228,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -4236,12 +4326,14 @@ mod tests {
                 appearance_code_font: None,
                 appearance_terminal_font: None,
                 agent_default_model_id: None,
+                agent_runner_default_models: HashMap::new(),
                 agent_default_thinking_effort: None,
                 agent_default_runner: None,
                 agent_amp_mode: None,
                 agent_codex_enabled: Some(true),
                 agent_amp_enabled: Some(true),
                 agent_claude_enabled: Some(true),
+                agent_droid_enabled: Some(true),
                 last_open_workspace_id: None,
                 open_button_selection: None,
                 sidebar_project_order: Vec::new(),
@@ -5300,7 +5392,7 @@ mod tests {
                     attachments: Vec::new(),
                     run_config: AgentRunConfig {
                         runner: crate::AgentRunnerKind::Codex,
-                        model_id: "gpt-5.3-codex".to_owned(),
+                        model_id: "gpt-5.2-codex".to_owned(),
                         thinking_effort: ThinkingEffort::Minimal,
                         amp_mode: None,
                     },
@@ -5332,7 +5424,7 @@ mod tests {
                 thread_id: None,
                 task_status: crate::TaskStatus::Todo,
                 runner: None,
-                agent_model_id: Some("gpt-5.3-codex".to_owned()),
+                agent_model_id: Some("gpt-5.2-codex".to_owned()),
                 thinking_effort: Some(ThinkingEffort::High),
                 amp_mode: None,
                 entries: Vec::new(),
@@ -5348,7 +5440,7 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
-        assert_eq!(conversation.agent_model_id, "gpt-5.3-codex");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
         assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
     }
 
