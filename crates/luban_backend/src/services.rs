@@ -1177,6 +1177,7 @@ impl ProjectWorkspaceService for GitWorkspaceService {
         let duration_appended = Arc::new(AtomicBool::new(false));
         let mut appended_item_ids = HashSet::<String>::new();
         let mut saw_agent_message = false;
+        let mut latest_visible_agent_message: Option<(String, String)> = None;
 
         let result: anyhow::Result<()> = (|| {
             self.ensure_conversation_internal(
@@ -1294,9 +1295,14 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                             if let CodexThreadEvent::ItemStarted { item }
                             | CodexThreadEvent::ItemUpdated { item }
                             | CodexThreadEvent::ItemCompleted { item } = &event
-                                && matches!(item, CodexThreadItem::AgentMessage { .. })
+                                && let CodexThreadItem::AgentMessage { id, text } = item
                             {
                                 saw_agent_message = true;
+                                let visible = text.trim();
+                                if !visible.is_empty() {
+                                    latest_visible_agent_message =
+                                        Some((id.clone(), visible.to_owned()));
+                                }
                             }
 
                             match &event {
@@ -1500,9 +1506,14 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                             if let CodexThreadEvent::ItemStarted { item }
                             | CodexThreadEvent::ItemUpdated { item }
                             | CodexThreadEvent::ItemCompleted { item } = &event
-                                && matches!(item, CodexThreadItem::AgentMessage { .. })
+                                && let CodexThreadItem::AgentMessage { id, text } = item
                             {
                                 saw_agent_message = true;
+                                let visible = text.trim();
+                                if !visible.is_empty() {
+                                    latest_visible_agent_message =
+                                        Some((id.clone(), visible.to_owned()));
+                                }
                             }
 
                             match &event {
@@ -1702,9 +1713,14 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                             if let CodexThreadEvent::ItemStarted { item }
                             | CodexThreadEvent::ItemUpdated { item }
                             | CodexThreadEvent::ItemCompleted { item } = &event
-                                && matches!(item, CodexThreadItem::AgentMessage { .. })
+                                && let CodexThreadItem::AgentMessage { id, text } = item
                             {
                                 saw_agent_message = true;
+                                let visible = text.trim();
+                                if !visible.is_empty() {
+                                    latest_visible_agent_message =
+                                        Some((id.clone(), visible.to_owned()));
+                                }
                             }
 
                             match &event {
@@ -1901,6 +1917,25 @@ impl ProjectWorkspaceService for GitWorkspaceService {
                     }],
                 )?;
                 return Ok(());
+            }
+
+            if let Some((id, text)) = latest_visible_agent_message.as_ref()
+                && !appended_item_ids.contains(id)
+            {
+                self.sqlite.append_conversation_entries(
+                    project_slug.clone(),
+                    workspace_name.clone(),
+                    thread_local_id,
+                    vec![ConversationEntry::AgentEvent {
+                        entry_id: String::new(),
+                        created_at_unix_ms: 0,
+                        event: luban_domain::AgentEvent::Message {
+                            id: id.clone(),
+                            text: text.clone(),
+                        },
+                    }],
+                )?;
+                appended_item_ids.insert(id.clone());
             }
 
             if let Some(message) = turn_error {
@@ -3614,6 +3649,126 @@ mod tests {
             "expected TurnError entry to be persisted"
         );
 
+        drop(service);
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn codex_turn_persists_latest_agent_message_from_item_updated() {
+        let _guard = lock_env();
+
+        let unique = unix_epoch_nanos_now();
+        let base_dir = std::env::temp_dir().join(format!(
+            "luban-updated-agent-message-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let fake_codex = if cfg!(windows) {
+            base_dir.join("fake-codex.cmd")
+        } else {
+            base_dir.join("fake-codex")
+        };
+
+        #[cfg(windows)]
+        std::fs::write(
+            &fake_codex,
+            [
+                "@echo off",
+                "more >nul",
+                "echo {\"type\":\"turn.started\"}",
+                "echo {\"type\":\"item.updated\",\"item\":{\"type\":\"agent_message\",\"id\":\"item_1\",\"text\":\"decoder materialization path dominates\"}}",
+                "echo {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}",
+                "exit /b 0",
+                "",
+            ]
+            .join("\r\n"),
+        )
+        .expect("fake codex should be written");
+
+        #[cfg(unix)]
+        {
+            std::fs::write(
+                &fake_codex,
+                [
+                    "#!/bin/sh",
+                    "cat >/dev/null &",
+                    "stdin_pid=$!",
+                    "echo '{\"type\":\"turn.started\"}'",
+                    "echo '{\"type\":\"item.updated\",\"item\":{\"type\":\"agent_message\",\"id\":\"item_1\",\"text\":\"decoder materialization path dominates\"}}'",
+                    "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}'",
+                    "wait \"$stdin_pid\"",
+                    "exit 0",
+                    "",
+                ]
+                .join("\n"),
+            )
+            .expect("fake codex should be written");
+
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_codex)
+                .expect("fake codex should exist")
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_codex, perms).expect("fake codex should be executable");
+        }
+
+        let _env = EnvVarGuard::set(paths::LUBAN_CODEX_BIN_ENV, fake_codex.as_os_str());
+
+        let sqlite =
+            SqliteStore::new(paths::sqlite_path(&base_dir)).expect("sqlite init should work");
+        let service = GitWorkspaceService {
+            worktrees_root: paths::worktrees_root(&base_dir),
+            conversations_root: paths::conversations_root(&base_dir),
+            task_prompts_root: paths::task_prompts_root(&base_dir),
+            sqlite,
+            claude_processes: Mutex::new(HashMap::new()),
+        };
+
+        service
+            .run_agent_turn_streamed(
+                RunAgentTurnRequest {
+                    project_slug: "p".to_owned(),
+                    workspace_name: "w".to_owned(),
+                    worktree_path: base_dir.clone(),
+                    thread_local_id: 1,
+                    thread_id: None,
+                    prompt: "Hello".to_owned(),
+                    attachments: Vec::new(),
+                    runner: luban_domain::AgentRunnerKind::Codex,
+                    amp_mode: None,
+                    model: None,
+                    model_reasoning_effort: None,
+                },
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(|_event| {}),
+            )
+            .expect("turn with item.updated agent message should succeed");
+
+        let snapshot = service
+            .sqlite
+            .load_conversation("p".to_owned(), "w".to_owned(), 1)
+            .expect("conversation should be persisted");
+
+        let persisted_agent_message = snapshot.entries.iter().find_map(|entry| match entry {
+            ConversationEntry::AgentEvent {
+                event: luban_domain::AgentEvent::Message { id, text },
+                ..
+            } if text.contains("decoder materialization path dominates") => {
+                Some((id.clone(), text.clone()))
+            }
+            _ => None,
+        });
+        let (message_id, message_text) = persisted_agent_message
+            .expect("expected fallback persisted agent message from item.updated");
+        assert!(
+            message_id.ends_with("/item_1"),
+            "unexpected message id: {message_id}"
+        );
+        assert_eq!(message_text, "decoder materialization path dominates");
+
+        drop(_env);
         drop(service);
         let _ = std::fs::remove_dir_all(&base_dir);
     }
