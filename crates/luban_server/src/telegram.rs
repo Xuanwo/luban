@@ -681,6 +681,46 @@ impl TelegramGateway {
             "Comment",
             &format!("comment:{workspace_id}:{thread_id}"),
         )]]);
+        let key = (chat_id, message_thread_id, workspace_id, thread_id);
+
+        // Reuse the existing progress message for the same task when possible.
+        let existing_message_id = if let Some(state) = self.progress_messages.get_mut(&key) {
+            state.created_at = Instant::now();
+            state.task_title = title.clone();
+            state.recent_events.clear();
+            state.final_text = None;
+            Some(state.message_id)
+        } else {
+            None
+        };
+
+        if let Some(message_id) = existing_message_id {
+            match self
+                .edit_message_with_id(
+                    chat_id,
+                    message_id,
+                    &formatted,
+                    Some(kb.clone()),
+                    Some(TELEGRAM_PARSE_MODE_MARKDOWN_V2),
+                )
+                .await
+            {
+                Ok(()) => {
+                    if let Some(last_idx) = last_idx {
+                        self.last_seen_entry_index.insert(key, last_idx);
+                    }
+                    self.insert_reply_route(message_id, workspace_id, thread_id);
+                    return;
+                }
+                Err(err) => {
+                    let _ = self
+                        .set_last_error(format!(
+                            "telegram editMessageText (begin turn) failed: {err}"
+                        ))
+                        .await;
+                }
+            }
+        }
 
         let sent = self
             .send_message_with_id(
@@ -695,7 +735,6 @@ impl TelegramGateway {
             return;
         };
 
-        let key = (chat_id, message_thread_id, workspace_id, thread_id);
         if let Some(last_idx) = last_idx {
             self.last_seen_entry_index.insert(key, last_idx);
         }
@@ -1997,12 +2036,13 @@ impl TelegramGateway {
             })?;
 
         if !parsed.ok {
-            anyhow::bail!(
-                "{}",
-                parsed
-                    .description
-                    .unwrap_or_else(|| "telegram editMessageText failed".to_owned())
-            );
+            let description = parsed
+                .description
+                .unwrap_or_else(|| "telegram editMessageText failed".to_owned());
+            if telegram_edit_message_not_modified(&description) {
+                return Ok(());
+            }
+            anyhow::bail!("{}", description);
         }
 
         Ok(())
@@ -2513,6 +2553,12 @@ fn sanitize_telegram_topic_name(raw: &str) -> String {
     let trimmed = collapsed.trim();
     let trimmed = if trimmed.is_empty() { "Task" } else { trimmed };
     trimmed.chars().take(LIMIT).collect()
+}
+
+fn telegram_edit_message_not_modified(description: &str) -> bool {
+    description
+        .to_ascii_lowercase()
+        .contains("message is not modified")
 }
 
 #[derive(Clone, Debug)]
@@ -3069,6 +3115,19 @@ mod tests {
         assert!(!apply_progress_update(
             &mut state,
             ProgressUpdate::Final("done".to_owned())
+        ));
+    }
+
+    #[test]
+    fn telegram_edit_message_not_modified_is_detected() {
+        assert!(telegram_edit_message_not_modified(
+            "Bad Request: message is not modified"
+        ));
+        assert!(telegram_edit_message_not_modified(
+            "message is not modified"
+        ));
+        assert!(!telegram_edit_message_not_modified(
+            "Bad Request: message to edit not found"
         ));
     }
 }
