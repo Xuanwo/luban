@@ -189,6 +189,14 @@ update this section.
 - `reconnect` can be used to attach a terminal UI to `WS /api/pty/{workdir_id}/{task_id}?reconnect=<token>` while the command is running.
 - `output_base64` is base64-encoded bytes captured from the PTY output history and may be empty when `output_byte_len=0`.
 
+### Telegram progress relay behavior (provider note)
+
+For Telegram-paired chats, provider-side forwarding of `ConversationChanged` to Telegram follows these rules:
+
+- During a running turn, the provider keeps a per-task progress message and updates it with `editMessageText`.
+- When a new turn starts for the same task target (same chat/topic/workspace/thread key), the provider reuses the existing progress message when possible instead of sending a new one.
+- If Telegram returns `Bad Request: message is not modified` for `editMessageText`, the provider treats it as an idempotent success and does not fallback to `sendMessage`.
+
 ## Event inventory (tracked)
 
 All `ServerEvent` variants are part of this contract surface:
