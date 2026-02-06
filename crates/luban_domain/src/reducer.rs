@@ -43,6 +43,7 @@ fn cancel_running_turn(conversation: &mut WorkspaceConversation) -> Option<u64> 
     conversation.push_entry(ConversationEntry::AgentEvent {
         entry_id: String::new(),
         created_at_unix_ms: 0,
+        runner: None,
         event: crate::AgentEvent::TurnCanceled,
     });
     Some(run_id)
@@ -1524,6 +1525,7 @@ impl AppState {
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
                                 created_at_unix_ms: 0,
+                                runner: None,
                                 event: crate::AgentEvent::TurnDuration { duration_ms },
                             });
                             Vec::new()
@@ -1545,6 +1547,7 @@ impl AppState {
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
                                 created_at_unix_ms: 0,
+                                runner: None,
                                 event: crate::AgentEvent::TurnError {
                                     message: error_message.clone(),
                                 },
@@ -1601,6 +1604,7 @@ impl AppState {
                             conversation.push_entry(ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
                                 created_at_unix_ms: 0,
+                                runner: None,
                                 event: crate::AgentEvent::TurnError {
                                     message: message.clone(),
                                 },
@@ -5246,6 +5250,7 @@ mod tests {
                     ConversationEntry::AgentEvent {
                         entry_id: String::new(),
                         created_at_unix_ms: 2,
+                        runner: None,
                         event: crate::AgentEvent::TurnDuration { duration_ms: 1234 },
                     },
                 ],

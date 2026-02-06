@@ -90,6 +90,11 @@ pub enum ConversationEntry {
         entry_id: String,
         #[serde(default)]
         created_at_unix_ms: u64,
+        /// Which agent runner produced this entry. Populated automatically by
+        /// `push_entry_and_update_totals` from the active run config so that
+        /// each message retains the icon of the model that generated it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runner: Option<crate::AgentRunnerKind>,
         event: AgentEvent,
     },
 }
@@ -149,11 +154,13 @@ fn entry_is_same(a: &ConversationEntry, b: &ConversationEntry) -> bool {
                 entry_id: a_entry_id,
                 created_at_unix_ms: a_created_at,
                 event: a,
+                ..
             },
             ConversationEntry::AgentEvent {
                 entry_id: b_entry_id,
                 created_at_unix_ms: b_created_at,
                 event: b,
+                ..
             },
         ) => match (a, b) {
             (
@@ -326,6 +333,18 @@ impl WorkspaceConversation {
 
     fn push_entry_and_update_totals(&mut self, entry: ConversationEntry) {
         let mut entry = entry;
+        // Reason: auto-fill runner so each entry records which agent produced it,
+        // enabling per-message model icons even when the user switches models.
+        if let ConversationEntry::AgentEvent { runner, .. } = &mut entry
+            && runner.is_none()
+        {
+            *runner = Some(
+                self.current_run_config
+                    .as_ref()
+                    .map(|c| c.runner)
+                    .unwrap_or(self.agent_runner),
+            );
+        }
         self.ensure_entry_created_at(&mut entry);
         self.ensure_entry_id(&mut entry);
         self.entries.push(entry);
@@ -348,11 +367,13 @@ impl WorkspaceConversation {
             CodexThreadItem::AgentMessage { id, text } => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Message { id, text },
             },
             other => ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -572,6 +593,7 @@ mod tests {
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_a".to_owned(),
             created_at_unix_ms: 1,
+            runner: None,
             event: AgentEvent::Message {
                 id: "item-a".to_owned(),
                 text: "a".to_owned(),
@@ -580,6 +602,7 @@ mod tests {
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_b".to_owned(),
             created_at_unix_ms: 2,
+            runner: None,
             event: AgentEvent::Message {
                 id: "item-b".to_owned(),
                 text: "b".to_owned(),
@@ -588,6 +611,7 @@ mod tests {
         entries.push(ConversationEntry::AgentEvent {
             entry_id: "e_item_c".to_owned(),
             created_at_unix_ms: 3,
+            runner: None,
             event: AgentEvent::Message {
                 id: "item-c".to_owned(),
                 text: "c".to_owned(),
@@ -695,6 +719,7 @@ mod tests {
         conversation.push_entry(ConversationEntry::AgentEvent {
             entry_id: String::new(),
             created_at_unix_ms: 0,
+            runner: None,
             event: AgentEvent::Message {
                 id: "agent-msg".to_owned(),
                 text: "hi".to_owned(),

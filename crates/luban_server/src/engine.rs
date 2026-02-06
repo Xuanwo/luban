@@ -545,6 +545,7 @@ impl Engine {
                             vec![luban_domain::ConversationEntry::AgentEvent {
                                 entry_id: String::new(),
                                 created_at_unix_ms: 0,
+                                runner: None,
                                 event: luban_domain::AgentEvent::TurnError {
                                     message: "Agent run interrupted by server restart.".to_owned(),
                                 },
@@ -637,6 +638,7 @@ impl Engine {
                         vec![luban_domain::ConversationEntry::AgentEvent {
                             entry_id: String::new(),
                             created_at_unix_ms: 0,
+                            runner: None,
                             event: luban_domain::AgentEvent::TurnError {
                                 message: "Agent run interrupted by server restart.".to_owned(),
                             },
@@ -5437,6 +5439,7 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
         ConversationEntry::AgentEvent {
             entry_id,
             created_at_unix_ms,
+            runner,
             event,
         } => {
             let event = match event {
@@ -5468,6 +5471,11 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
             luban_api::ConversationEntry::AgentEvent(luban_api::AgentEventEntry {
                 entry_id: entry_id.clone(),
                 created_at_unix_ms: *created_at_unix_ms,
+                runner: runner.map(|r| match r {
+                    luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
+                    luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
+                    luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+                }),
                 event,
             })
         }
@@ -6795,6 +6803,7 @@ mod tests {
             convo.entries.push(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: i as u64,
+                runner: None,
                 event: luban_domain::AgentEvent::Item {
                     item: Box::new(CodexThreadItem::CommandExecution {
                         id: format!("cmd_{i}"),

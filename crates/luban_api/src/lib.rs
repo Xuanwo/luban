@@ -681,6 +681,8 @@ pub struct AgentEventEntry {
     pub entry_id: String,
     #[serde(default)]
     pub created_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<AgentRunnerKind>,
     pub event: AgentEvent,
 }
 

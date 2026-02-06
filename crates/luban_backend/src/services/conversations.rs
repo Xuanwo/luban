@@ -94,11 +94,13 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
             CodexThreadItem::AgentMessage { id, text } => Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Message { id, text },
             }),
             other => Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Item {
                     item: Box::new(other),
                 },
@@ -109,17 +111,20 @@ fn migrate_legacy_entry(entry: LegacyConversationEntry) -> Option<ConversationEn
             Some(ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::TurnDuration { duration_ms },
             })
         }
         LegacyConversationEntry::TurnCanceled => Some(ConversationEntry::AgentEvent {
             entry_id: String::new(),
             created_at_unix_ms: 0,
+            runner: None,
             event: AgentEvent::TurnCanceled,
         }),
         LegacyConversationEntry::TurnError { message } => Some(ConversationEntry::AgentEvent {
             entry_id: String::new(),
             created_at_unix_ms: 0,
+            runner: None,
             event: AgentEvent::TurnError { message },
         }),
     }
@@ -625,6 +630,7 @@ mod tests {
             ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "A".to_owned(),
@@ -641,6 +647,7 @@ mod tests {
             ConversationEntry::AgentEvent {
                 entry_id: String::new(),
                 created_at_unix_ms: 0,
+                runner: None,
                 event: AgentEvent::Message {
                     id: "item_0".to_owned(),
                     text: "B".to_owned(),

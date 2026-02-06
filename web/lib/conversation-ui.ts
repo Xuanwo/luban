@@ -765,12 +765,15 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
 
     if (entry.type === "agent_event") {
       const ev = entry.event
+      // Reason: use per-entry runner so each message retains the icon
+      // of the model that generated it, falling back to conversation-level.
+      const entryRunner = entry.runner ?? conversation.agent_runner
       if (ev.type === "message") {
         const turnId = lastUserEntryId ? `t_${lastUserEntryId}` : `t_orphan_${ev.id}`
         const msg = ensureTurnMessage(turnId)
         const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
         const messageText = ev.text.trim()
-        msg.agentRunner = conversation.agent_runner
+        msg.agentRunner = entryRunner
         msg.content = messageText
         msg.timestamp = unixMsToIso(entry.created_at_unix_ms) ?? msg.timestamp
 
@@ -797,7 +800,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (ev.type === "item") {
         if (!lastUserEntryId) continue
         const turnId = `t_${lastUserEntryId}`
-        ensureTurnMessage(turnId)
+        const turnMsg = ensureTurnMessage(turnId)
+        turnMsg.agentRunner = entryRunner
         const status = inferActivityStatusFromPayload(ev.payload)
         const activityKey = `item_${ev.id}`
         const rowId = activityKey
@@ -821,7 +825,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (ev.type === "turn_duration") {
         if (!lastUserEntryId) continue
         const turnId = `t_${lastUserEntryId}`
-        ensureTurnMessage(turnId)
+        const turnMsg = ensureTurnMessage(turnId)
+        turnMsg.agentRunner = entryRunner
         const activityKey = `turn_duration_${ev.duration_ms}`
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
         const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
@@ -844,7 +849,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (ev.type === "turn_usage") {
         if (!lastUserEntryId) continue
         const turnId = `t_${lastUserEntryId}`
-        ensureTurnMessage(turnId)
+        const turnMsg = ensureTurnMessage(turnId)
+        turnMsg.agentRunner = entryRunner
         const activityKey = "turn_usage"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
         const createdAtUnixMs = normalizeUnixMs(entry.created_at_unix_ms)
@@ -868,7 +874,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (ev.type === "turn_error") {
         if (!lastUserEntryId) continue
         const turnId = `t_${lastUserEntryId}`
-        ensureTurnMessage(turnId)
+        const turnMsg = ensureTurnMessage(turnId)
+        turnMsg.agentRunner = entryRunner
         applyTurnStatus(turnId, "error")
         const activityKey = "turn_error"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
@@ -893,7 +900,8 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
       if (ev.type === "turn_canceled") {
         if (!lastUserEntryId) continue
         const turnId = `t_${lastUserEntryId}`
-        ensureTurnMessage(turnId)
+        const turnMsg = ensureTurnMessage(turnId)
+        turnMsg.agentRunner = entryRunner
         applyTurnStatus(turnId, "canceled")
         const activityKey = "turn_canceled"
         const rowId = `${activityKey}_${entry.entry_id || out.length}`
@@ -1137,13 +1145,14 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
 
     if (entry.type === "agent_event") {
       const ev = entry.event
+      const entryRunner = entry.runner ?? conversation.agent_runner
       if (ev.type === "message") {
         const entryPart = entry.entry_id ? `_${entry.entry_id}` : `_${out.length}`
         out.push({
           id: `a_${ev.id}${entryPart}`,
           type: "assistant",
           eventSource: "agent",
-          agentRunner: conversation.agent_runner,
+          agentRunner: entryRunner,
           content: ev.text.trim(),
           timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
@@ -1166,7 +1175,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
             id: baseId,
             type: "event",
             eventSource: "agent",
-            agentRunner: conversation.agent_runner,
+            agentRunner: entryRunner,
             status,
             content: activity.title,
             timestamp: unixMsToIso(entry.created_at_unix_ms),
@@ -1181,7 +1190,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           id: `ae_turn_duration_${out.length}_${ev.duration_ms}`,
           type: "event",
           eventSource: "agent",
-          agentRunner: conversation.agent_runner,
+          agentRunner: entryRunner,
           status: "done",
           content: `Turn duration: ${formatDurationMs(ev.duration_ms)}`,
           timestamp: unixMsToIso(entry.created_at_unix_ms),
@@ -1194,7 +1203,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           id: `ae_turn_usage_${out.length}`,
           type: "event",
           eventSource: "agent",
-          agentRunner: conversation.agent_runner,
+          agentRunner: entryRunner,
           status: "done",
           content: "Turn usage",
           timestamp: unixMsToIso(entry.created_at_unix_ms),
@@ -1207,7 +1216,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           id: `ae_turn_error_${out.length}`,
           type: "event",
           eventSource: "agent",
-          agentRunner: conversation.agent_runner,
+          agentRunner: entryRunner,
           status: "done",
           content: `Turn error: ${ev.message}`,
           timestamp: unixMsToIso(entry.created_at_unix_ms),
@@ -1220,7 +1229,7 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
           id: `ae_turn_canceled_${out.length}`,
           type: "event",
           eventSource: "agent",
-          agentRunner: conversation.agent_runner,
+          agentRunner: entryRunner,
           status: "done",
           content: "Turn canceled",
           timestamp: unixMsToIso(entry.created_at_unix_ms),
