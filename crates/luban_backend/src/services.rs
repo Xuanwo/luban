@@ -2953,7 +2953,7 @@ mod tests {
                 .expect("write cache file");
         }
 
-        std::fs::write(root.join("config.toml"), "model = \"gpt-5.1-codex-mini\"")
+        std::fs::write(root.join("config.toml"), "model = \"gpt-5.3-codex\"")
             .expect("write config.toml");
         let prompts_dir = root.join("prompts");
         std::fs::create_dir_all(&prompts_dir).expect("prompts dir should be created");

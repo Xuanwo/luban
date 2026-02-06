@@ -6223,7 +6223,7 @@ mod tests {
                     attachments: Vec::new(),
                     run_config: luban_domain::AgentRunConfig {
                         runner: luban_domain::AgentRunnerKind::Codex,
-                        model_id: "gpt-5".to_owned(),
+                        model_id: "gpt-5.2".to_owned(),
                         thinking_effort: ThinkingEffort::Medium,
                         amp_mode: None,
                     },

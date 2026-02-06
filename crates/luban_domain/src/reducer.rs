@@ -3062,7 +3062,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.2".to_owned(),
+            model_id: "gpt-5.3-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3071,7 +3071,7 @@ mod tests {
         });
 
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.2-codex".to_owned()),
+            model_id: Some("gpt-5.3-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
 
@@ -3085,7 +3085,7 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, created_thread_id)
             .expect("missing conversation");
-        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
+        assert_eq!(conversation.agent_model_id, "gpt-5.3-codex");
         assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
     }
 
@@ -3272,7 +3272,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.2-codex".to_owned(),
+            model_id: "gpt-5.3-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3297,7 +3297,7 @@ mod tests {
                 _ => None,
             })
             .expect("missing RunAgentTurn effect");
-        assert_eq!(sent_model_id, "gpt-5.2-codex");
+        assert_eq!(sent_model_id, "gpt-5.3-codex");
         assert_eq!(sent_effort, ThinkingEffort::High);
 
         state.apply(Action::ChatModelChanged {
@@ -3314,7 +3314,7 @@ mod tests {
             .current_run_config
             .as_ref()
             .expect("missing current run config");
-        assert_eq!(running.model_id, "gpt-5.2-codex");
+        assert_eq!(running.model_id, "gpt-5.3-codex");
         assert_eq!(running.thinking_effort, ThinkingEffort::High);
     }
 
@@ -3470,7 +3470,7 @@ mod tests {
             is_git: true,
         });
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.2-codex".to_owned()),
+            model_id: Some("gpt-5.3-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
         let project_id = state.projects[0].id;
@@ -3491,21 +3491,21 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5".to_owned(),
+            model_id: "gpt-5.2".to_owned(),
         });
 
         let conversation = state
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
         assert!(conversation.run_config_overridden_by_user);
-        assert_eq!(conversation.agent_model_id, "gpt-5");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2");
 
         let snapshot = ConversationSnapshot {
             title: None,
             thread_id: None,
             task_status: crate::TaskStatus::Todo,
             runner: None,
-            agent_model_id: Some("gpt-5.2-codex".to_owned()),
+            agent_model_id: Some("gpt-5.3-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
             amp_mode: None,
             entries: Vec::new(),
@@ -3526,7 +3526,7 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
-        assert_eq!(conversation.agent_model_id, "gpt-5");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2");
     }
 
     #[test]
@@ -3537,7 +3537,7 @@ mod tests {
             is_git: true,
         });
         state.apply(Action::CodexDefaultsLoaded {
-            model_id: Some("gpt-5.2-codex".to_owned()),
+            model_id: Some("gpt-5.3-codex".to_owned()),
             thinking_effort: Some(ThinkingEffort::High),
         });
         let project_id = state.projects[0].id;
@@ -3558,7 +3558,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5".to_owned(),
+            model_id: "gpt-5.2".to_owned(),
         });
 
         let persisted = state.to_persisted();
@@ -3566,7 +3566,7 @@ mod tests {
             .workspace_thread_run_config_overrides
             .get(&(workspace_id.as_u64(), thread_id.as_u64()))
             .expect("missing persisted run config override");
-        assert_eq!(saved.model_id, "gpt-5");
+        assert_eq!(saved.model_id, "gpt-5.2");
 
         let mut restored = AppState::new();
         restored.apply(Action::AppStateLoaded {
@@ -3577,7 +3577,7 @@ mod tests {
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
         assert!(conversation.run_config_overridden_by_user);
-        assert_eq!(conversation.agent_model_id, "gpt-5");
+        assert_eq!(conversation.agent_model_id, "gpt-5.2");
     }
 
     #[test]
@@ -3605,7 +3605,7 @@ mod tests {
         state.apply(Action::ChatModelChanged {
             workspace_id,
             thread_id,
-            model_id: "gpt-5.2-codex".to_owned(),
+            model_id: "gpt-5.3-codex".to_owned(),
         });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
@@ -3621,15 +3621,10 @@ mod tests {
             amp_mode: None,
         });
 
-        state.apply(Action::ChatModelChanged {
-            workspace_id,
-            thread_id,
-            model_id: "gpt-5.2".to_owned(),
-        });
         state.apply(Action::ThinkingEffortChanged {
             workspace_id,
             thread_id,
-            thinking_effort: ThinkingEffort::Low,
+            thinking_effort: ThinkingEffort::Minimal,
         });
         state.apply(Action::SendAgentMessage {
             workspace_id,
@@ -3662,8 +3657,8 @@ mod tests {
         assert_eq!(effects.len(), 1);
         match &effects[0] {
             Effect::RunAgentTurn { run_config, .. } => {
-                assert_eq!(run_config.model_id, "gpt-5.2");
-                assert_eq!(run_config.thinking_effort, ThinkingEffort::Low);
+                assert_eq!(run_config.model_id, "gpt-5.3-codex");
+                assert_eq!(run_config.thinking_effort, ThinkingEffort::Minimal);
             }
             other => panic!("unexpected effect: {other:?}"),
         }
@@ -3675,8 +3670,8 @@ mod tests {
             .current_run_config
             .as_ref()
             .expect("missing current run config");
-        assert_eq!(running.model_id, "gpt-5.2");
-        assert_eq!(running.thinking_effort, ThinkingEffort::Low);
+        assert_eq!(running.model_id, "gpt-5.3-codex");
+        assert_eq!(running.thinking_effort, ThinkingEffort::Minimal);
     }
 
     #[test]
@@ -5305,8 +5300,8 @@ mod tests {
                     attachments: Vec::new(),
                     run_config: AgentRunConfig {
                         runner: crate::AgentRunnerKind::Codex,
-                        model_id: "gpt-5.1-codex-mini".to_owned(),
-                        thinking_effort: ThinkingEffort::Low,
+                        model_id: "gpt-5.3-codex".to_owned(),
+                        thinking_effort: ThinkingEffort::Minimal,
                         amp_mode: None,
                     },
                 }],
@@ -5337,7 +5332,7 @@ mod tests {
                 thread_id: None,
                 task_status: crate::TaskStatus::Todo,
                 runner: None,
-                agent_model_id: Some("gpt-5.2-codex".to_owned()),
+                agent_model_id: Some("gpt-5.3-codex".to_owned()),
                 thinking_effort: Some(ThinkingEffort::High),
                 amp_mode: None,
                 entries: Vec::new(),
@@ -5353,7 +5348,7 @@ mod tests {
         let conversation = state
             .workspace_thread_conversation(workspace_id, thread_id)
             .expect("missing conversation");
-        assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
+        assert_eq!(conversation.agent_model_id, "gpt-5.3-codex");
         assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
     }
 

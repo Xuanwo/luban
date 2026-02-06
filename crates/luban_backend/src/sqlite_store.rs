@@ -4900,7 +4900,7 @@ mod tests {
             appearance_chat_font: Some("Inter".to_owned()),
             appearance_code_font: Some("Geist Mono".to_owned()),
             appearance_terminal_font: Some("Geist Mono".to_owned()),
-            agent_default_model_id: Some("gpt-5.2-codex".to_owned()),
+            agent_default_model_id: Some("gpt-5.2".to_owned()),
             agent_default_thinking_effort: Some("high".to_owned()),
             agent_default_runner: Some("amp".to_owned()),
             agent_amp_mode: Some("rush".to_owned()),
@@ -4929,7 +4929,7 @@ mod tests {
                 luban_domain::PersistedWorkspaceThreadRunConfigOverride {
                     runner: Some("amp".to_owned()),
                     amp_mode: Some("rush".to_owned()),
-                    model_id: "gpt-5.2-codex".to_owned(),
+                    model_id: "gpt-5.3-codex".to_owned(),
                     thinking_effort: "high".to_owned(),
                 },
             )]),
@@ -5085,8 +5085,8 @@ mod tests {
                 attachments: Vec::new(),
                 run_config: AgentRunConfig {
                     runner: luban_domain::AgentRunnerKind::Codex,
-                    model_id: "gpt-5.1-codex-mini".to_owned(),
-                    thinking_effort: ThinkingEffort::Low,
+                    model_id: "gpt-5.3-codex".to_owned(),
+                    thinking_effort: ThinkingEffort::Minimal,
                     amp_mode: None,
                 },
             },
@@ -5096,7 +5096,7 @@ mod tests {
                 attachments: Vec::new(),
                 run_config: AgentRunConfig {
                     runner: luban_domain::AgentRunnerKind::Codex,
-                    model_id: "gpt-5.1-codex-mini".to_owned(),
+                    model_id: "gpt-5.3-codex".to_owned(),
                     thinking_effort: ThinkingEffort::Minimal,
                     amp_mode: None,
                 },
@@ -5148,7 +5148,7 @@ mod tests {
             "w",
             1,
             luban_domain::AgentRunnerKind::Codex,
-            "gpt-5.2-codex",
+            "gpt-5.3-codex",
             ThinkingEffort::High,
             None,
         )
@@ -5156,13 +5156,13 @@ mod tests {
 
         let snapshot = db.load_conversation("p", "w", 1).unwrap();
         assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
-        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.3-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
         assert_eq!(snapshot.amp_mode, None);
 
         let snapshot = db.load_conversation_page("p", "w", 1, None, 10).unwrap();
         assert_eq!(snapshot.runner, Some(luban_domain::AgentRunnerKind::Codex));
-        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.2-codex"));
+        assert_eq!(snapshot.agent_model_id.as_deref(), Some("gpt-5.3-codex"));
         assert_eq!(snapshot.thinking_effort, Some(ThinkingEffort::High));
         assert_eq!(snapshot.amp_mode, None);
     }

@@ -130,17 +130,10 @@ const STANDARD_EFFORTS: &[ThinkingEffort] = &[
     ThinkingEffort::XHigh,
 ];
 
-const CODEX_MAX_EFFORTS: &[ThinkingEffort] = &[
-    ThinkingEffort::Minimal,
-    ThinkingEffort::Medium,
-    ThinkingEffort::High,
-    ThinkingEffort::XHigh,
-];
-
 const AGENT_MODELS: &[AgentModelSpec] = &[
     AgentModelSpec {
-        id: "gpt-5.2",
-        label: "GPT-5.2",
+        id: "gpt-5.3-codex",
+        label: "GPT-5.3-Codex",
         supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
@@ -149,38 +142,8 @@ const AGENT_MODELS: &[AgentModelSpec] = &[
         supported_thinking_efforts: STANDARD_EFFORTS,
     },
     AgentModelSpec {
-        id: "gpt-5.1-codex-max",
-        label: "GPT-5.1-Codex-Max",
-        supported_thinking_efforts: CODEX_MAX_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5.1-codex-mini",
-        label: "GPT-5.1-Codex-Mini",
-        supported_thinking_efforts: STANDARD_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5.1",
-        label: "GPT-5.1",
-        supported_thinking_efforts: STANDARD_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5.1-codex",
-        label: "GPT-5.1-Codex",
-        supported_thinking_efforts: STANDARD_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5-codex",
-        label: "GPT-5-Codex",
-        supported_thinking_efforts: STANDARD_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5-codex-mini",
-        label: "GPT-5-Codex-Mini",
-        supported_thinking_efforts: STANDARD_EFFORTS,
-    },
-    AgentModelSpec {
-        id: "gpt-5",
-        label: "GPT-5",
+        id: "gpt-5.2",
+        label: "GPT-5.2",
         supported_thinking_efforts: STANDARD_EFFORTS,
     },
 ];

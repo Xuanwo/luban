@@ -435,7 +435,7 @@ function createTaskInWorkdir(state: RuntimeState, workdirId: WorkspaceId, title:
 	    task_id: taskId,
 	    task_status: "backlog",
 	    agent_runner: "codex",
-	    agent_model_id: state.app.agent.default_model_id ?? "gpt-5",
+	    agent_model_id: state.app.agent.default_model_id ?? "gpt-5.2",
 	    thinking_effort: state.app.agent.default_thinking_effort ?? "medium",
 	    amp_mode: null,
 	    run_status: "idle",

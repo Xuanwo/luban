@@ -10,12 +10,10 @@ export type AgentModelSpec = {
 
 export const THINKING_EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high", "xhigh"]
 
-const CODEX_MAX_EFFORTS: ThinkingEffort[] = ["minimal", "medium", "high", "xhigh"]
-
 export const AGENT_MODELS: AgentModelSpec[] = [
   {
-    id: "gpt-5.2",
-    label: "GPT-5.2",
+    id: "gpt-5.3-codex",
+    label: "GPT-5.3-Codex",
     supportedThinkingEfforts: THINKING_EFFORTS,
   },
   {
@@ -24,38 +22,8 @@ export const AGENT_MODELS: AgentModelSpec[] = [
     supportedThinkingEfforts: THINKING_EFFORTS,
   },
   {
-    id: "gpt-5.1-codex-max",
-    label: "GPT-5.1-Codex-Max",
-    supportedThinkingEfforts: CODEX_MAX_EFFORTS,
-  },
-  {
-    id: "gpt-5.1-codex-mini",
-    label: "GPT-5.1-Codex-Mini",
-    supportedThinkingEfforts: THINKING_EFFORTS,
-  },
-  {
-    id: "gpt-5.1",
-    label: "GPT-5.1",
-    supportedThinkingEfforts: THINKING_EFFORTS,
-  },
-  {
-    id: "gpt-5.1-codex",
-    label: "GPT-5.1-Codex",
-    supportedThinkingEfforts: THINKING_EFFORTS,
-  },
-  {
-    id: "gpt-5-codex",
-    label: "GPT-5-Codex",
-    supportedThinkingEfforts: THINKING_EFFORTS,
-  },
-  {
-    id: "gpt-5-codex-mini",
-    label: "GPT-5-Codex-Mini",
-    supportedThinkingEfforts: THINKING_EFFORTS,
-  },
-  {
-    id: "gpt-5",
-    label: "GPT-5",
+    id: "gpt-5.2",
+    label: "GPT-5.2",
     supportedThinkingEfforts: THINKING_EFFORTS,
   },
 ]
