@@ -5766,6 +5766,7 @@ fn map_conversation_entry(entry: &ConversationEntry) -> luban_api::ConversationE
                     luban_domain::AgentRunnerKind::Codex => luban_api::AgentRunnerKind::Codex,
                     luban_domain::AgentRunnerKind::Amp => luban_api::AgentRunnerKind::Amp,
                     luban_domain::AgentRunnerKind::Claude => luban_api::AgentRunnerKind::Claude,
+                    luban_domain::AgentRunnerKind::Droid => luban_api::AgentRunnerKind::Droid,
                 }),
                 event,
             })
