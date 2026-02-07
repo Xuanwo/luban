@@ -307,6 +307,7 @@ export function defaultMockFixtures(): MockFixtures {
   const task12: WorkspaceThreadId = 12
   const task13: WorkspaceThreadId = 13
   const task14: WorkspaceThreadId = 14
+  const task15: WorkspaceThreadId = 15
 
   const project1: ProjectId = "mock-project-1"
   const project2: ProjectId = "mock-project-2"
@@ -464,6 +465,7 @@ export function defaultMockFixtures(): MockFixtures {
         { task_id: task12, remote_thread_id: null, title: "Mock: Running state (no output)", created_at_unix_seconds: unixSeconds(-7), updated_at_unix_seconds: unixSeconds(-7), task_status: "iterating" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null },
         { task_id: task13, remote_thread_id: null, title: "Mock: Running state (streaming output)", created_at_unix_seconds: unixSeconds(-6), updated_at_unix_seconds: unixSeconds(-6), task_status: "iterating" as TaskStatus, turn_status: "running" as TurnStatus, last_turn_result: null },
         { task_id: task14, remote_thread_id: null, title: "Mock: Running state (completed output)", created_at_unix_seconds: unixSeconds(-5), updated_at_unix_seconds: unixSeconds(-5), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
+        { task_id: task15, remote_thread_id: null, title: "Mock: Subtask delegation demo", created_at_unix_seconds: unixSeconds(-4), updated_at_unix_seconds: unixSeconds(-4), task_status: "todo" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task4, remote_thread_id: null, title: "Validating: awaiting feedback", created_at_unix_seconds: unixSeconds(-8), updated_at_unix_seconds: unixSeconds(-8), task_status: "validating" as TaskStatus, turn_status: "awaiting" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task5, remote_thread_id: null, title: "Done: completed successfully", created_at_unix_seconds: unixSeconds(-20), updated_at_unix_seconds: unixSeconds(-20), task_status: "done" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: "completed" as TurnResult },
         { task_id: task6, remote_thread_id: null, title: "Canceled: aborted by user", created_at_unix_seconds: unixSeconds(-15), updated_at_unix_seconds: unixSeconds(-15), task_status: "canceled" as TaskStatus, turn_status: "idle" as TurnStatus, last_turn_result: null },
@@ -905,6 +907,100 @@ export function defaultMockFixtures(): MockFixtures {
           "Completed run with full output.\n\n### What changed\n- Merged running and message rendering behavior into one agent turn card.\n- In collapsed view, only the latest streaming update or final assistant output is shown.\n- In expanded view, assistant streaming updates render as full-width markdown timeline rows.\n- Added timeline overflow behavior with a show-more toggle that expands older events.\n\n### Validation\n- `pnpm typecheck`\n- `pnpm lint`\n- `pnpm test:ui:running-streaming`\n\n### Notes\n- Existing event ordering semantics are preserved.\n- Streaming messages have display priority in summary while keeping chronological order in expanded timeline."
         ),
         agentTurnDuration(14_200),
+      ],
+    }),
+    [key(workdir1, task15)]: conversationBase({
+      workdirId: workdir1,
+      taskId: task15,
+      title: "Mock: Subtask delegation demo",
+      taskStatus: "todo",
+      runStatus: "idle",
+      entries: [
+        systemEvent({
+          id: "sys_subtask_demo_1",
+          createdAtUnixMs: unixMs(-64 * 60 * 1000),
+          event: { event_type: "task_created" },
+        }),
+        userMessage("Split this work and delegate a focused sub task for UI smoke verification."),
+        agentActivity("reasoning", {
+          text: "The implementation can proceed in parallel if we create a dedicated subtask for UI verification.",
+        }),
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "subtask_delegate_create",
+            kind: "mcp_tool_call",
+            payload: {
+              server: "luban",
+              tool: "create_subtask",
+              arguments: {
+                task_id: 201,
+                title: "Add smoke checks for subtask activity badges",
+                runner: "codex",
+              },
+              result: {
+                task_id: 201,
+                status: "running",
+              },
+              status: "completed",
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "subtask_delegate_progress",
+            kind: "mcp_tool_call",
+            payload: {
+              server: "luban",
+              tool: "subtask_progress",
+              arguments: {
+                task_id: 201,
+                runner: "codex",
+              },
+              result: {
+                task_id: 201,
+                status: "running",
+                summary: "UI scenario authored; validating selectors.",
+              },
+              status: "completed",
+            },
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
+            type: "item",
+            id: "subtask_delegate_complete",
+            kind: "mcp_tool_call",
+            payload: {
+              server: "luban",
+              tool: "subtask_completed",
+              arguments: {
+                task_id: 201,
+                runner: "codex",
+              },
+              result: {
+                task_id: 201,
+                status: "done",
+                summary: "Smoke scenario passed in mock mode.",
+              },
+              status: "completed",
+            },
+          },
+        },
+        agentMessage(
+          "Delegated subtask #201 completed. I merged the verification notes back to this parent task and the branch is ready for review."
+        ),
+        agentTurnDuration(9_600),
       ],
     }),
     [key(workdir1, task2)]: conversationBase({
@@ -1511,6 +1607,22 @@ export function defaultMockFixtures(): MockFixtures {
         title: "Mock: Running state (completed output)",
         created_at_unix_seconds: unixSeconds(-5),
         updated_at_unix_seconds: unixSeconds(-5),
+        branch_name: "main",
+        workdir_name: "main",
+        agent_run_status: "idle",
+        has_unread_completion: false,
+        task_status: "todo",
+        turn_status: "idle",
+        last_turn_result: "completed",
+        is_starred: false,
+      } satisfies TaskSummarySnapshot,
+      {
+        project_id: project1,
+        workdir_id: workdir1,
+        task_id: task15,
+        title: "Mock: Subtask delegation demo",
+        created_at_unix_seconds: unixSeconds(-4),
+        updated_at_unix_seconds: unixSeconds(-4),
         branch_name: "main",
         workdir_name: "main",
         agent_run_status: "idle",

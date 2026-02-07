@@ -23,6 +23,13 @@ export interface ActivityEvent {
   duration?: string
   badge?: string
   timing?: { startedAtUnixMs: number | null; doneAtUnixMs: number | null }
+  subagent?: {
+    taskId: number | null
+    title: string | null
+    runner: AgentRunnerKind | null
+    action: "delegated" | "created" | "updated" | "completed"
+    status: "running" | "done" | "blocked" | "failed" | "canceled"
+  }
 }
 
 type ActivityStatus = ActivityEvent["status"]
@@ -226,14 +233,77 @@ export function activityFromAgentItemLike(args: {
 
   if (kind === "mcp_tool_call") {
     const status = forcedStatus ?? (payload?.status === "in_progress" ? "running" : "done")
-    const title = `${payload?.server ?? "mcp"}.${payload?.tool ?? "tool"}`
+    const server = String(payload?.server ?? "mcp")
+    const tool = String(payload?.tool ?? "tool")
+    const lowerServer = server.toLowerCase()
+    const lowerTool = tool.toLowerCase()
+
+    const parseSubagentEvent = (): ActivityEvent["subagent"] | null => {
+      if (lowerServer !== "luban") return null
+      if (!/(subtask|delegate)/.test(lowerTool)) return null
+
+      const argsObj = payload?.arguments as Record<string, unknown> | null | undefined
+      const resultObj = payload?.result as Record<string, unknown> | null | undefined
+
+      const rawTaskId = resultObj?.task_id ?? resultObj?.subtask_id ?? argsObj?.task_id ?? argsObj?.subtask_id ?? null
+      const parsedTaskId = Number(rawTaskId)
+      const taskId = Number.isFinite(parsedTaskId) ? parsedTaskId : null
+
+      const rawTitle = resultObj?.title ?? argsObj?.title ?? null
+      const subtaskTitle = typeof rawTitle === "string" && rawTitle.trim().length > 0 ? rawTitle.trim() : null
+
+      const rawRunner = resultObj?.runner ?? argsObj?.runner ?? null
+      const runner = (() => {
+        if (rawRunner === "codex" || rawRunner === "amp" || rawRunner === "claude") return rawRunner
+        return null
+      })()
+
+      const action = (() => {
+        if (/create|new/.test(lowerTool)) return "created" as const
+        if (/complete|finish|done/.test(lowerTool)) return "completed" as const
+        if (/progress|update/.test(lowerTool)) return "updated" as const
+        return "delegated" as const
+      })()
+
+      const rawStatus = String(resultObj?.status ?? argsObj?.status ?? payload?.status ?? "").toLowerCase()
+      const normalizedStatus = (() => {
+        if (rawStatus.includes("fail") || rawStatus.includes("error")) return "failed" as const
+        if (rawStatus.includes("cancel")) return "canceled" as const
+        if (rawStatus.includes("block") || rawStatus.includes("pending")) return "blocked" as const
+        if (rawStatus.includes("run") || rawStatus.includes("progress")) return "running" as const
+        if (rawStatus.includes("done") || rawStatus.includes("success") || rawStatus.includes("complete")) return "done" as const
+        return status === "running" ? "running" : "done"
+      })()
+
+      return {
+        taskId,
+        title: subtaskTitle,
+        runner,
+        action,
+        status: normalizedStatus,
+      }
+    }
+
+    const subagent = parseSubagentEvent()
+    const title = (() => {
+      if (!subagent) return `${server}.${tool}`
+      const actionText = (() => {
+        if (subagent.action === "created") return "Created subtask"
+        if (subagent.action === "updated") return "Updated subtask"
+        if (subagent.action === "completed") return "Completed subtask"
+        return "Delegated subtask"
+      })()
+      const idText = subagent.taskId != null ? ` #${subagent.taskId}` : ""
+      const titleText = subagent.title ? ` ${subagent.title}` : ""
+      return `${actionText}${idText}${titleText}`
+    })()
     const detail = safeStringify({
       arguments: payload?.arguments ?? null,
       result: payload?.result ?? null,
       error: payload?.error ?? null,
       status: payload?.status ?? null,
     })
-    return { id: args.id, type: "tool_call", title, detail, status }
+    return { id: args.id, type: "tool_call", title, detail, status, subagent: subagent ?? undefined }
   }
 
   if (kind === "web_search") {

@@ -213,6 +213,24 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
   const canToggle = hasExpandableDetail && !isAssistantMessage
   const shouldShowDetail = hasExpandableDetail && isExpanded
   const hasDuration = !isAssistantMessage && typeof duration === "string" && duration.trim().length > 0
+  const subagent = event.subagent ?? null
+  const subagentStatusLabel = (() => {
+    if (!subagent) return ""
+    if (subagent.status === "running") return "RUNNING"
+    if (subagent.status === "done") return "DONE"
+    if (subagent.status === "blocked") return "BLOCKED"
+    if (subagent.status === "failed") return "FAILED"
+    if (subagent.status === "canceled") return "CANCELED"
+    return "UNKNOWN"
+  })()
+  const subagentStatusColor = (() => {
+    if (!subagent) return COLORS.textMuted
+    if (subagent.status === "running") return COLORS.accent
+    if (subagent.status === "done") return "#15803d"
+    if (subagent.status === "blocked") return COLORS.warning
+    if (subagent.status === "failed" || subagent.status === "canceled") return "#dc2626"
+    return COLORS.textMuted
+  })()
 
   const icon = (() => {
     switch (event.type) {
@@ -300,6 +318,36 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
           {event.title}
         </span>
         <div data-testid="activity-event-trailing" className="flex items-center gap-1 flex-shrink-0">
+          {subagent && (
+            <>
+              <span
+                data-testid="activity-subagent-pill"
+                className="px-1.5 py-0.5 rounded"
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  letterSpacing: "0.02em",
+                  color: COLORS.textMuted,
+                  backgroundColor: "rgba(0,0,0,0.04)",
+                }}
+              >
+                SUBTASK
+              </span>
+              <span
+                data-testid="activity-subagent-status"
+                className="px-1.5 py-0.5 rounded"
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  letterSpacing: "0.02em",
+                  color: subagentStatusColor,
+                  backgroundColor: `${subagentStatusColor}22`,
+                }}
+              >
+                {subagentStatusLabel}
+              </span>
+            </>
+          )}
           {hasDuration && (
             <span
               data-testid="activity-event-duration"

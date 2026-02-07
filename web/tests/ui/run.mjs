@@ -29,6 +29,7 @@ import { runNewTaskDrafts } from './scenarios/new-task-drafts.mjs';
 import { runNoRightSidebar } from './scenarios/no-right-sidebar.mjs';
 import { runSettingsPanel } from './scenarios/settings-panel.mjs';
 import { runSidebarProjectAvatars } from './scenarios/sidebar-project-avatars.mjs';
+import { runSubagentMockView } from './scenarios/subagent-mock-view.mjs';
 import { runTaskListProjectIcon } from './scenarios/task-list-project-icon.mjs';
 import { runStarFavorites } from './scenarios/star-favorites.mjs';
 import { runTaskStatusChange } from './scenarios/task-status-change.mjs';
@@ -185,7 +186,8 @@ async function main() {
 	    await runTaskStatusChange({ page, baseUrl });
 	    await runKeyboardSequenceShortcuts({ page, baseUrl });
 	    await runQueuedPrompts({ page, baseUrl });
-	    await runLatestEventsVisible({ page, baseUrl });
+    await runLatestEventsVisible({ page, baseUrl });
+    await runSubagentMockView({ page, baseUrl });
     await runActivityWindowing({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
     await runEscapeDoesNotLeakFromChatInput({ page, baseUrl });
