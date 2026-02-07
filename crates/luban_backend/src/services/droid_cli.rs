@@ -85,11 +85,7 @@ enum DroidToolSummary {
 fn summarize_droid_tool(name: &str, input: &Value) -> (DroidToolKind, DroidToolSummary) {
     let key = tool_name_key(name);
 
-    if key == "bash"
-        || key == "shell"
-        || key == "exec"
-        || key == "execute"
-        || key == "run_command"
+    if key == "bash" || key == "shell" || key == "exec" || key == "execute" || key == "run_command"
     {
         let command =
             extract_string_field(input, &["command", "cmd"]).unwrap_or_else(|| "bash".to_owned());
@@ -240,10 +236,7 @@ pub fn parse_droid_stream_json_line(
             .and_then(|v| v.as_str())
             .unwrap_or("tool")
             .to_owned();
-        let input = payload
-            .get("parameters")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let input = payload.get("parameters").cloned().unwrap_or(Value::Null);
 
         let (kind, summary) = summarize_droid_tool(&name, &input);
         state.tools.insert(
@@ -672,7 +665,10 @@ mod tests {
         )
         .expect("parse ok");
         assert!(events.is_empty(), "user messages should be skipped");
-        assert!(state.agent_message.is_empty(), "user text should not accumulate");
+        assert!(
+            state.agent_message.is_empty(),
+            "user text should not accumulate"
+        );
     }
 
     // -- Tests matching the actual Droid CLI stream-json format --

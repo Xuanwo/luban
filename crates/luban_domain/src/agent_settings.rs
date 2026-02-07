@@ -122,7 +122,10 @@ mod tests {
 
     #[test]
     fn agent_model_label_returns_droid_labels() {
-        assert_eq!(agent_model_label("claude-opus-4-6"), Some("Claude Opus 4.6"));
+        assert_eq!(
+            agent_model_label("claude-opus-4-6"),
+            Some("Claude Opus 4.6")
+        );
         assert_eq!(
             agent_model_label("claude-opus-4-5-20251101"),
             Some("Claude Opus 4.5")
@@ -136,7 +139,10 @@ mod tests {
             Some("Claude Haiku 4.5")
         );
         assert_eq!(agent_model_label("gpt-5.1"), Some("GPT-5.1"));
-        assert_eq!(agent_model_label("gpt-5.1-codex-max"), Some("GPT-5.1-Codex-Max"));
+        assert_eq!(
+            agent_model_label("gpt-5.1-codex-max"),
+            Some("GPT-5.1-Codex-Max")
+        );
         assert_eq!(agent_model_label("glm-4.7"), Some("GLM-4.7"));
         assert_eq!(agent_model_label("kimi-k2.5"), Some("Kimi K2.5"));
     }
@@ -149,11 +155,23 @@ mod tests {
 
     #[test]
     fn model_valid_for_runner_checks_catalog() {
-        assert!(model_valid_for_runner(AgentRunnerKind::Codex, "gpt-5.2-codex"));
-        assert!(!model_valid_for_runner(AgentRunnerKind::Codex, "gpt-5.3-codex"));
-        assert!(model_valid_for_runner(AgentRunnerKind::Droid, "claude-opus-4-6"));
+        assert!(model_valid_for_runner(
+            AgentRunnerKind::Codex,
+            "gpt-5.2-codex"
+        ));
+        assert!(!model_valid_for_runner(
+            AgentRunnerKind::Codex,
+            "gpt-5.3-codex"
+        ));
+        assert!(model_valid_for_runner(
+            AgentRunnerKind::Droid,
+            "claude-opus-4-6"
+        ));
         assert!(model_valid_for_runner(AgentRunnerKind::Droid, "gpt-5.2"));
-        assert!(!model_valid_for_runner(AgentRunnerKind::Droid, "gpt-5.3-codex"));
+        assert!(!model_valid_for_runner(
+            AgentRunnerKind::Droid,
+            "gpt-5.3-codex"
+        ));
         // Amp/Claude have empty catalogs — any model is valid
         assert!(model_valid_for_runner(AgentRunnerKind::Amp, "anything"));
         assert!(model_valid_for_runner(AgentRunnerKind::Claude, "anything"));

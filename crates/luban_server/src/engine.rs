@@ -4724,7 +4724,9 @@ impl Engine {
                 claude_enabled: self.state.agent_claude_enabled(),
                 droid_enabled: self.state.agent_droid_enabled(),
                 default_model_id: Some(self.state.agent_default_model_id().to_owned()),
-                runner_default_models: self.state.agent_runner_default_models()
+                runner_default_models: self
+                    .state
+                    .agent_runner_default_models()
                     .iter()
                     .map(|(k, v)| (k.as_str().to_owned(), v.clone()))
                     .collect(),

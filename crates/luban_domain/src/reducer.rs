@@ -1116,7 +1116,8 @@ impl AppState {
                 };
                 // Reason: Remember the user's model choice per runner so new
                 // tasks default to this model instead of the global default.
-                self.agent_runner_default_models.insert(runner, model_id.clone());
+                self.agent_runner_default_models
+                    .insert(runner, model_id.clone());
                 self.workspace_thread_run_config_overrides.insert(
                     (workspace_id, thread_id),
                     crate::PersistedWorkspaceThreadRunConfigOverride {

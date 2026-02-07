@@ -111,9 +111,7 @@ impl AppState {
         &self.agent_default_model_id
     }
 
-    pub fn agent_runner_default_models(
-        &self,
-    ) -> &HashMap<crate::AgentRunnerKind, String> {
+    pub fn agent_runner_default_models(&self) -> &HashMap<crate::AgentRunnerKind, String> {
         &self.agent_runner_default_models
     }
 

@@ -2466,8 +2466,8 @@ impl SqliteDatabase {
         }
 
         if !snapshot.agent_runner_default_models.is_empty() {
-            let json = serde_json::to_string(&snapshot.agent_runner_default_models)
-                .unwrap_or_default();
+            let json =
+                serde_json::to_string(&snapshot.agent_runner_default_models).unwrap_or_default();
             tx.execute(
                 "INSERT INTO app_settings_text (key, value, created_at, updated_at)
                  VALUES (?1, ?2, COALESCE((SELECT created_at FROM app_settings_text WHERE key = ?1), ?3), ?3)
