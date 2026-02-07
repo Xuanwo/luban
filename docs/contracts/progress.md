@@ -62,6 +62,7 @@ Legend:
 - `C-WS-EVENTS`: `ClientAction::TaskStatusSet` updates per-task `TaskStatus` and is implemented in mock + provider.
 - `C-WS-EVENTS`: Telegram integration actions (`TelegramBotTokenSet` / `TelegramBotTokenClear` / `TelegramPairStart` / `TelegramUnpair`) are implemented in mock + provider and verified in CI via `crates/luban_server/tests/contracts_ws_events_telegram.rs`.
 - `C-WS-EVENTS`: Telegram progress relay reuses a single per-task progress message via `editMessageText` and treats `message is not modified` as idempotent success (see `docs/contracts/features/c-ws-events.md`, "Telegram progress relay behavior").
+- `C-WS-EVENTS`: Telegram passive conversation forwarding also keeps a single per-task relay message (after first send) and updates it via `editMessageText` on subsequent new updates.
 - `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.

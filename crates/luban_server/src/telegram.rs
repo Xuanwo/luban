@@ -165,6 +165,7 @@ struct TelegramGateway {
     session: TelegramSession,
     last_seen_entry_index: HashMap<(i64, Option<i64>, u64, u64), u64>,
     progress_messages: HashMap<(i64, Option<i64>, u64, u64), ProgressMessageState>,
+    relay_messages: HashMap<(i64, Option<i64>, u64, u64), RelayMessageState>,
     reply_routes: HashMap<i64, ReplyRoute>,
     topic_bindings: HashMap<i64, TopicBinding>,
     inbox_initialized_workspaces: HashSet<u64>,
@@ -188,6 +189,12 @@ struct ProgressMessageState {
     task_title: String,
     recent_events: Vec<String>,
     final_text: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct RelayMessageState {
+    message_id: i64,
+    created_at: Instant,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -245,6 +252,7 @@ impl TelegramGateway {
             session: TelegramSession::default(),
             last_seen_entry_index: HashMap::new(),
             progress_messages: HashMap::new(),
+            relay_messages: HashMap::new(),
             reply_routes: HashMap::new(),
             topic_bindings: HashMap::new(),
             inbox_initialized_workspaces: HashSet::new(),
@@ -484,11 +492,13 @@ impl TelegramGateway {
                     self.session = TelegramSession::default();
                     self.last_seen_entry_index.clear();
                     self.reply_routes.clear();
+                    self.relay_messages.clear();
                 }
                 if paired_chat_changed {
                     self.session = TelegramSession::default();
                     self.last_seen_entry_index.clear();
                     self.reply_routes.clear();
+                    self.relay_messages.clear();
                 }
 
                 self.topic_bindings = self
@@ -567,6 +577,13 @@ impl TelegramGateway {
         let now = Instant::now();
         let ttl = Duration::from_secs(TELEGRAM_REPLY_ROUTE_TTL_SECS);
         self.progress_messages
+            .retain(|_, state| now.duration_since(state.created_at) <= ttl);
+    }
+
+    fn prune_relay_messages(&mut self) {
+        let now = Instant::now();
+        let ttl = Duration::from_secs(TELEGRAM_REPLY_ROUTE_TTL_SECS);
+        self.relay_messages
             .retain(|_, state| now.duration_since(state.created_at) <= ttl);
     }
 
@@ -684,15 +701,15 @@ impl TelegramGateway {
         let key = (chat_id, message_thread_id, workspace_id, thread_id);
 
         // Reuse the existing progress message for the same task when possible.
-        let existing_message_id = if let Some(state) = self.progress_messages.get_mut(&key) {
+        let existing_message_id =
+            existing_task_message_id(&key, &self.progress_messages, &self.relay_messages);
+        if let Some(state) = self.progress_messages.get_mut(&key) {
             state.created_at = Instant::now();
             state.task_title = title.clone();
             state.recent_events.clear();
             state.final_text = None;
-            Some(state.message_id)
-        } else {
-            None
-        };
+        }
+        self.relay_messages.remove(&key);
 
         if let Some(message_id) = existing_message_id {
             match self
@@ -706,6 +723,16 @@ impl TelegramGateway {
                 .await
             {
                 Ok(()) => {
+                    self.progress_messages.insert(
+                        key,
+                        ProgressMessageState {
+                            message_id,
+                            created_at: Instant::now(),
+                            task_title: title.clone(),
+                            recent_events: Vec::new(),
+                            final_text: None,
+                        },
+                    );
                     if let Some(last_idx) = last_idx {
                         self.last_seen_entry_index.insert(key, last_idx);
                     }
@@ -1829,6 +1856,7 @@ impl TelegramGateway {
         snapshot: &luban_api::ConversationSnapshot,
     ) {
         self.prune_progress_messages();
+        self.prune_relay_messages();
 
         let key = (
             chat_id,
@@ -1894,20 +1922,62 @@ impl TelegramGateway {
                 snapshot.workspace_id.0, snapshot.thread_id.0
             ),
         )]]);
-        let sent = self
-            .send_message_with_id(
-                chat_id,
-                message_thread_id,
-                &formatted,
-                Some(kb),
-                Some(TELEGRAM_PARSE_MODE_MARKDOWN_V2),
-            )
-            .await;
-        let Ok(Some(message_id)) = sent else {
-            return;
+        let existing_message_id = self.relay_messages.get(&key).map(|state| state.message_id);
+        let message_id = if let Some(message_id) = existing_message_id {
+            match self
+                .edit_message_with_id(
+                    chat_id,
+                    message_id,
+                    &formatted,
+                    Some(kb.clone()),
+                    Some(TELEGRAM_PARSE_MODE_MARKDOWN_V2),
+                )
+                .await
+            {
+                Ok(()) => message_id,
+                Err(err) => {
+                    let _ = self
+                        .set_last_error(format!("telegram editMessageText failed: {err}"))
+                        .await;
+                    let sent = self
+                        .send_message_with_id(
+                            chat_id,
+                            message_thread_id,
+                            &formatted,
+                            Some(kb),
+                            Some(TELEGRAM_PARSE_MODE_MARKDOWN_V2),
+                        )
+                        .await;
+                    let Ok(Some(message_id)) = sent else {
+                        return;
+                    };
+                    message_id
+                }
+            }
+        } else {
+            let sent = self
+                .send_message_with_id(
+                    chat_id,
+                    message_thread_id,
+                    &formatted,
+                    Some(kb),
+                    Some(TELEGRAM_PARSE_MODE_MARKDOWN_V2),
+                )
+                .await;
+            let Ok(Some(message_id)) = sent else {
+                return;
+            };
+            message_id
         };
 
         self.insert_reply_route(message_id, snapshot.workspace_id.0, snapshot.thread_id.0);
+        self.relay_messages.insert(
+            key,
+            RelayMessageState {
+                message_id,
+                created_at: Instant::now(),
+            },
+        );
         let updated = max_seen.unwrap_or(global_idx).max(global_idx);
         self.last_seen_entry_index.insert(key, updated);
     }
@@ -2783,6 +2853,17 @@ fn resolve_message_target(
     }
 }
 
+fn existing_task_message_id(
+    key: &(i64, Option<i64>, u64, u64),
+    progress_messages: &HashMap<(i64, Option<i64>, u64, u64), ProgressMessageState>,
+    relay_messages: &HashMap<(i64, Option<i64>, u64, u64), RelayMessageState>,
+) -> Option<i64> {
+    progress_messages
+        .get(key)
+        .map(|state| state.message_id)
+        .or_else(|| relay_messages.get(key).map(|state| state.message_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3129,5 +3210,47 @@ mod tests {
         assert!(!telegram_edit_message_not_modified(
             "Bad Request: message to edit not found"
         ));
+    }
+
+    #[test]
+    fn existing_task_message_id_prefers_progress_state() {
+        let key = (1, None, 2, 3);
+        let mut progress = HashMap::new();
+        progress.insert(
+            key,
+            ProgressMessageState {
+                message_id: 11,
+                created_at: Instant::now(),
+                task_title: "Task".to_owned(),
+                recent_events: Vec::new(),
+                final_text: None,
+            },
+        );
+        let mut relay = HashMap::new();
+        relay.insert(
+            key,
+            RelayMessageState {
+                message_id: 22,
+                created_at: Instant::now(),
+            },
+        );
+
+        assert_eq!(existing_task_message_id(&key, &progress, &relay), Some(11));
+    }
+
+    #[test]
+    fn existing_task_message_id_falls_back_to_relay_state() {
+        let key = (1, None, 2, 3);
+        let progress = HashMap::new();
+        let mut relay = HashMap::new();
+        relay.insert(
+            key,
+            RelayMessageState {
+                message_id: 22,
+                created_at: Instant::now(),
+            },
+        );
+
+        assert_eq!(existing_task_message_id(&key, &progress, &relay), Some(22));
     }
 }
