@@ -1,8 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { MoreHorizontal, Star } from "lucide-react"
+import { MoreHorizontal, Star, Trash2 } from "lucide-react"
 import { OpenButton } from "./open-button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 export interface ProjectInfo {
   /** Project name */
@@ -28,6 +34,8 @@ interface TaskHeaderProps {
   isStarred?: boolean
   /** Called with the next starred state when toggled */
   onToggleStar?: (nextStarred: boolean) => void
+  /** Called when the user confirms deletion from the "..." menu */
+  onDelete?: () => void
   /** Custom actions to render on the right side */
   customActions?: React.ReactNode
   /** Optional action bar rendered below the header row */
@@ -83,6 +91,7 @@ export function TaskHeader({
   showFullActions = false,
   isStarred = false,
   onToggleStar,
+  onDelete,
   customActions,
   actionBar,
 }: TaskHeaderProps) {
@@ -141,12 +150,25 @@ export function TaskHeader({
               >
                 <Star className="w-4 h-4" fill={isStarred ? "#f2c94c" : "none"} />
               </button>
-              <button
-                className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
-                style={{ color: "#6b6b6b" }}
-              >
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="w-6 h-6 flex items-center justify-center rounded-[5px] hover:bg-[#eeeeee] transition-colors"
+                    style={{ color: "#6b6b6b" }}
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                    onClick={onDelete}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         </div>

@@ -2117,6 +2117,63 @@ impl Engine {
                         let _ = reply.send(Ok(self.rev));
                         return;
                     }
+                    luban_api::ClientAction::DeleteWorkspaceThread {
+                        workspace_id,
+                        thread_id,
+                    } => {
+                        let workspace_id = WorkspaceId::from_u64(workspace_id.0);
+                        let thread_id = WorkspaceThreadId::from_u64(thread_id.0);
+                        let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+                            let _ = reply.send(Err("workspace not found".to_owned()));
+                            return;
+                        };
+                        let services = self.services.clone();
+                        let project_slug = scope.project_slug.clone();
+                        let workspace_name = scope.workspace_name.clone();
+                        let delete_result = tokio::task::spawn_blocking(move || {
+                            services.delete_conversation_thread(
+                                project_slug,
+                                workspace_name,
+                                thread_id.as_u64(),
+                            )
+                        })
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| Err("failed to join delete thread task".to_owned()));
+
+                        if let Err(msg) = delete_result {
+                            let _ = reply.send(Err(msg));
+                            return;
+                        }
+
+                        // Purge in-memory state for the deleted thread
+                        self.process_action_queue(Action::WorkspaceThreadsPurged {
+                            workspace_id,
+                            thread_ids: vec![thread_id],
+                        })
+                        .await;
+
+                        // Refresh thread list from DB
+                        let services = self.services.clone();
+                        let project_slug = scope.project_slug;
+                        let workspace_name = scope.workspace_name;
+                        if let Ok(threads) = tokio::task::spawn_blocking(move || {
+                            services.list_conversation_threads(project_slug, workspace_name)
+                        })
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| Err("failed to join list threads task".to_owned()))
+                        {
+                            self.process_action_queue(Action::WorkspaceThreadsLoaded {
+                                workspace_id,
+                                threads,
+                            })
+                            .await;
+                        }
+
+                        let _ = reply.send(Ok(self.rev));
+                        return;
+                    }
                     luban_api::ClientAction::ToggleProjectExpanded { project_id } => {
                         let path = expand_user_path(&project_id.0);
                         let Some(id) = find_project_id_by_path(&self.state, &path) else {
@@ -5773,6 +5830,8 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
             workspace_id: WorkspaceId::from_u64(workspace_id.0),
             thread_id: WorkspaceThreadId::from_u64(thread_id.0),
         }),
+        // Handled directly in apply_client_action (DB delete + domain purge)
+        luban_api::ClientAction::DeleteWorkspaceThread { .. } => None,
         luban_api::ClientAction::RestoreWorkspaceThreadTab {
             workspace_id,
             thread_id,

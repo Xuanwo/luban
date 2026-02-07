@@ -93,6 +93,7 @@ type LubanContextValue = {
   loadConversationBefore: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, before: number) => Promise<void>
   createTask: () => void
   closeTaskTab: (taskId: number) => Promise<void>
+  deleteTask: (taskId: number) => Promise<void>
   restoreTaskTab: (taskId: number) => Promise<void>
 
   sendAgentMessage: (
@@ -414,6 +415,7 @@ export function LubanProvider({ children }: { children: React.ReactNode }) {
     loadConversationBefore: actions.loadConversationBefore,
     createTask: actions.createTask,
     closeTaskTab: actions.closeTaskTab,
+    deleteTask: actions.deleteTask,
     restoreTaskTab: actions.restoreTaskTab,
     sendAgentMessage: actions.sendAgentMessage,
     queueAgentMessage: actions.queueAgentMessage,

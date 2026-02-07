@@ -501,6 +501,7 @@ export type ClientAction =
   | { type: "create_task"; workdir_id: WorkspaceId }
   | { type: "activate_task"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | { type: "close_task_tab"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
+  | { type: "delete_task"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | { type: "restore_task_tab"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | {
       type: "reorder_task_tab"

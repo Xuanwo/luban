@@ -92,6 +92,7 @@ export type LubanActions = {
   loadConversationBefore: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, before: number) => Promise<void>
   createTask: () => void
   closeTaskTab: (taskId: number) => Promise<void>
+  deleteTask: (taskId: number) => Promise<void>
   restoreTaskTab: (taskId: number) => Promise<void>
 
   sendAgentMessage: (
@@ -606,6 +607,17 @@ export function createLubanActions(args: {
     }
   }
 
+  async function deleteTask(taskId: number) {
+    const wid = store.refs.activeWorkspaceIdRef.current
+    if (wid == null) return
+    args.sendAction({ type: "delete_task", workdir_id: wid, task_id: taskId })
+    try {
+      await refreshThreads(wid)
+    } catch (err) {
+      console.warn("fetchThreads failed after delete", err)
+    }
+  }
+
   async function restoreTaskTab(taskId: number) {
     const wid = store.refs.activeWorkspaceIdRef.current
     if (wid == null) return
@@ -914,6 +926,7 @@ export function createLubanActions(args: {
     selectThreadInWorkspace,
     createTask,
     closeTaskTab,
+    deleteTask,
     restoreTaskTab,
     sendAgentMessage,
     queueAgentMessage,

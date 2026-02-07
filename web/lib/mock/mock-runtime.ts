@@ -654,6 +654,24 @@ export function mockDispatchAction(args: { action: ClientAction; onEvent: (event
     return
   }
 
+  if (a.type === "delete_task") {
+    const snap = ensureThreadsSnapshot(state, a.workdir_id)
+    const id = a.task_id
+    // Remove from all tab lists
+    snap.tabs.open_tabs = snap.tabs.open_tabs.filter((x) => x !== id)
+    snap.tabs.archived_tabs = snap.tabs.archived_tabs.filter((x) => x !== id)
+    // Remove from tasks list
+    snap.tasks = snap.tasks.filter((t) => t.task_id !== id)
+    // Update active tab if deleted thread was active
+    if (snap.tabs.active_tab === id) {
+      snap.tabs.active_tab = snap.tabs.open_tabs[0] ?? 0
+    }
+    emitWorkdirTasksChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
+    emitAppChanged({ state, onEvent: args.onEvent })
+    emitTaskSummariesChanged({ state, workdirId: a.workdir_id, onEvent: args.onEvent })
+    return
+  }
+
   if (a.type === "close_task_tab" || a.type === "restore_task_tab") {
     const snap = ensureThreadsSnapshot(state, a.workdir_id)
     const id = a.task_id

@@ -1083,6 +1083,13 @@ pub enum ClientAction {
         #[serde(rename = "task_id", alias = "thread_id")]
         thread_id: WorkspaceThreadId,
     },
+    #[serde(rename = "delete_task", alias = "delete_workspace_thread")]
+    DeleteWorkspaceThread {
+        #[serde(rename = "workdir_id", alias = "workspace_id")]
+        workspace_id: WorkspaceId,
+        #[serde(rename = "task_id", alias = "thread_id")]
+        thread_id: WorkspaceThreadId,
+    },
     #[serde(rename = "restore_task_tab", alias = "restore_workspace_thread_tab")]
     RestoreWorkspaceThreadTab {
         #[serde(rename = "workdir_id", alias = "workspace_id")]

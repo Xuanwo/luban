@@ -26,6 +26,7 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
     activeTaskId: activeThreadId,
     tasks: threads,
     setTaskStarred,
+    deleteTask,
   } = useLuban()
   const [isStarred, setIsStarred] = useState(false)
 
@@ -100,6 +101,11 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
         onProjectClick={onBack}
         showFullActions
         isStarred={isStarred}
+        onDelete={() => {
+          if (activeWorkspaceId == null || activeThreadId == null) return
+          void deleteTask(activeThreadId)
+          onBack?.()
+        }}
         onToggleStar={(nextStarred) => {
           if (activeWorkspaceId == null || activeThreadId == null) return
           setTaskStarred(activeWorkspaceId, activeThreadId, nextStarred)
