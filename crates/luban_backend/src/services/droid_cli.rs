@@ -474,25 +474,25 @@ pub(super) fn run_droid_turn_streamed_via_cli(
     command.args(["exec", "--output-format", "stream-json"]);
     command.arg("--cwd").arg(&worktree_path);
 
-    if let Some(m) = model.as_deref() {
-        if !m.is_empty() {
-            command.arg("-m").arg(m);
-        }
+    if let Some(m) = model.as_deref()
+        && !m.is_empty()
+    {
+        command.arg("-m").arg(m);
     }
-    if let Some(r) = reasoning_effort.as_deref() {
-        if !r.is_empty() {
-            command.arg("-r").arg(r);
-        }
+    if let Some(r) = reasoning_effort.as_deref()
+        && !r.is_empty()
+    {
+        command.arg("-r").arg(r);
     }
-    if let Some(a) = auto_level.as_deref() {
-        if !a.is_empty() {
-            command.arg("--auto").arg(a);
-        }
+    if let Some(a) = auto_level.as_deref()
+        && !a.is_empty()
+    {
+        command.arg("--auto").arg(a);
     }
-    if let Some(sid) = session_id.as_deref() {
-        if !sid.is_empty() {
-            command.arg("-s").arg(sid);
-        }
+    if let Some(sid) = session_id.as_deref()
+        && !sid.is_empty()
+    {
+        command.arg("-s").arg(sid);
     }
 
     // Reason: Droid reads the prompt from piped stdin when no positional

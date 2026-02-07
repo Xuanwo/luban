@@ -3720,10 +3720,8 @@ mod tests {
         let tree = {
             let _env = EnvVarGuard::set(paths::LUBAN_DROID_ROOT_ENV, &root);
 
-            let tree = ProjectWorkspaceService::droid_config_tree(&service)
-                .expect("droid_config_tree should succeed");
-
-            tree
+            ProjectWorkspaceService::droid_config_tree(&service)
+                .expect("droid_config_tree should succeed")
         };
 
         let mut paths = Vec::new();
