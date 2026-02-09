@@ -11,10 +11,18 @@ import { useLuban } from "@/lib/luban-context"
 import { openExternalUrl } from "@/lib/open-external-url"
 import { useAppearance } from "@/components/appearance-provider"
 import { isMockMode } from "@/lib/luban-mode"
+import { buildFontFamilyList } from "@/lib/font-family"
 
-function escapeCssFontName(value: string): string {
-  return value.replaceAll('"', '\\"')
-}
+const TERMINAL_FONT_FALLBACKS = [
+  "ui-monospace",
+  "SFMono-Regular",
+  "Menlo",
+  "Monaco",
+  "Consolas",
+  "Liberation Mono",
+  "Courier New",
+  "monospace",
+] as const
 
 function encodeBinaryString(value: string): Uint8Array {
   const out = new Uint8Array(value.length)
@@ -85,8 +93,7 @@ function getOrCreateReconnectToken(workspaceId: number, threadId: number): strin
 }
 
 function terminalFontFamily(fontName: string): string {
-  const escaped = escapeCssFontName(fontName.trim() || "Geist Mono")
-  return `"${escaped}", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace`
+  return buildFontFamilyList(fontName.trim() || "Geist Mono", TERMINAL_FONT_FALLBACKS)
 }
 
 async function copyToClipboard(text: string): Promise<void> {

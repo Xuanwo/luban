@@ -3,6 +3,14 @@ export async function runSettingsPanel({ page }) {
   await page.getByTestId('open-settings-button').click();
   await page.getByTestId('settings-panel').waitFor({ state: 'visible' });
 
+  await page.getByTestId('settings-terminal-font').fill('Primary Mono Test, Fallback NF Test');
+  const terminalPreviewFontFamily = await page
+    .getByTestId('settings-terminal-font-preview')
+    .evaluate((el) => el.style.fontFamily);
+  if (!/"Primary Mono Test"\s*,\s*"Fallback NF Test"\s*,\s*monospace/i.test(terminalPreviewFontFamily)) {
+    throw new Error(`expected terminal preview font fallback chain, got "${terminalPreviewFontFamily}"`);
+  }
+
   await page.getByRole('button', { name: 'Integrations' }).click();
   await page.getByRole('button', { name: 'Telegram' }).click();
 

@@ -47,6 +47,7 @@ import { toast } from "sonner"
 import { useAppearance } from "@/components/appearance-provider"
 import { useLuban } from "@/lib/luban-context"
 import { cn } from "@/lib/utils"
+import { buildFontFamilyList } from "@/lib/font-family"
 import type {
   AgentRunnerKind,
   AmpConfigEntrySnapshot,
@@ -719,14 +720,14 @@ function InlineFontInput({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Enter font name..."
+        placeholder="Enter font family..."
         className={cn(
           "px-2 py-1 rounded-md text-xs transition-all w-32",
           "bg-muted border border-border",
           "focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary",
           mono ? "font-mono" : "",
         )}
-        style={{ fontFamily: `"${value}", ${mono ? "monospace" : "sans-serif"}` }}
+        style={{ fontFamily: buildFontFamilyList(value, [mono ? "monospace" : "sans-serif"]) }}
       />
     </div>
   )
@@ -771,7 +772,7 @@ function WorkspacePreviewWithFonts({
               />
             </div>
 
-            <div className="px-1" style={{ fontFamily: `"${uiFont}", sans-serif` }}>
+            <div className="px-1" style={{ fontFamily: buildFontFamilyList(uiFont, ["sans-serif"]) }}>
               <p className="text-xs text-muted-foreground leading-relaxed">The quick brown fox jumps over the lazy dog</p>
             </div>
           </div>
@@ -804,7 +805,7 @@ function WorkspacePreviewWithFonts({
                     onChange={setChatFont}
                   />
                 </div>
-                <div className="bg-secondary/40 rounded-lg p-3" style={{ fontFamily: `"${chatFont}", sans-serif` }}>
+                <div className="bg-secondary/40 rounded-lg p-3" style={{ fontFamily: buildFontFamilyList(chatFont, ["sans-serif"]) }}>
                   <p className="text-sm leading-relaxed text-muted-foreground">The quick brown fox jumps over the lazy dog</p>
                 </div>
               </div>
@@ -819,7 +820,7 @@ function WorkspacePreviewWithFonts({
                     mono
                   />
                 </div>
-                <div className="bg-secondary/60 border border-border rounded-lg p-3" style={{ fontFamily: `"${monoFont}", monospace` }}>
+                <div className="bg-secondary/60 border border-border rounded-lg p-3" style={{ fontFamily: buildFontFamilyList(monoFont, ["monospace"]) }}>
                   <pre className="text-sm leading-relaxed">
                     <span className="text-base08">fn</span>{" "}
                     <span className="text-base0e">hello</span>
@@ -855,7 +856,11 @@ function WorkspacePreviewWithFonts({
                 vertical
               />
             </div>
-            <div className="flex-1 px-3 pb-3" style={{ fontFamily: `"${terminalFont}", monospace` }}>
+            <div
+              data-testid="settings-terminal-font-preview"
+              className="flex-1 px-3 pb-3"
+              style={{ fontFamily: buildFontFamilyList(terminalFont, ["monospace"]) }}
+            >
               <p className="text-sm leading-relaxed text-muted-foreground">The quick brown fox jumps over the lazy dog</p>
             </div>
           </div>
