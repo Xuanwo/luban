@@ -274,7 +274,7 @@ function EmptyState({ unreadCount }: { unreadCount: number }) {
 }
 
 export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
-  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus } = useLuban()
+  const { app, wsConnected, subscribeServerEvents, openWorkdir, activateTask, setTaskStarred, setTaskStatus, deleteTask } = useLuban()
   const [tasksSnapshot, setTasksSnapshot] = useState<TasksSnapshot | null>(null)
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number | null>(null)
@@ -670,6 +670,20 @@ export function InboxView({ onOpenFullView, refreshSeq }: InboxViewProps) {
               }
               showFullActions
               isStarred={selectedNotification.isStarred}
+              onDelete={() => {
+                const { workdirId, taskId } = selectedNotification
+                void deleteTask(taskId)
+                setSelectedNotificationId(null)
+                setTasksSnapshot((prev) => {
+                  if (!prev) return prev
+                  return {
+                    ...prev,
+                    tasks: prev.tasks.filter(
+                      (t) => !(t.workdir_id === workdirId && t.task_id === taskId),
+                    ),
+                  }
+                })
+              }}
               onToggleStar={(nextStarred) => {
                 setTaskStarred(selectedNotification.workdirId, selectedNotification.taskId, nextStarred)
                 setTasksSnapshot((prev) => {
