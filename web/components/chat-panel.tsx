@@ -1318,6 +1318,8 @@ export function ChatPanel({
                   canSend={canSend}
                   codexEnabled={app?.agent.codex_enabled ?? true}
                   ampEnabled={app?.agent.amp_enabled ?? true}
+                  claudeEnabled={app?.agent.claude_enabled ?? true}
+                  droidEnabled={app?.agent.droid_enabled ?? true}
                 />
               )}
             </div>

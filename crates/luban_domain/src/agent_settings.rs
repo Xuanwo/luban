@@ -157,24 +157,51 @@ mod tests {
     fn model_valid_for_runner_checks_catalog() {
         assert!(model_valid_for_runner(
             AgentRunnerKind::Codex,
+            "gpt-5.3-codex"
+        ));
+        assert!(model_valid_for_runner(
+            AgentRunnerKind::Codex,
             "gpt-5.2-codex"
         ));
         assert!(!model_valid_for_runner(
             AgentRunnerKind::Codex,
-            "gpt-5.3-codex"
+            "nonexistent-model"
         ));
         assert!(model_valid_for_runner(
             AgentRunnerKind::Droid,
             "claude-opus-4-6"
         ));
         assert!(model_valid_for_runner(AgentRunnerKind::Droid, "gpt-5.2"));
-        assert!(!model_valid_for_runner(
+        assert!(model_valid_for_runner(
             AgentRunnerKind::Droid,
             "gpt-5.3-codex"
         ));
         // Amp/Claude have empty catalogs — any model is valid
         assert!(model_valid_for_runner(AgentRunnerKind::Amp, "anything"));
         assert!(model_valid_for_runner(AgentRunnerKind::Claude, "anything"));
+    }
+
+    #[test]
+    fn runner_for_model_infers_correct_runner() {
+        // Codex-only models
+        assert_eq!(
+            runner_for_model("gpt-5.2-codex"),
+            Some(AgentRunnerKind::Codex)
+        );
+        // Shared models prefer Codex
+        assert_eq!(runner_for_model("gpt-5.2"), Some(AgentRunnerKind::Codex));
+        // Droid-only models
+        assert_eq!(
+            runner_for_model("claude-opus-4-6"),
+            Some(AgentRunnerKind::Droid)
+        );
+        assert_eq!(
+            runner_for_model("gemini-3-pro-preview"),
+            Some(AgentRunnerKind::Droid)
+        );
+        assert_eq!(runner_for_model("kimi-k2.5"), Some(AgentRunnerKind::Droid));
+        // Unknown model
+        assert_eq!(runner_for_model("nonexistent-model"), None);
     }
 
     #[test]
@@ -253,6 +280,11 @@ const STANDARD_EFFORTS: &[ThinkingEffort] = &[
 
 const AGENT_MODELS: &[AgentModelSpec] = &[
     AgentModelSpec {
+        id: "gpt-5.3-codex",
+        label: "GPT-5.3-Codex",
+        supported_thinking_efforts: STANDARD_EFFORTS,
+    },
+    AgentModelSpec {
         id: "gpt-5.2-codex",
         label: "GPT-5.2-Codex",
         supported_thinking_efforts: STANDARD_EFFORTS,
@@ -286,6 +318,11 @@ const DROID_MODELS: &[AgentModelSpec] = &[
     AgentModelSpec {
         id: "claude-haiku-4-5-20251001",
         label: "Claude Haiku 4.5",
+        supported_thinking_efforts: &[],
+    },
+    AgentModelSpec {
+        id: "gpt-5.3-codex",
+        label: "GPT-5.3-Codex",
         supported_thinking_efforts: &[],
     },
     AgentModelSpec {
@@ -344,7 +381,7 @@ pub fn droid_models() -> &'static [AgentModelSpec] {
 }
 
 pub fn default_agent_model_id() -> &'static str {
-    "gpt-5.2"
+    "gpt-5.3-codex"
 }
 
 pub fn default_thinking_effort() -> ThinkingEffort {
@@ -407,6 +444,20 @@ pub fn default_model_for_runner(runner: AgentRunnerKind) -> &'static str {
         .first()
         .map(|m| m.id)
         .unwrap_or(default_agent_model_id())
+}
+
+/// Infer which runner owns a given model by checking the Codex and Droid
+/// catalogs. Returns `None` for unknown model IDs.
+pub fn runner_for_model(model_id: &str) -> Option<AgentRunnerKind> {
+    // Reason: Check Codex first so shared models (gpt-5.2, gpt-5.2-codex)
+    // prefer the Codex runner, matching the existing `find_model_spec` order.
+    if AGENT_MODELS.iter().any(|m| m.id == model_id) {
+        return Some(AgentRunnerKind::Codex);
+    }
+    if DROID_MODELS.iter().any(|m| m.id == model_id) {
+        return Some(AgentRunnerKind::Droid);
+    }
+    None
 }
 
 /// Check whether `model_id` exists in the given runner's catalog.

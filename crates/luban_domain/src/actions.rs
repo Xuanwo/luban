@@ -257,6 +257,8 @@ pub enum Action {
 
     CreateWorkspaceThread {
         workspace_id: WorkspaceId,
+        model_id: Option<String>,
+        thinking_effort: Option<ThinkingEffort>,
     },
     ActivateWorkspaceThread {
         workspace_id: WorkspaceId,

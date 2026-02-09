@@ -1010,6 +1010,8 @@ impl TelegramGateway {
     ) -> anyhow::Result<()> {
         let action = luban_api::ClientAction::CreateWorkspaceThread {
             workspace_id: luban_api::WorkspaceId(workspace_id),
+            model_id: None,
+            thinking_effort: None,
         };
         let _ = self
             .engine
@@ -1182,6 +1184,8 @@ impl TelegramGateway {
     async fn create_task(&mut self, workspace_id: u64) -> anyhow::Result<u64> {
         let action = luban_api::ClientAction::CreateWorkspaceThread {
             workspace_id: luban_api::WorkspaceId(workspace_id),
+            model_id: None,
+            thinking_effort: None,
         };
         let _ = self
             .engine

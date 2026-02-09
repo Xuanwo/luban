@@ -78,6 +78,8 @@ type LubanContextValue = {
     mode: TaskExecuteMode,
     workdirId: WorkspaceId,
     attachments?: AttachmentRef[],
+    modelId?: string,
+    thinkingEffort?: ThinkingEffort,
   ) => Promise<TaskExecuteResult>
   setTaskStarred: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, starred: boolean) => void
   setTaskStatus: (workdirId: WorkspaceId, taskId: WorkspaceThreadId, taskStatus: TaskStatus) => void

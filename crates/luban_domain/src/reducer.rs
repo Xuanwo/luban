@@ -79,6 +79,34 @@ fn resolve_enabled_runner(state: &AppState) -> crate::AgentRunnerKind {
     state.agent_default_runner
 }
 
+/// Resolve runner + model for `CreateWorkspaceThread`.
+///
+/// When `model_id` is `Some`, infer its runner via `runner_for_model()`; if
+/// that runner is enabled, use it with the requested model. Otherwise fall
+/// back to the standard `resolve_enabled_runner` + default model path.
+fn resolve_runner_and_model_for_create(
+    state: &AppState,
+    model_id: Option<String>,
+) -> (crate::AgentRunnerKind, String) {
+    if let Some(ref mid) = model_id {
+        if let Some(inferred_runner) = crate::runner_for_model(mid)
+            && runner_is_enabled(state, inferred_runner)
+        {
+            return (inferred_runner, mid.clone());
+        }
+        // Reason: The requested model is unknown or its runner is disabled.
+        // Fall back to the enabled runner; if the model is still valid for
+        // that runner, keep it; otherwise use the runner's default model.
+        let fallback_runner = resolve_enabled_runner(state);
+        if crate::model_valid_for_runner(fallback_runner, mid) {
+            return (fallback_runner, mid.clone());
+        }
+    }
+    let runner = resolve_enabled_runner(state);
+    let model = state.resolve_default_model_for_runner(runner);
+    (runner, model)
+}
+
 fn truncate_for_system_task(input: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
@@ -248,7 +276,11 @@ impl AppState {
             .find(|w| w.workspace_name == "abandon-about")
             .map(|w| w.id)
             .expect("missing demo workspace");
-        this.apply(Action::CreateWorkspaceThread { workspace_id });
+        this.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
 
         this
     }
@@ -1713,19 +1745,29 @@ impl AppState {
                     run_id,
                 }]
             }
-            Action::CreateWorkspaceThread { workspace_id } => {
+            Action::CreateWorkspaceThread {
+                workspace_id,
+                model_id,
+                thinking_effort,
+            } => {
                 let thread_id = {
                     let tabs = self.ensure_workspace_tabs_mut(workspace_id);
                     tabs.allocate_thread_id()
                 };
-                // Reason: Use resolve_enabled_runner so new tasks respect
-                // which runners the user has enabled in settings.
-                let effective_runner = resolve_enabled_runner(self);
-                let model_id = self.resolve_default_model_for_runner(effective_runner);
+                // Reason: When a model_id is provided, infer its runner and
+                // use it if enabled; otherwise fall back to defaults.
+                let (effective_runner, effective_model) =
+                    resolve_runner_and_model_for_create(self, model_id);
+                let effective_effort =
+                    thinking_effort.unwrap_or(self.agent_default_thinking_effort);
+                // Reason: Normalize effort for the chosen model — Droid models
+                // ignore the reasoning flag so we clamp to their supported set.
+                let effective_effort =
+                    crate::normalize_thinking_effort(&effective_model, effective_effort);
                 let mut conversation = Self::default_conversation_with_defaults(
                     thread_id,
-                    model_id,
-                    self.agent_default_thinking_effort,
+                    effective_model,
+                    effective_effort,
                     effective_runner,
                 );
                 conversation.task_status = crate::TaskStatus::Backlog;
@@ -3145,7 +3187,11 @@ mod tests {
         });
 
         let workspace_id = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -3164,7 +3210,11 @@ mod tests {
             thinking_effort: Some(ThinkingEffort::High),
         });
 
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let created_thread_id = state
             .workspace_tabs(workspace_id)
             .expect("missing workspace tabs")
@@ -3176,6 +3226,157 @@ mod tests {
             .expect("missing conversation");
         assert_eq!(conversation.agent_model_id, "gpt-5.2-codex");
         assert_eq!(conversation.thinking_effort, ThinkingEffort::High);
+    }
+
+    #[test]
+    fn create_task_with_model_id_uses_specified_model() {
+        let mut state = AppState::new();
+        state.agent_droid_enabled = true;
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: Some("claude-opus-4-6".to_owned()),
+            thinking_effort: None,
+        });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_model_id, "claude-opus-4-6");
+        assert_eq!(conversation.agent_runner, crate::AgentRunnerKind::Droid);
+    }
+
+    #[test]
+    fn create_task_with_invalid_model_falls_back_to_default() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: Some("nonexistent-model-xyz".to_owned()),
+            thinking_effort: None,
+        });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        // Reason: Unknown model falls back to default runner + model.
+        assert_eq!(conversation.agent_runner, crate::AgentRunnerKind::Codex);
+        assert_eq!(conversation.agent_model_id, crate::default_agent_model_id());
+    }
+
+    #[test]
+    fn create_task_without_model_id_uses_default() {
+        let mut state = AppState::new();
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        assert_eq!(conversation.agent_runner, crate::AgentRunnerKind::Codex);
+        assert_eq!(conversation.agent_model_id, crate::default_agent_model_id());
+    }
+
+    #[test]
+    fn create_task_with_disabled_runner_model_falls_back() {
+        let mut state = AppState::new();
+        // Reason: Only Codex enabled, but request a Droid-only model.
+        state.agent_codex_enabled = true;
+        state.agent_droid_enabled = false;
+        state.apply(Action::AddProject {
+            path: PathBuf::from("/tmp/repo"),
+            is_git: true,
+        });
+        let project_id = state.projects[0].id;
+        state.apply(Action::CreateWorkspace {
+            project_id,
+            branch_name_hint: None,
+        });
+        state.apply(Action::WorkspaceCreated {
+            project_id,
+            workspace_name: "w1".to_owned(),
+            branch_name: "repo/w1".to_owned(),
+            worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
+        });
+
+        let workspace_id = workspace_id_by_name(&state, "w1");
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: Some("claude-opus-4-6".to_owned()),
+            thinking_effort: None,
+        });
+        let thread_id = state
+            .workspace_tabs(workspace_id)
+            .expect("missing workspace tabs")
+            .active_tab;
+        let conversation = state
+            .workspace_thread_conversation(workspace_id, thread_id)
+            .expect("missing conversation");
+        // Reason: Droid runner is disabled, falls back to enabled Codex runner
+        // with default model since claude-opus-4-6 isn't in Codex catalog.
+        assert_eq!(conversation.agent_runner, crate::AgentRunnerKind::Codex);
+        assert_eq!(conversation.agent_model_id, crate::default_agent_model_id());
     }
 
     #[test]
@@ -3293,8 +3494,16 @@ mod tests {
         let workspace_id = workspace_id_by_name(&state, "w1");
         state.apply(Action::OpenWorkspace { workspace_id });
 
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread2 = state
             .workspace_tabs(workspace_id)
             .expect("missing workspace tabs")
@@ -3355,7 +3564,11 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -3574,7 +3787,11 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = default_thread_id();
 
         state.apply(Action::ChatModelChanged {
@@ -3641,7 +3858,11 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = default_thread_id();
 
         state.apply(Action::ChatModelChanged {
@@ -3688,7 +3909,11 @@ mod tests {
             worktree_path: PathBuf::from("/tmp/luban/worktrees/repo/w1"),
         });
         let workspace_id = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = WorkspaceThreadId(1);
 
         state.apply(Action::ChatModelChanged {
@@ -4013,7 +4238,11 @@ mod tests {
 
         let main_id = main_workspace_id(&state);
         let w1 = workspace_id_by_name(&state, "w1");
-        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id: w1,
+            model_id: None,
+            thinking_effort: None,
+        });
 
         let effects = state.apply(Action::OpenDashboard);
         assert_eq!(state.main_pane, MainPane::Dashboard);
@@ -4502,10 +4731,18 @@ mod tests {
         let workspace_id = workspace_id_by_name(&state, "w1");
         state.apply(Action::OpenWorkspace { workspace_id });
 
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let mut thread_ids = vec![state.active_thread_id(workspace_id).unwrap()];
         for _ in 0..3 {
-            state.apply(Action::CreateWorkspaceThread { workspace_id });
+            state.apply(Action::CreateWorkspaceThread {
+                workspace_id,
+                model_id: None,
+                thinking_effort: None,
+            });
             thread_ids.push(state.active_thread_id(workspace_id).unwrap());
         }
 
@@ -4757,7 +4994,11 @@ mod tests {
             .find(|w| w.worktree_path == worktree_path)
             .expect("missing workspace")
             .id;
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = state.active_thread_id(workspace_id).unwrap();
 
         {
@@ -4981,8 +5222,16 @@ mod tests {
         let w1 = workspace_id_by_name(&state, "w1");
         let w2 = workspace_id_by_name(&state, "w2");
         let thread_id = default_thread_id();
-        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
-        state.apply(Action::CreateWorkspaceThread { workspace_id: w2 });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id: w1,
+            model_id: None,
+            thinking_effort: None,
+        });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id: w2,
+            model_id: None,
+            thinking_effort: None,
+        });
 
         state.apply(Action::ChatDraftChanged {
             workspace_id: w1,
@@ -5038,7 +5287,11 @@ mod tests {
         });
         let w1 = workspace_id_by_name(&state, "w1");
         let thread_id = default_thread_id();
-        state.apply(Action::CreateWorkspaceThread { workspace_id: w1 });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id: w1,
+            model_id: None,
+            thinking_effort: None,
+        });
 
         state.apply(Action::ChatDraftChanged {
             workspace_id: w1,

@@ -820,6 +820,8 @@ impl Engine {
         mode: luban_api::TaskExecuteMode,
         workdir_id: Option<luban_api::WorkspaceId>,
         attachments: Vec<luban_api::AttachmentRef>,
+        model_id: Option<String>,
+        thinking_effort: Option<luban_domain::ThinkingEffort>,
     ) -> Result<luban_api::TaskExecuteResult, String> {
         let Some(workdir_id) = workdir_id else {
             return Err("workdir_id is required".to_owned());
@@ -843,8 +845,12 @@ impl Engine {
 
         self.process_action_queue(Action::OpenWorkspace { workspace_id })
             .await;
-        self.process_action_queue(Action::CreateWorkspaceThread { workspace_id })
-            .await;
+        self.process_action_queue(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id,
+            thinking_effort,
+        })
+        .await;
 
         let Some(thread_id) = self.state.active_thread_id(workspace_id) else {
             return Err("failed to determine created task id".to_owned());
@@ -1261,15 +1267,26 @@ impl Engine {
                     mode,
                     workdir_id,
                     attachments,
+                    model_id,
+                    thinking_effort,
                 } = &action
                 {
                     let prompt = prompt.clone();
                     let mode = *mode;
                     let workdir_id = *workdir_id;
                     let attachments = attachments.clone();
+                    let model_id = model_id.clone();
+                    let thinking_effort = map_api_thinking_effort(*thinking_effort);
 
                     match self
-                        .execute_task_prompt(prompt, mode, workdir_id, attachments)
+                        .execute_task_prompt(
+                            prompt,
+                            mode,
+                            workdir_id,
+                            attachments,
+                            model_id,
+                            thinking_effort,
+                        )
                         .await
                     {
                         Ok(result) => {
@@ -1375,6 +1392,8 @@ impl Engine {
                                     luban_api::TaskExecuteMode::Create,
                                     workdir_id,
                                     Vec::new(),
+                                    None,
+                                    None,
                                 )
                                 .await
                             {
@@ -5396,7 +5415,7 @@ fn task_summaries_workspace_id_for_action(action: &Action) -> Option<WorkspaceId
         Action::TaskStarSet { workspace_id, .. } => Some(*workspace_id),
         Action::OpenWorkspace { workspace_id } => Some(*workspace_id),
         Action::DashboardPreviewOpened { workspace_id } => Some(*workspace_id),
-        Action::CreateWorkspaceThread { workspace_id } => Some(*workspace_id),
+        Action::CreateWorkspaceThread { workspace_id, .. } => Some(*workspace_id),
         Action::ActivateWorkspaceThread { workspace_id, .. } => Some(*workspace_id),
         Action::CloseWorkspaceThreadTab { workspace_id, .. } => Some(*workspace_id),
         Action::RestoreWorkspaceThreadTab { workspace_id, .. } => Some(*workspace_id),
@@ -6054,11 +6073,15 @@ fn map_client_action(action: luban_api::ClientAction) -> Option<Action> {
             workspace_id: WorkspaceId::from_u64(workspace_id.0),
             thread_id: WorkspaceThreadId::from_u64(thread_id.0),
         }),
-        luban_api::ClientAction::CreateWorkspaceThread { workspace_id } => {
-            Some(Action::CreateWorkspaceThread {
-                workspace_id: WorkspaceId::from_u64(workspace_id.0),
-            })
-        }
+        luban_api::ClientAction::CreateWorkspaceThread {
+            workspace_id,
+            model_id,
+            thinking_effort,
+        } => Some(Action::CreateWorkspaceThread {
+            workspace_id: WorkspaceId::from_u64(workspace_id.0),
+            model_id,
+            thinking_effort: map_api_thinking_effort(thinking_effort),
+        }),
         luban_api::ClientAction::ActivateWorkspaceThread {
             workspace_id,
             thread_id,
@@ -6228,6 +6251,18 @@ fn map_api_attachment(att: luban_api::AttachmentRef) -> AttachmentRef {
         mime: att.mime,
         byte_len: att.byte_len,
     }
+}
+
+fn map_api_thinking_effort(
+    effort: Option<luban_api::ThinkingEffort>,
+) -> Option<luban_domain::ThinkingEffort> {
+    effort.map(|e| match e {
+        luban_api::ThinkingEffort::Minimal => luban_domain::ThinkingEffort::Minimal,
+        luban_api::ThinkingEffort::Low => luban_domain::ThinkingEffort::Low,
+        luban_api::ThinkingEffort::Medium => luban_domain::ThinkingEffort::Medium,
+        luban_api::ThinkingEffort::High => luban_domain::ThinkingEffort::High,
+        luban_api::ThinkingEffort::XHigh => luban_domain::ThinkingEffort::XHigh,
+    })
 }
 
 fn map_api_agent_runner_kind(kind: luban_api::AgentRunnerKind) -> luban_domain::AgentRunnerKind {
@@ -7292,8 +7327,16 @@ mod tests {
         let workspace_id = state.projects[0].workspaces[0].id;
         state.apply(Action::OpenWorkspace { workspace_id });
 
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
 
         let open_tabs = state
             .workspace_tabs(workspace_id)
@@ -7704,7 +7747,11 @@ mod tests {
 
         let workspace_id = state.projects[0].workspaces[0].id;
         state.apply(Action::OpenWorkspace { workspace_id });
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = state
             .workspace_tabs(workspace_id)
             .expect("workspace tabs exist after creating thread")
@@ -7797,7 +7844,11 @@ mod tests {
 
         let workspace_id = state.projects[0].workspaces[0].id;
         state.apply(Action::OpenWorkspace { workspace_id });
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = state
             .workspace_tabs(workspace_id)
             .expect("workspace tabs exist after creating thread")
@@ -8230,7 +8281,11 @@ mod tests {
             .expect("workspace should exist")
             .id;
 
-        state.apply(Action::CreateWorkspaceThread { workspace_id });
+        state.apply(Action::CreateWorkspaceThread {
+            workspace_id,
+            model_id: None,
+            thinking_effort: None,
+        });
         let thread_id = state
             .active_thread_id(workspace_id)
             .expect("active thread should exist");
@@ -9219,6 +9274,8 @@ mod tests {
                 luban_api::TaskExecuteMode::Start,
                 Some(luban_api::WorkspaceId(workspace_id.as_u64())),
                 vec![api_attachment.clone()],
+                None,
+                None,
             )
             .await
             .expect("task execute prompt should succeed");

@@ -245,6 +245,7 @@ export function AgentSelector({
   onChangeAmpMode,
   codexEnabled = true,
   ampEnabled = true,
+  claudeEnabled = true,
   droidEnabled = true,
   runnerDefaultModels,
 }: {
@@ -267,6 +268,7 @@ export function AgentSelector({
   onChangeAmpMode: (mode: AmpMode) => void
   codexEnabled?: boolean
   ampEnabled?: boolean
+  claudeEnabled?: boolean
   droidEnabled?: boolean
   runnerDefaultModels?: Record<string, string> | null
 }) {
@@ -346,7 +348,6 @@ export function AgentSelector({
     onChangeRunner(next)
   }
 
-  const claudeEnabled = true
   const noAgentsEnabled = !codexEnabled && !ampEnabled && !claudeEnabled && !droidEnabled
 
   if (noAgentsEnabled) {
@@ -423,7 +424,7 @@ export function AgentSelector({
                     id: "claude" as const,
                     label: "Claude",
                     icon: <UnifiedProviderLogo providerId="anthropic" className="w-3.5 h-3.5 flex-shrink-0" />,
-                    enabled: true,
+                    enabled: claudeEnabled,
                   },
                   {
                     id: "droid" as const,

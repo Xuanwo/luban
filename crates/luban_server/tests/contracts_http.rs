@@ -293,6 +293,8 @@ async fn ensure_task_via_ws(server_addr: SocketAddr, workdir_id: u64) {
         request_id: "req-create-task".to_owned(),
         action: Box::new(luban_api::ClientAction::CreateWorkspaceThread {
             workspace_id: luban_api::WorkspaceId(workdir_id),
+            model_id: None,
+            thinking_effort: None,
         }),
     };
     socket

@@ -432,6 +432,8 @@ export type ClientAction =
       mode: TaskExecuteMode
       workdir_id: WorkspaceId
       attachments?: AttachmentRef[]
+      model_id?: string
+      thinking_effort?: ThinkingEffort
     }
   | { type: "telegram_bot_token_set"; token: string }
   | { type: "telegram_bot_token_clear" }
@@ -509,7 +511,7 @@ export type ClientAction =
   | { type: "workdir_rename_branch"; workdir_id: WorkspaceId; branch_name: string }
   | { type: "workdir_ai_rename_branch"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | { type: "cancel_agent_turn"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
-  | { type: "create_task"; workdir_id: WorkspaceId }
+  | { type: "create_task"; workdir_id: WorkspaceId; model_id?: string; thinking_effort?: ThinkingEffort }
   | { type: "activate_task"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | { type: "close_task_tab"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }
   | { type: "delete_task"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId }

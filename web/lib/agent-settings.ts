@@ -12,6 +12,11 @@ export const THINKING_EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "
 
 export const AGENT_MODELS: AgentModelSpec[] = [
   {
+    id: "gpt-5.3-codex",
+    label: "GPT-5.3-Codex",
+    supportedThinkingEfforts: THINKING_EFFORTS,
+  },
+  {
     id: "gpt-5.2-codex",
     label: "GPT-5.2-Codex",
     supportedThinkingEfforts: THINKING_EFFORTS,
@@ -30,6 +35,7 @@ export const DROID_MODELS: AgentModelSpec[] = [
   { id: "claude-opus-4-5-20251101", label: "Claude Opus 4.5", supportedThinkingEfforts: [] },
   { id: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5", supportedThinkingEfforts: [] },
   { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", supportedThinkingEfforts: [] },
+  { id: "gpt-5.3-codex", label: "GPT-5.3-Codex", supportedThinkingEfforts: [] },
   { id: "gpt-5.2-codex", label: "GPT-5.2-Codex", supportedThinkingEfforts: [] },
   { id: "gpt-5.2", label: "GPT-5.2", supportedThinkingEfforts: [] },
   { id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex-Max", supportedThinkingEfforts: [] },

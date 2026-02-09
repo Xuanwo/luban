@@ -42,6 +42,8 @@ export function ChatComposer({
   canSend,
   codexEnabled = true,
   ampEnabled = true,
+  claudeEnabled = true,
+  droidEnabled = true,
   runnerDefaultModels,
   compact = false,
 }: {
@@ -83,6 +85,8 @@ export function ChatComposer({
   canSend: boolean
   codexEnabled?: boolean
   ampEnabled?: boolean
+  claudeEnabled?: boolean
+  droidEnabled?: boolean
   runnerDefaultModels?: Record<string, string> | null
   /** When true, removes padding and max-width constraints for embedding in cards */
   compact?: boolean
@@ -114,6 +118,8 @@ export function ChatComposer({
       onChangeAmpMode={onChangeAmpMode}
       codexEnabled={codexEnabled}
       ampEnabled={ampEnabled}
+      claudeEnabled={claudeEnabled}
+      droidEnabled={droidEnabled}
       runnerDefaultModels={runnerDefaultModels}
     />
   ) : null
