@@ -37,12 +37,14 @@ type TaskActivityPanelProps = {
   showInput?: boolean
   showTaskHeader?: boolean
   showActivityHeader?: boolean
+  compact?: boolean
 }
 
 export function TaskActivityPanel({
   showInput = true,
   showTaskHeader = true,
   showActivityHeader = true,
+  compact = false,
 }: TaskActivityPanelProps) {
   const [codexCustomPrompts, setCodexCustomPrompts] = useState<CodexCustomPromptSnapshot[]>([])
 
@@ -499,6 +501,7 @@ export function TaskActivityPanel({
         className="flex-1 min-h-0 min-w-0"
         showTaskHeader={showTaskHeader}
         showActivityHeader={showActivityHeader}
+        compact={compact}
       />
     </div>
   )

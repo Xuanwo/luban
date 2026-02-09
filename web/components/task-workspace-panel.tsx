@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState, type ComponentType } from "react"
-import { FileCode2, GitBranch, MonitorPlay, TerminalSquare } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react"
+import { FileCode2, FilePlus2, FileMinus2, FileEdit, FileSymlink, GitBranch, MonitorPlay, TerminalSquare } from "lucide-react"
 
+import type { ChangedFileSnapshot, FileChangeStatus, WorkspaceDiffFileSnapshot } from "@/lib/luban-api"
 import { DiffTabPanel, type DiffFileData, type DiffStyle } from "@/components/diff-tab-panel"
 import { PtyTerminal } from "@/components/pty-terminal"
 import { TaskActivityPanel } from "@/components/task-activity-panel"
@@ -18,11 +19,27 @@ type ChangesState = {
   snapshot: WorkspaceChangesSnapshot | null
 }
 
-type DiffState = {
+type SelectedFileDiff = {
+  fileId: string
   loading: boolean
   error: string | null
-  files: DiffFileData[]
+  data: DiffFileData | null
 }
+
+const STATUS_CONFIG: Record<FileChangeStatus, { label: string; color: string; icon: ComponentType<{ className?: string }> }> = {
+  added:    { label: "A", color: "#27ae60", icon: FilePlus2 },
+  modified: { label: "M", color: "#f2994a", icon: FileEdit },
+  deleted:  { label: "D", color: "#eb5757", icon: FileMinus2 },
+  renamed:  { label: "R", color: "#5e6ad2", icon: FileSymlink },
+}
+
+const GROUP_LABELS: Record<string, string> = {
+  committed: "Committed",
+  staged: "Staged",
+  unstaged: "Unstaged",
+}
+
+const GROUP_ORDER = ["staged", "unstaged", "committed"] as const
 
 const TABS: Array<{ key: WorkspaceTab; label: string; icon: ComponentType<{ className?: string }> }> = [
   { key: "agents", label: "Agents", icon: MonitorPlay },
@@ -30,6 +47,111 @@ const TABS: Array<{ key: WorkspaceTab; label: string; icon: ComponentType<{ clas
   { key: "preview", label: "Preview", icon: FileCode2 },
   { key: "terminal", label: "Terminal", icon: TerminalSquare },
 ]
+
+function toDiffFileData(df: WorkspaceDiffFileSnapshot): DiffFileData {
+  return {
+    file: df.file,
+    oldFile: { name: df.old_file.name, contents: df.old_file.contents },
+    newFile: { name: df.new_file.name, contents: df.new_file.contents },
+  }
+}
+
+function ChangesFileList({
+  files,
+  selectedFileId,
+  onSelectFile,
+}: {
+  files: ChangedFileSnapshot[]
+  selectedFileId: string | null
+  onSelectFile: (file: ChangedFileSnapshot) => void
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, ChangedFileSnapshot[]>()
+    for (const file of files) {
+      const group = map.get(file.group) ?? []
+      group.push(file)
+      map.set(file.group, group)
+    }
+    return map
+  }, [files])
+
+  const sortedGroups = useMemo(
+    () => GROUP_ORDER.filter((g) => grouped.has(g)),
+    [grouped],
+  )
+
+  return (
+    <div className="h-full overflow-auto" data-testid="task-workspace-changes-list">
+      {sortedGroups.map((group) => {
+        const groupFiles = grouped.get(group) ?? []
+        return (
+          <div key={group}>
+            <div
+              className="flex items-center gap-2 sticky top-0"
+              style={{
+                padding: '8px 20px 6px',
+                fontSize: '11px',
+                fontWeight: 500,
+                color: '#9b9b9b',
+                letterSpacing: '0.3px',
+                textTransform: 'uppercase',
+                backgroundColor: '#fcfcfc',
+              }}
+            >
+              <span>{GROUP_LABELS[group] ?? group}</span>
+              <span style={{ color: '#c8c8c8' }}>{groupFiles.length}</span>
+            </div>
+            {groupFiles.map((file) => {
+              const sc = STATUS_CONFIG[file.status]
+              const StatusIcon = sc.icon
+              const dir = file.path.includes("/") ? file.path.substring(0, file.path.lastIndexOf("/") + 1) : ""
+              const selected = file.id === selectedFileId
+              return (
+                <div
+                  key={file.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectFile(file)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelectFile(file) }}
+                  className="flex items-center gap-2 cursor-pointer transition-colors"
+                  style={{
+                    padding: '3px 20px',
+                    fontSize: '12px',
+                    backgroundColor: selected ? '#eef0fb' : 'transparent',
+                  }}
+                  onMouseEnter={(e) => { if (!selected) e.currentTarget.style.backgroundColor = '#f7f7f7' }}
+                  onMouseLeave={(e) => { if (!selected) e.currentTarget.style.backgroundColor = 'transparent' }}
+                >
+                  <StatusIcon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: sc.color }} />
+                  <span className="truncate min-w-0 flex-1" style={{ color: '#1b1b1b' }}>
+                    {dir && <span style={{ color: '#9b9b9b' }}>{dir}</span>}
+                    {file.name}
+                  </span>
+                  {(file.additions != null || file.deletions != null) && (
+                    <span className="flex-shrink-0 flex items-center gap-1" style={{ fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace' }}>
+                      {file.additions != null && file.additions > 0 && (
+                        <span style={{ color: '#27ae60' }}>+{file.additions}</span>
+                      )}
+                      {file.deletions != null && file.deletions > 0 && (
+                        <span style={{ color: '#eb5757' }}>−{file.deletions}</span>
+                      )}
+                    </span>
+                  )}
+                  <span
+                    className="flex-shrink-0"
+                    style={{ fontSize: '10px', fontWeight: 600, color: sc.color, width: '12px', textAlign: 'center' }}
+                  >
+                    {sc.label}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 export function TaskWorkspacePanel() {
   const { activeWorkdirId, activeTaskId } = useLuban()
@@ -39,17 +161,22 @@ export function TaskWorkspacePanel() {
     error: null,
     snapshot: null,
   })
-  const [diff, setDiff] = useState<DiffState>({
-    loading: false,
-    error: null,
-    files: [],
-  })
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("split")
+  const [selectedDiff, setSelectedDiff] = useState<SelectedFileDiff | null>(null)
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified")
+  const [topHeightPercent, setTopHeightPercent] = useState(35)
+  const [isDragging, setIsDragging] = useState(false)
+  const splitContainerRef = useRef<HTMLDivElement>(null)
+  const diffCacheRef = useRef<Map<string, DiffFileData>>(new Map())
 
   const scope = `${activeWorkdirId ?? "none"}:${activeTaskId ?? "none"}`
 
   useEffect(() => {
     setActiveTab("agents")
+  }, [scope])
+
+  useEffect(() => {
+    setSelectedDiff(null)
+    diffCacheRef.current.clear()
   }, [scope])
 
   useEffect(() => {
@@ -82,77 +209,190 @@ export function TaskWorkspacePanel() {
     }
   }, [activeTab, activeWorkdirId, changes.error, changes.snapshot?.workdir_id])
 
-  useEffect(() => {
-    if (activeWorkdirId == null) {
-      setDiff({ loading: false, error: null, files: [] })
-      return
-    }
-    if (activeTab !== "preview") return
-    if (diff.files.length > 0 && diff.error == null) return
+  const handleSelectFile = useCallback(
+    (file: ChangedFileSnapshot) => {
+      if (activeWorkdirId == null) return
 
-    let cancelled = false
-    setDiff((prev) => ({ ...prev, loading: true, error: null }))
-    void (async () => {
-      try {
-        const snapshot = await fetchWorkspaceDiff(activeWorkdirId)
-        if (cancelled) return
-        const files: DiffFileData[] = (snapshot.files ?? []).map((file) => ({
-          file: file.file,
-          oldFile: { name: file.old_file.name, contents: file.old_file.contents },
-          newFile: { name: file.new_file.name, contents: file.new_file.contents },
-        }))
-        setDiff({ loading: false, error: null, files })
-      } catch (err) {
-        if (cancelled) return
-        setDiff({
-          loading: false,
-          error: err instanceof Error ? err.message : String(err),
-          files: [],
-        })
+      const cached = diffCacheRef.current.get(file.id)
+      if (cached) {
+        setSelectedDiff({ fileId: file.id, loading: false, error: null, data: cached })
+        return
       }
-    })()
 
-    return () => {
-      cancelled = true
-    }
-  }, [activeTab, activeWorkdirId, diff.error, diff.files.length])
+      setSelectedDiff({ fileId: file.id, loading: true, error: null, data: null })
+
+      void (async () => {
+        try {
+          const snapshot = await fetchWorkspaceDiff(activeWorkdirId)
+          const match = snapshot.files.find((f) => f.file.id === file.id)
+          if (match) {
+            const data = toDiffFileData(match)
+            diffCacheRef.current.set(file.id, data)
+            setSelectedDiff((prev) =>
+              prev?.fileId === file.id ? { fileId: file.id, loading: false, error: null, data } : prev,
+            )
+          } else {
+            setSelectedDiff((prev) =>
+              prev?.fileId === file.id
+                ? { fileId: file.id, loading: false, error: "File not found in diff.", data: null }
+                : prev,
+            )
+          }
+          for (const df of snapshot.files) {
+            if (!diffCacheRef.current.has(df.file.id)) {
+              diffCacheRef.current.set(df.file.id, toDiffFileData(df))
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          setSelectedDiff((prev) =>
+            prev?.fileId === file.id ? { fileId: file.id, loading: false, error: msg, data: null } : prev,
+          )
+        }
+      })()
+    },
+    [activeWorkdirId],
+  )
+
+  const handleResizePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const handleResizePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging || !splitContainerRef.current) return
+      const rect = splitContainerRef.current.getBoundingClientRect()
+      const y = e.clientY - rect.top
+      const pct = Math.min(70, Math.max(20, (y / rect.height) * 100))
+      setTopHeightPercent(pct)
+    },
+    [isDragging],
+  )
+
+  const handleResizePointerUp = useCallback(() => {
+    setIsDragging(false)
+  }, [])
 
   const hasActiveTask = activeWorkdirId != null && activeTaskId != null
 
+  const files = changes.snapshot?.files ?? []
+
   const changesContent = useMemo(() => {
     if (activeWorkdirId == null) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">Select a task first.</div>
+      return (
+        <div className="h-full flex items-center justify-center" style={{ fontSize: '13px', color: '#9b9b9b' }}>
+          Select a task first.
+        </div>
+      )
     }
     if (changes.loading) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">Loading changes...</div>
+      return (
+        <div className="h-full flex items-center justify-center" style={{ fontSize: '13px', color: '#9b9b9b' }}>
+          Loading changes...
+        </div>
+      )
     }
     if (changes.error) {
-      return <div className="px-4 py-3 text-xs text-destructive">{changes.error}</div>
+      return (
+        <div className="h-full flex items-center justify-center" style={{ fontSize: '13px', color: '#eb5757' }}>
+          {changes.error}
+        </div>
+      )
     }
 
-    const files = changes.snapshot?.files ?? []
     if (files.length === 0) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">No code changes.</div>
+      return (
+        <div className="h-full flex flex-col items-center justify-center gap-2" style={{ color: '#9b9b9b' }}>
+          <GitBranch className="w-8 h-8" style={{ color: '#d4d4d4' }} />
+          <span style={{ fontSize: '13px', fontWeight: 500 }}>No changes</span>
+          <span style={{ fontSize: '12px' }}>Working tree is clean.</span>
+        </div>
+      )
     }
 
     return (
-      <div className="h-full overflow-auto px-3 py-2 space-y-2" data-testid="task-workspace-changes-list">
-        {files.map((file) => (
-          <div key={file.id} className="rounded border border-border bg-card px-3 py-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-muted-foreground">{file.group}</span>
-              <span className="text-xs font-medium text-foreground">{file.status.toUpperCase()}</span>
-              <span className="text-xs text-muted-foreground truncate">{file.path}</span>
+      <div ref={splitContainerRef} className="h-full flex flex-col min-h-0">
+        {/* File list */}
+        <div
+          className="min-h-0 shrink-0 overflow-hidden"
+          style={{ height: selectedDiff ? `${topHeightPercent}%` : '100%' }}
+        >
+          <ChangesFileList
+            files={files}
+            selectedFileId={selectedDiff?.fileId ?? null}
+            onSelectFile={handleSelectFile}
+          />
+        </div>
+
+        {/* Resizer + Diff panel */}
+        {selectedDiff && (
+          <>
+            <div
+              className="shrink-0 flex items-center justify-center"
+              style={{
+                height: '6px',
+                cursor: 'row-resize',
+                userSelect: 'none',
+                borderTop: '1px solid #ebebeb',
+              }}
+              onPointerDown={handleResizePointerDown}
+              onPointerMove={handleResizePointerMove}
+              onPointerUp={handleResizePointerUp}
+            >
+              <div
+                style={{
+                  width: '32px',
+                  height: isDragging ? '2px' : '1px',
+                  borderRadius: '1px',
+                  backgroundColor: isDragging ? '#5e6ad2' : '#d4d4d4',
+                  transition: isDragging ? 'none' : 'background-color 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isDragging) e.currentTarget.style.backgroundColor = '#5e6ad2'
+                }}
+                onMouseLeave={(e) => {
+                  if (!isDragging) e.currentTarget.style.backgroundColor = '#d4d4d4'
+                }}
+              />
             </div>
-          </div>
-        ))}
+
+            <div
+              className="flex-1 min-h-0 overflow-hidden"
+              style={isDragging ? { pointerEvents: 'none' } : undefined}
+            >
+              {selectedDiff.loading ? (
+                <div className="h-full flex items-center justify-center" style={{ fontSize: '12px', color: '#9b9b9b' }}>
+                  Loading diff...
+                </div>
+              ) : selectedDiff.error ? (
+                <div className="h-full flex items-center justify-center" style={{ fontSize: '12px', color: '#eb5757' }}>
+                  {selectedDiff.error}
+                </div>
+              ) : selectedDiff.data ? (
+                <DiffTabPanel
+                  isLoading={false}
+                  error={null}
+                  files={[selectedDiff.data]}
+                  activeFileId={selectedDiff.fileId}
+                  diffStyle={diffStyle}
+                  onStyleChange={setDiffStyle}
+                />
+              ) : null}
+            </div>
+          </>
+        )}
       </div>
     )
-  }, [activeWorkdirId, changes.error, changes.loading, changes.snapshot?.files])
+  }, [activeWorkdirId, changes.error, changes.loading, files, selectedDiff, topHeightPercent, isDragging, diffStyle, handleSelectFile, handleResizePointerDown, handleResizePointerMove, handleResizePointerUp])
 
   return (
     <div className="h-full min-h-0 flex flex-col border-l border-border bg-background" data-testid="task-workspace-panel">
-      <div className="px-3 py-2 border-b border-border flex items-center gap-1 overflow-x-auto">
+      <div
+        className="flex items-center gap-4 px-5 overflow-x-auto flex-shrink-0"
+        style={{ height: '39px', borderBottom: '1px solid #ebebeb' }}
+      >
         {TABS.map((tab) => {
           const Icon = tab.icon
           const active = activeTab === tab.key
@@ -162,11 +402,14 @@ export function TaskWorkspacePanel() {
               type="button"
               data-testid={`task-workspace-tab-${tab.key}`}
               onClick={() => setActiveTab(tab.key)}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border ${
-                active
-                  ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-                  : "border-transparent bg-transparent text-zinc-600 hover:bg-zinc-100"
-              }`}
+              className="shrink-0 inline-flex items-center gap-1.5 h-full transition-colors"
+              style={{
+                fontSize: '12px',
+                fontWeight: active ? 500 : 400,
+                color: active ? '#1b1b1b' : '#6b6b6b',
+                borderBottom: active ? '2px solid #5e6ad2' : '2px solid transparent',
+                marginBottom: '-1px',
+              }}
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{tab.label}</span>
@@ -181,24 +424,21 @@ export function TaskWorkspacePanel() {
             Select a task to view workspace details.
           </div>
         ) : activeTab === "agents" ? (
-          <div className="h-full min-h-0 overflow-hidden">
+          <div className="h-full min-h-0 overflow-hidden flex flex-col">
             <TaskActivityPanel
               showInput={false}
               showTaskHeader={false}
               showActivityHeader={false}
+              compact
             />
           </div>
         ) : activeTab === "changes" ? (
           changesContent
         ) : activeTab === "preview" ? (
-          <div className="h-full min-h-0 overflow-hidden">
-            <DiffTabPanel
-              isLoading={diff.loading}
-              error={diff.error}
-              files={diff.files}
-              diffStyle={diffStyle}
-              onStyleChange={setDiffStyle}
-            />
+          <div className="h-full flex flex-col items-center justify-center gap-2" style={{ color: '#9b9b9b' }}>
+            <FileCode2 className="w-8 h-8" style={{ color: '#d4d4d4' }} />
+            <span style={{ fontSize: '13px', fontWeight: 500 }}>Preview</span>
+            <span style={{ fontSize: '12px' }}>This feature is under development.</span>
           </div>
         ) : (
           <div className="h-full px-3 py-3">
