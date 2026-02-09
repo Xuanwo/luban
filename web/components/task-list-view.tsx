@@ -77,7 +77,7 @@ function TaskRow({
   const isArchived = task.status === "done" || task.status === "canceled"
   return (
     <div
-      onClick={isArchived ? undefined : onClick}
+      onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       data-task-row-id={task.id}

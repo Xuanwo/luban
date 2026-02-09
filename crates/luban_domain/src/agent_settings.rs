@@ -149,6 +149,7 @@ mod tests {
 
     #[test]
     fn agent_model_label_still_works_for_codex_models() {
+        assert_eq!(agent_model_label("gpt-5.3-codex"), Some("GPT-5.3-Codex"));
         assert_eq!(agent_model_label("gpt-5.2-codex"), Some("GPT-5.2-Codex"));
         assert_eq!(agent_model_label("gpt-5.2"), Some("GPT-5.2"));
     }
@@ -166,6 +167,10 @@ mod tests {
         assert!(!model_valid_for_runner(
             AgentRunnerKind::Codex,
             "nonexistent-model"
+        ));
+        assert!(model_valid_for_runner(
+            AgentRunnerKind::Codex,
+            "gpt-5.2-codex"
         ));
         assert!(model_valid_for_runner(
             AgentRunnerKind::Droid,
