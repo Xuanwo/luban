@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Terminal } from "lucide-react"
 
 import { ChatComposer } from "@/components/chat-composer"
+import { TiptapMarkdownEditor } from "@/components/tiptap-markdown-editor"
+import { TaskStatusSelector } from "@/components/shared/task-status-selector"
+import { OpenButton } from "@/components/shared/open-button"
 import type { ComposerAttachment } from "@/components/shared/message-editor"
 import { attachmentHref } from "@/lib/attachment-href"
 import { buildMessages } from "@/lib/conversation-ui"
@@ -90,30 +93,6 @@ function documentEditPrompt(path: string): string {
   ].join("\n")
 }
 
-function toLineNumber(content: string, index: number): number {
-  return content.slice(0, index).split("\n").length
-}
-
-function computeSelection(content: string, start: number, end: number): DocumentSelection | null {
-  if (end <= start) return null
-  const selected = content.slice(start, end)
-  if (selected.trim().length === 0) return null
-  const maxLen = 1200
-  return {
-    start,
-    end,
-    startLine: toLineNumber(content, start),
-    endLine: toLineNumber(content, end),
-    text: selected.length > maxLen ? `${selected.slice(0, maxLen)}\n...[truncated]` : selected,
-  }
-}
-
-function autosizeTextarea(textarea: HTMLTextAreaElement | null) {
-  if (!textarea) return
-  textarea.style.height = "0px"
-  textarea.style.height = `${Math.max(180, textarea.scrollHeight)}px`
-}
-
 function sectionReviewPrompt(args: {
   path: string
   title: string
@@ -162,6 +141,7 @@ export function TaskDocumentPanel() {
     setThinkingEffort,
     setChatRunner,
     setChatAmpMode,
+    setTaskStatus,
   } = useLuban()
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -171,11 +151,7 @@ export function TaskDocumentPanel() {
   const [commentDraft, setCommentDraft] = useState("")
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [codexCustomPrompts, setCodexCustomPrompts] = useState<CodexCustomPromptSnapshot[]>([])
-  const editorRefs = useRef<Record<TaskDocumentKind, HTMLTextAreaElement | null>>({
-    task: null,
-    plan: null,
-    memory: null,
-  })
+  const [actionZoneVisible, setActionZoneVisible] = useState(true)
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const inlineCommentInputRef = useRef<HTMLTextAreaElement | null>(null)
   const attachmentScopeRef = useRef<string>("")
@@ -275,12 +251,6 @@ export function TaskDocumentPanel() {
   }, [app?.rev])
 
   useEffect(() => {
-    for (const kind of ORDER) {
-      autosizeTextarea(editorRefs.current[kind])
-    }
-  }, [documents])
-
-  useEffect(() => {
     if (activeWorkdirId == null || activeTaskId == null) return undefined
     return subscribeServerEvents((event) => {
       if (event.type !== "task_document_changed") return
@@ -288,6 +258,16 @@ export function TaskDocumentPanel() {
       void reloadDocuments(true)
     })
   }, [activeTaskId, activeWorkdirId, reloadDocuments, subscribeServerEvents])
+
+  useEffect(() => {
+    const el = surfaceRef.current
+    if (!el) return
+    const onScroll = () => {
+      setActionZoneVisible(el.scrollTop <= 0)
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    return () => el.removeEventListener("scroll", onScroll)
+  }, [scope])
 
   const updateDraft = useCallback((kind: TaskDocumentKind, draft: string) => {
     setDocuments((prev) => {
@@ -305,48 +285,58 @@ export function TaskDocumentPanel() {
     })
   }, [])
 
-  const updateSelection = useCallback(
-    (kind: TaskDocumentKind, textarea: HTMLTextAreaElement) => {
-      setInlineComment(null)
-      const nextSelection = computeSelection(
-        textarea.value,
-        textarea.selectionStart ?? 0,
-        textarea.selectionEnd ?? 0,
-      )
-      if (!nextSelection) {
+  const handleTiptapSelectionChange = useCallback(
+    (kind: TaskDocumentKind, info: {
+      text: string
+      startLine: number
+      endLine: number
+      from: number
+      to: number
+      editorElement: HTMLElement
+    } | null) => {
+      if (!info) {
         setActiveSelection((prev) => (prev?.kind === kind ? null : prev))
+        if (inlineComment?.kind === kind) setInlineComment(null)
         return
+      }
+
+      const selection: DocumentSelection = {
+        start: info.from,
+        end: info.to,
+        startLine: info.startLine,
+        endLine: info.endLine,
+        text: info.text,
       }
 
       const surface = surfaceRef.current
-      if (!surface) {
-        setActiveSelection({
-          kind,
-          selection: nextSelection,
-          toolbarTop: 8,
-          toolbarLeft: 8,
-        })
-        return
+      let top = 8
+      let left = 8
+      if (surface) {
+        const surfaceRect = surface.getBoundingClientRect()
+        const editorRect = info.editorElement.getBoundingClientRect()
+        const sel = window.getSelection()
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0)
+          const rects = range.getClientRects()
+          if (rects.length > 0) {
+            const lastRect = rects[rects.length - 1]
+            top = Math.max(8, lastRect.bottom - surfaceRect.top + 4)
+            left = Math.max(8, Math.min(lastRect.left - surfaceRect.left, surface.clientWidth - 360))
+          } else {
+            top = Math.max(8, editorRect.top - surfaceRect.top + 24)
+            left = Math.max(8, editorRect.left - surfaceRect.left + 40)
+          }
+        }
       }
-
-      const surfaceRect = surface.getBoundingClientRect()
-      const textareaRect = textarea.getBoundingClientRect()
-      const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20
-      const lineIndex = Math.max(0, toLineNumber(textarea.value, nextSelection.start) - 1)
-      const lineOffset = Math.max(0, lineIndex * lineHeight - textarea.scrollTop)
-      const rawTop = textareaRect.top - surfaceRect.top + lineOffset - 40
-      const rawLeft = textareaRect.left - surfaceRect.left + 12
-      const top = Math.max(8, rawTop)
-      const left = Math.max(8, Math.min(rawLeft, Math.max(8, surface.clientWidth - 160)))
 
       setActiveSelection({
         kind,
-        selection: nextSelection,
+        selection,
         toolbarTop: top,
         toolbarLeft: left,
       })
     },
-    [],
+    [inlineComment?.kind],
   )
 
   const saveDirtyDocuments = useCallback(
@@ -423,6 +413,17 @@ export function TaskDocumentPanel() {
     },
     [activeTaskId, activeWorkdirId, documents, sendAgentMessageTo],
   )
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault()
+        void saveDirtyDocuments()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [saveDirtyDocuments])
 
   const bindSelectionToComment = useCallback(() => {
     if (!activeSelection) return
@@ -580,139 +581,246 @@ export function TaskDocumentPanel() {
     setCommentDraft(cmd.contents)
   }, [codexCustomPrompts])
 
+
+
   if (activeWorkdirId == null || activeTaskId == null) {
     return (
-      <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+      <div className="h-full flex items-center justify-center" style={{ fontSize: '13px', color: '#6b6b6b' }}>
         Select a task to view documents.
       </div>
     )
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col border-r border-border bg-background" data-testid="task-document-panel">
-      <div className="flex-1 min-h-0 overflow-auto" onScroll={() => {
-        setActiveSelection(null)
-        setInlineComment(null)
-      }}>
-        <div className="relative max-w-4xl mx-auto px-5 py-4">
-          {(hasUnsavedChanges || isSavingAny || hasErrors) && (
-            <div className="pointer-events-none absolute right-5 top-4 z-30" data-testid="task-document-save-area">
-              <button
-                type="button"
-                onClick={() => void saveDirtyDocuments()}
-                disabled={!hasUnsavedChanges || isSavingAny}
-                data-testid="task-document-save-check"
-                className="pointer-events-auto h-8 px-3 rounded-full border border-border bg-background/95 text-[12px] shadow-sm backdrop-blur hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Save document edits"
-              >
-                {isSavingAny ? "Saving..." : hasErrors ? "Save (Retry)" : "Save"}
-              </button>
-            </div>
-          )}
-          {loading && <div className="text-xs text-muted-foreground">Loading documents...</div>}
-          {!loading && loadError && <div className="text-xs text-destructive">{loadError}</div>}
-
-          {!loading && !loadError && (
-            <div ref={surfaceRef} className="relative" data-testid="task-document-surface">
-              {activeSelection && (
-                <div
-                  className="absolute z-20 rounded-xl bg-zinc-900 text-zinc-100 shadow-2xl px-2 py-1 flex items-center gap-2"
-                  style={{ top: activeSelection.toolbarTop, left: activeSelection.toolbarLeft }}
-                  data-testid="task-document-selection-toolbar"
-                >
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={bindSelectionToComment}
-                    data-testid="task-document-selection-toolbar-comment"
-                    className="text-[12px] px-2 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700"
-                  >
-                    Comment
-                  </button>
-                  <span className="text-[10px] text-zinc-300">
-                    {TITLES[activeSelection.kind]}:{activeSelection.selection.startLine}-{activeSelection.selection.endLine}
-                  </span>
-                </div>
-              )}
-              {inlineComment && (
-                <div
-                  className="absolute z-30 w-[340px] rounded-2xl border border-zinc-300 bg-background p-3 shadow-[0_16px_32px_rgba(0,0,0,0.18)]"
-                  style={{ top: inlineComment.top, left: inlineComment.left }}
-                  data-testid="task-document-inline-comment"
-                >
-                  <div className="mb-2 text-[11px] text-zinc-600">
-                    {TITLES[inlineComment.kind]} lines {inlineComment.selection.startLine}-{inlineComment.selection.endLine}
-                  </div>
-                  <textarea
-                    ref={inlineCommentInputRef}
-                    value={inlineComment.draft}
-                    onChange={(e) =>
-                      setInlineComment((prev) => (prev ? { ...prev, draft: e.target.value } : prev))
-                    }
-                    data-testid="task-document-inline-comment-input"
-                    placeholder="Write inline review comment..."
-                    className="w-full min-h-[92px] resize-y rounded-xl border border-border bg-background px-3 py-2 text-[14px] leading-6 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-                  />
-                  <div className="mt-2 flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setInlineComment(null)}
-                      data-testid="task-document-inline-comment-cancel"
-                      className="h-7 px-2 rounded-md border border-border bg-background text-[12px] hover:bg-muted"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={sendInlineComment}
-                      disabled={inlineComment.draft.trim().length === 0 || inlineComment.isSending}
-                      data-testid="task-document-inline-comment-submit"
-                      className="text-[12px] w-7 h-7 rounded-full border border-border bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Submit inline review comment"
-                    >
-                      {inlineComment.isSending ? "…" : "✓"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div
-                className="rounded-2xl border border-border bg-background shadow-[0_1px_0_rgba(0,0,0,0.02)]"
-                data-testid="task-document-connected-sections"
-              >
-                {ordered.map((doc, index) => (
-                  <section
-                    key={doc.snapshot.kind}
-                    className={index === 0 ? "" : "border-t border-border/70"}
-                    data-testid={`task-document-section-${doc.snapshot.kind}`}
-                  >
-                    <div className="px-5 pt-4 pb-1 flex items-center gap-2">
-                      <h3 className="text-[12px] font-semibold tracking-wide text-zinc-500">{TITLES[doc.snapshot.kind]}</h3>
-                      <code className="text-[10px] text-zinc-400 truncate">{doc.snapshot.rel_path}</code>
-                    </div>
-                    <textarea
-                      ref={(el) => {
-                        editorRefs.current[doc.snapshot.kind] = el
-                      }}
-                      value={doc.draft}
-                      onChange={(e) => updateDraft(doc.snapshot.kind, e.target.value)}
-                      onInput={(e) => autosizeTextarea(e.currentTarget)}
-                      onSelect={(e) => updateSelection(doc.snapshot.kind, e.currentTarget)}
-                      onMouseUp={(e) => updateSelection(doc.snapshot.kind, e.currentTarget)}
-                      onKeyUp={(e) => updateSelection(doc.snapshot.kind, e.currentTarget)}
-                      data-testid={`task-document-editor-${doc.snapshot.kind}`}
-                      className="w-full min-h-[220px] resize-none border-0 bg-background px-5 pb-4 text-[15px] font-normal leading-8 text-zinc-800 focus:outline-none focus:ring-0"
-                      spellCheck={false}
-                    />
-                    {doc.error && <p className="px-5 pb-3 text-xs text-destructive">{doc.error}</p>}
-                  </section>
-                ))}
-              </div>
-            </div>
-          )}
+    <div className="h-full min-h-0 flex flex-col" style={{ backgroundColor: '#fcfcfc' }} data-testid="task-document-panel">
+      {/* Collapsible action zone */}
+      <div
+        className="shrink-0 overflow-hidden"
+        style={{
+          maxHeight: actionZoneVisible ? '48px' : '0px',
+          opacity: actionZoneVisible ? 1 : 0,
+          transition: 'max-height 0.2s ease, opacity 0.15s ease',
+          borderBottom: actionZoneVisible ? '1px solid #ebebeb' : '1px solid transparent',
+        }}
+        data-testid="task-document-action-zone"
+      >
+        <div
+          className="flex items-center gap-3"
+          style={{ padding: '10px 20px' }}
+        >
+          <TaskStatusSelector
+            status={conversation?.task_status ?? "todo"}
+            onStatusChange={(status) => {
+              if (activeWorkdirId == null || activeTaskId == null) return
+              setTaskStatus(activeWorkdirId, activeTaskId, status)
+            }}
+            variant="pill"
+            triggerTestId="task-document-status-trigger"
+          />
+          <div className="flex-1" />
+          <OpenButton />
         </div>
       </div>
-      <div className="shrink-0 border-t border-border bg-background" data-testid="task-document-fixed-comment">
+
+      {/* Scrollable document surface */}
+      <div className="flex-1 min-h-0 relative">
+        <div
+          ref={surfaceRef}
+          className="h-full overflow-auto relative"
+          data-testid="task-document-surface"
+        >
+        <div style={{ padding: '16px 28px 60px' }}>
+          {loading && (
+            <div style={{ fontSize: '13px', color: '#6b6b6b', padding: '40px 0' }}>Loading documents...</div>
+          )}
+          {!loading && loadError && (
+            <div style={{ fontSize: '13px', color: '#eb5757', padding: '40px 0' }}>{loadError}</div>
+          )}
+
+          {!loading && !loadError && ordered.map((doc, index) => {
+            const kind = doc.snapshot.kind
+            const unsaved = hasLocalUnsavedEdit(doc)
+
+            return (
+              <section
+                key={kind}
+                data-testid={`task-document-section-${kind}`}
+                style={index > 0 ? { marginTop: '24px' } : undefined}
+              >
+                {/* Section header */}
+                <div
+                  className="group/header flex items-center gap-1.5"
+                  style={{
+                    marginBottom: '8px',
+                  }}
+                >
+                  <span style={{ fontSize: '11px', fontWeight: 500, letterSpacing: '0.3px', color: '#9b9b9b', textTransform: 'uppercase' }}>
+                    {TITLES[kind]}
+                  </span>
+                  {unsaved && (
+                    <span
+                      data-testid={`task-document-unsaved-${kind}`}
+                      style={{
+                        display: 'inline-block',
+                        width: '5px',
+                        height: '5px',
+                        borderRadius: '50%',
+                        backgroundColor: '#5e6ad2',
+                      }}
+                    />
+                  )}
+                  {doc.isSaving && (
+                    <span style={{ fontSize: '11px', color: '#6b6b6b' }}>Saving...</span>
+                  )}
+                </div>
+
+                {/* TipTap WYSIWYG editor - seamless inline editing */}
+                <div
+                  data-testid={`task-document-editor-${kind}`}
+                  style={{ minHeight: '24px' }}
+                >
+                  <TiptapMarkdownEditor
+                    content={doc.draft}
+                    onChange={(md) => updateDraft(kind, md)}
+                    onSelectionChange={(info) => handleTiptapSelectionChange(kind, info)}
+                    placeholder={`Start writing ${TITLES[kind]}...`}
+                    data-testid={`task-document-rendered-${kind}`}
+                  />
+                </div>
+
+                {doc.error && (
+                  <div style={{ fontSize: '12px', color: '#eb5757', marginTop: '4px' }}>{doc.error}</div>
+                )}
+              </section>
+            )
+          })}
+        </div>
+
+        {/* Selection toolbar */}
+        {activeSelection && !inlineComment && (
+          <div
+            className="absolute z-20 flex items-center gap-2"
+            style={{
+              top: activeSelection.toolbarTop,
+              left: activeSelection.toolbarLeft,
+              border: '1px solid #ebebeb',
+              borderRadius: '4px',
+              backgroundColor: '#fcfcfc',
+              boxShadow: 'rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px',
+              padding: '4px 8px',
+            }}
+            data-testid="task-document-selection-toolbar"
+          >
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={bindSelectionToComment}
+              data-testid="task-document-selection-toolbar-comment"
+              className="transition-colors"
+              style={{ fontSize: '12px', fontWeight: 500, color: '#5e6ad2' }}
+            >
+              Comment
+            </button>
+            <span style={{ fontSize: '11px', color: '#9b9b9b' }}>
+              L{activeSelection.selection.startLine}–{activeSelection.selection.endLine}
+            </span>
+          </div>
+        )}
+
+        {/* Inline comment popover */}
+        {inlineComment && (
+          <div
+            className="absolute z-30"
+            style={{
+              top: inlineComment.top,
+              left: inlineComment.left,
+              width: '320px',
+              border: '1px solid #ebebeb',
+              borderRadius: '4px',
+              backgroundColor: '#fcfcfc',
+              boxShadow: 'rgba(0,0,0,0.022) 0px 3px 6px -2px, rgba(0,0,0,0.044) 0px 1px 1px 0px',
+              padding: '10px 12px',
+            }}
+            data-testid="task-document-inline-comment"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <span style={{ fontSize: '11px', color: '#6b6b6b' }}>
+                {TITLES[inlineComment.kind]} L{inlineComment.selection.startLine}–{inlineComment.selection.endLine}
+              </span>
+            </div>
+            <textarea
+              ref={inlineCommentInputRef}
+              value={inlineComment.draft}
+              onChange={(e) =>
+                setInlineComment((prev) => (prev ? { ...prev, draft: e.target.value } : prev))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  sendInlineComment()
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  setInlineComment(null)
+                }
+              }}
+              data-testid="task-document-inline-comment-input"
+              placeholder="Review comment... (⌘↵ to send)"
+              className="w-full resize-none focus:outline-none"
+              style={{
+                minHeight: '60px',
+                fontSize: '13px',
+                lineHeight: '20px',
+                color: '#1b1b1b',
+                border: '1px solid #ebebeb',
+                borderRadius: '4px',
+                padding: '6px 8px',
+                backgroundColor: '#fcfcfc',
+              }}
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setInlineComment(null)}
+                data-testid="task-document-inline-comment-cancel"
+                className="transition-colors"
+                style={{ fontSize: '11px', color: '#6b6b6b' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={sendInlineComment}
+                disabled={inlineComment.draft.trim().length === 0 || inlineComment.isSending}
+                data-testid="task-document-inline-comment-submit"
+                className="transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  color: '#ffffff',
+                  backgroundColor: '#5e6ad2',
+                  borderRadius: '4px',
+                  padding: '3px 10px',
+                }}
+                title="Submit inline review comment"
+              >
+                {inlineComment.isSending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+        <div
+          className="pointer-events-none absolute bottom-0 left-0 right-0"
+          style={{
+            height: '40px',
+            background: 'linear-gradient(to bottom, transparent, #fcfcfc)',
+          }}
+        />
+      </div>
+
+      {/* Bottom comment bar */}
+      <div className="shrink-0" data-testid="task-document-fixed-comment">
         <div className="px-3 py-2">
           <ChatComposer
             value={commentDraft}
@@ -744,7 +852,7 @@ export function TaskDocumentPanel() {
             commands={codexCustomPrompts}
             messageHistory={messageHistory}
             onCommand={handleCommand}
-            placeholder="Let's chart the cosmos of ideas..."
+            placeholder="Review comment or instruction to agent..."
             attachmentsEnabled
             agentSelectorEnabled
             disabled={activeWorkdirId == null || activeTaskId == null}

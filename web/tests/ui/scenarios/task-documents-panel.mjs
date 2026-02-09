@@ -6,20 +6,21 @@ export async function runTaskDocumentsPanel({ page }) {
   await page.getByTestId('chat-scroll-container').waitFor({ state: 'visible' });
   const panel = page.getByTestId('task-document-panel');
   await panel.waitFor({ state: 'visible' });
-  await panel.getByTestId('task-document-connected-sections').waitFor({ state: 'visible' });
   await panel.getByTestId('task-document-section-task').waitFor({ state: 'visible' });
   await panel.getByTestId('task-document-section-plan').waitFor({ state: 'visible' });
   await panel.getByTestId('task-document-section-memory').waitFor({ state: 'visible' });
+  await panel.getByTestId('task-document-rendered-task').waitFor({ state: 'visible' });
   await panel.getByTestId('task-document-fixed-comment').waitFor({ state: 'visible' });
   const fixedCommentInput = panel.getByTestId('chat-input');
   await fixedCommentInput.waitFor({ state: 'visible' });
   const placeholder = await fixedCommentInput.getAttribute('placeholder');
-  if (placeholder !== "Let's chart the cosmos of ideas...") {
+  if (placeholder !== "Review comment or instruction to agent...") {
     throw new Error(`unexpected task document comment placeholder: ${placeholder ?? '<null>'}`);
   }
   await panel.getByTestId('chat-attach').waitFor({ state: 'visible' });
   await panel.getByTestId('agent-selector').waitFor({ state: 'visible' });
 
+  // TipTap editor is always visible (seamless WYSIWYG) — click to focus, then select all
   const taskEditor = panel.getByTestId('task-document-editor-task');
   await taskEditor.waitFor({ state: 'visible' });
   await taskEditor.click();
