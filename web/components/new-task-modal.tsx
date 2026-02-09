@@ -57,6 +57,7 @@ function buildFallbackAvatarUrl(displayName: string, size: number): string {
 interface NewTaskModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onTaskCreated?: () => void
   activeProjectId?: string | null
   initialDraft?: NewTaskDraft | null
 }
@@ -73,7 +74,7 @@ function normalizePathLike(raw: string): string {
   return raw.trim().replace(/\/+$/, "")
 }
 
-export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft }: NewTaskModalProps) {
+export function NewTaskModal({ open, onOpenChange, onTaskCreated, activeProjectId, initialDraft }: NewTaskModalProps) {
   const {
     app,
     executeTask,
@@ -549,6 +550,7 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
       setAttachments([])
       setEditingDraftId(null)
       void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
+      onTaskCreated?.()
       onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))

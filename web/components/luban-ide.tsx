@@ -243,7 +243,11 @@ export function LubanIDE() {
         onOpenChange={(open) => {
           setNewTaskOpen(open)
           if (!open) setNewTaskInitialDraft(null)
-          if (!open) setShowDetail(true)
+        }}
+        onTaskCreated={() => {
+          setSelectedTask(null)
+          setActiveView("tasks")
+          setShowDetail(true)
         }}
       />
     </>
