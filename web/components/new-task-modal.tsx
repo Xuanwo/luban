@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 
 import { useLuban } from "@/lib/luban-context"
-import type { AttachmentRef, TaskExecuteMode, ThinkingEffort } from "@/lib/luban-api"
+import type { AgentRunnerKind, AttachmentRef, TaskExecuteMode, ThinkingEffort } from "@/lib/luban-api"
 import { draftKey } from "@/lib/ui-prefs"
 import { focusChatInput } from "@/lib/focus-chat-input"
 import { uploadAttachment } from "@/lib/luban-http"
@@ -30,11 +30,10 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import type { AppSnapshot } from "@/lib/luban-api"
 import { AGENT_MODELS, DROID_MODELS, supportedThinkingEffortsForModel } from "@/lib/agent-settings"
-import { agentModelLabel, thinkingEffortLabel } from "@/lib/conversation-ui"
+import { AgentSelector, type AmpMode } from "@/components/shared/agent-selector"
 
 function escapeXmlText(raw: string): string {
   return raw
@@ -96,6 +95,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
   const [isExpanded, setIsExpanded] = useState(false)
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [selectedThinkingEffort, setSelectedThinkingEffort] = useState<ThinkingEffort | null>(null)
+  const [selectedRunner, setSelectedRunner] = useState<AgentRunnerKind | null>(null)
+  const [selectedAmpMode, setSelectedAmpMode] = useState<AmpMode>(null)
   const [projectSearch, setProjectSearch] = useState("")
   const [workdirSearch, setWorkdirSearch] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -144,14 +145,14 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     return projectOptions[0]?.id ?? ""
   }, [activeProjectId, activeWorkdirId, projectOptions])
 
-  // Reason: Resolve the actual default model the backend would pick for a
-  // new task so the selector shows a concrete model name instead of "Default".
+  const effectiveProjectId = selectedProjectId || defaultProjectId || ""
+
+  // Reason: Resolve the actual default model so the AgentSelector shows
+  // the full display (e.g. "GPT-5.3-Codex · High") from the start.
   const resolvedDefaultModelId = useMemo(() => {
     const agent = app?.agent
     if (!agent) return AGENT_MODELS[0]?.id ?? null
     const runner = agent.default_runner ?? "codex"
-    // Reason: Mirror the Rust resolve_default_model_for_runner logic:
-    // per-runner override -> global default -> catalog first entry.
     const perRunner = agent.runner_default_models?.[runner]
     if (perRunner) return perRunner
     const globalDefault = agent.default_model_id
@@ -160,53 +161,15 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     return catalog[0]?.id ?? null
   }, [app?.agent])
 
-  // Reason: Build the available model options grouped by runner, filtered
-  // to only runners that are currently enabled in agent settings.
-  const modelGroups = useMemo(() => {
-    const groups: { runner: string; label: string; models: { id: string; label: string }[] }[] = []
-    const codexEnabled = app?.agent?.codex_enabled ?? true
-    const droidEnabled = app?.agent?.droid_enabled ?? false
-    if (codexEnabled) {
-      groups.push({
-        runner: "codex",
-        label: "Codex",
-        models: AGENT_MODELS.map((m) => ({ id: m.id, label: m.label })),
-      })
-    }
-    if (droidEnabled) {
-      // Reason: Filter out models already shown under Codex to avoid
-      // duplicate entries in the dropdown.
-      const codexIds = new Set(AGENT_MODELS.map((m) => m.id))
-      const droidOnly = DROID_MODELS.filter((m) => !codexIds.has(m.id))
-      if (droidOnly.length > 0) {
-        groups.push({
-          runner: "droid",
-          label: "Droid",
-          models: droidOnly.map((m) => ({ id: m.id, label: m.label })),
-        })
-      }
-    }
-    return groups
-  }, [app?.agent?.codex_enabled, app?.agent?.droid_enabled])
-
   const effectiveModelId = selectedModelId ?? resolvedDefaultModelId
 
-  // Reason: Compute available thinking efforts for the effective model.
-  // Droid models return an empty array, hiding the reasoning selector entirely.
-  const availableEfforts = useMemo(() => {
-    return supportedThinkingEffortsForModel(effectiveModelId)
-  }, [effectiveModelId])
-
-  // Reason: Resolve the default thinking effort from agent settings so the
-  // selector shows the actual default when no override has been chosen.
   const resolvedDefaultThinkingEffort = useMemo((): ThinkingEffort | null => {
-    if (availableEfforts.length === 0) return null
+    const efforts = supportedThinkingEffortsForModel(effectiveModelId)
+    if (efforts.length === 0) return null
     const agentDefault = app?.agent?.default_thinking_effort
-    if (agentDefault && availableEfforts.includes(agentDefault)) return agentDefault
-    return availableEfforts.includes("high") ? "high" : availableEfforts[0] ?? null
-  }, [app?.agent?.default_thinking_effort, availableEfforts])
-
-  const effectiveProjectId = selectedProjectId || defaultProjectId || ""
+    if (agentDefault && efforts.includes(agentDefault)) return agentDefault
+    return efforts.includes("high") ? "high" : efforts[0] ?? null
+  }, [app?.agent?.default_thinking_effort, effectiveModelId])
 
   const pickDefaultWorkdirIdForProjectId = useCallback(
     (projectId: string): number | null => {
@@ -258,6 +221,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     setWorkdirSearch("")
     setSelectedModelId(null)
     setSelectedThinkingEffort(null)
+    setSelectedRunner(null)
+    setSelectedAmpMode(null)
     hasUserEditedRef.current = false
     setInput("")
     setEditingDraftId(null)
@@ -618,6 +583,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
       setAttachments([])
       setSelectedModelId(null)
       setSelectedThinkingEffort(null)
+      setSelectedRunner(null)
+      setSelectedAmpMode(null)
       setEditingDraftId(null)
       void clearNewTaskStash().catch((err) => console.warn("clearNewTaskStash failed", err))
       onOpenChange(false)
@@ -637,6 +604,8 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
     setSelectedWorkdirId(null)
     setSelectedModelId(null)
     setSelectedThinkingEffort(null)
+    setSelectedRunner(null)
+    setSelectedAmpMode(null)
     setEditingDraftId(null)
     onOpenChange(false)
   }, [attachments, onOpenChange])
@@ -1105,94 +1074,28 @@ export function NewTaskModal({ open, onOpenChange, activeProjectId, initialDraft
               <Paperclip className="w-4 h-4" />
             </button>
 
-            {modelGroups.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    data-testid="new-task-model-selector"
-                    className="h-7 px-2 flex items-center gap-1 text-[12px] hover:bg-[#f5f5f5] transition-colors"
-                    style={{ color: "#666", borderRadius: "5px" }}
-                    disabled={executingMode != null}
-                  >
-                    <span className="truncate max-w-[140px]">
-                      {agentModelLabel(selectedModelId ?? resolvedDefaultModelId)}
-                    </span>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 opacity-60">
-                      <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="min-w-[180px]">
-                  {modelGroups.map((group, gi) => (
-                    <div key={group.runner}>
-                      {gi > 0 && <DropdownMenuSeparator />}
-                      <div className="px-2 py-1 text-[11px] text-[#999] font-medium">{group.label}</div>
-                      {group.models.map((m) => {
-                        const isSelected = selectedModelId
-                          ? selectedModelId === m.id
-                          : resolvedDefaultModelId === m.id
-                        return (
-                          <DropdownMenuItem
-                            key={m.id}
-                            data-testid={`new-task-model-${m.id}`}
-                            onSelect={() => {
-                              setSelectedModelId(m.id)
-                              // Reason: Reset thinking effort when model changes because
-                              // available efforts may differ (e.g. Droid has none).
-                              setSelectedThinkingEffort(null)
-                            }}
-                          >
-                            <span className="flex items-center gap-2">
-                              {m.label}
-                              {isSelected && <Check className="w-3 h-3 text-[#5e6ad2]" />}
-                            </span>
-                          </DropdownMenuItem>
-                        )
-                      })}
-                    </div>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-
-            {availableEfforts.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    data-testid="new-task-effort-selector"
-                    className="h-7 px-2 flex items-center gap-1 text-[12px] hover:bg-[#f5f5f5] transition-colors"
-                    style={{ color: "#666", borderRadius: "5px" }}
-                    disabled={executingMode != null}
-                  >
-                    <span className="truncate max-w-[80px]">
-                      {thinkingEffortLabel(selectedThinkingEffort ?? resolvedDefaultThinkingEffort)}
-                    </span>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 opacity-60">
-                      <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="min-w-[120px]">
-                  {availableEfforts.map((effort) => {
-                    const isSelected = selectedThinkingEffort
-                      ? selectedThinkingEffort === effort
-                      : resolvedDefaultThinkingEffort === effort
-                    return (
-                      <DropdownMenuItem
-                        key={effort}
-                        data-testid={`new-task-effort-${effort}`}
-                        onSelect={() => setSelectedThinkingEffort(effort)}
-                      >
-                        <span className="flex items-center gap-2">
-                          {thinkingEffortLabel(effort)}
-                          {isSelected && <Check className="w-3 h-3 text-[#5e6ad2]" />}
-                        </span>
-                      </DropdownMenuItem>
-                    )
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            <AgentSelector
+              testId="new-task-agent-selector"
+              dropdownPosition="top"
+              disabled={executingMode != null}
+              modelId={effectiveModelId}
+              thinkingEffort={selectedThinkingEffort ?? resolvedDefaultThinkingEffort}
+              defaultModelId={app?.agent?.default_model_id ?? null}
+              defaultThinkingEffort={app?.agent?.default_thinking_effort ?? null}
+              defaultAmpMode={app?.agent?.amp_mode ?? null}
+              defaultRunner={app?.agent?.default_runner ?? null}
+              runner={selectedRunner}
+              ampMode={selectedAmpMode}
+              onChangeRunner={setSelectedRunner}
+              onChangeAmpMode={setSelectedAmpMode}
+              onChangeModelId={setSelectedModelId}
+              onChangeThinkingEffort={setSelectedThinkingEffort}
+              codexEnabled={app?.agent?.codex_enabled ?? true}
+              ampEnabled={app?.agent?.amp_enabled ?? true}
+              claudeEnabled={app?.agent?.claude_enabled ?? true}
+              droidEnabled={app?.agent?.droid_enabled ?? true}
+              runnerDefaultModels={app?.agent?.runner_default_models ?? null}
+            />
           </div>
 
           {/* Right: Create button */}
