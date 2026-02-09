@@ -19,9 +19,11 @@ use luban_api::{
     WsClientMessage, WsServerMessage,
 };
 use luban_domain::paths;
-use luban_domain::{ContextImage, ProjectWorkspaceService};
+use luban_domain::{
+    ContextImage, ProjectWorkspaceService, TaskDocumentKind as DomainTaskDocumentKind,
+};
 use rand::RngCore as _;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use tower_http::services::{ServeDir, ServeFile};
@@ -77,6 +79,14 @@ pub async fn router(config: crate::ServerConfig) -> anyhow::Result<Router> {
         .route(
             "/workdirs/{workdir_id}/conversations/{task_id}",
             get(get_conversation),
+        )
+        .route(
+            "/workdirs/{workdir_id}/tasks/{task_id}/documents",
+            get(get_task_documents),
+        )
+        .route(
+            "/workdirs/{workdir_id}/tasks/{task_id}/documents/{kind}",
+            put(update_task_document),
         )
         .route(
             "/workdirs/{workdir_id}/attachments",
@@ -612,6 +622,252 @@ async fn get_conversation(
     {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(err) => (axum::http::StatusCode::NOT_FOUND, err.to_string()).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateTaskDocumentRequest {
+    content: String,
+}
+
+fn to_api_task_document_kind(kind: DomainTaskDocumentKind) -> luban_api::TaskDocumentKind {
+    match kind {
+        DomainTaskDocumentKind::Task => luban_api::TaskDocumentKind::Task,
+        DomainTaskDocumentKind::Plan => luban_api::TaskDocumentKind::Plan,
+        DomainTaskDocumentKind::Memory => luban_api::TaskDocumentKind::Memory,
+    }
+}
+
+fn task_document_order() -> [DomainTaskDocumentKind; 3] {
+    [
+        DomainTaskDocumentKind::Task,
+        DomainTaskDocumentKind::Plan,
+        DomainTaskDocumentKind::Memory,
+    ]
+}
+
+fn task_documents_dir(worktree_path: &FsPath, thread_id: u64) -> PathBuf {
+    worktree_path
+        .join(".luban")
+        .join("tasks")
+        .join(thread_id.to_string())
+}
+
+fn task_document_relative_path(thread_id: u64, kind: DomainTaskDocumentKind) -> String {
+    format!(".luban/tasks/{thread_id}/{}", kind.file_name())
+}
+
+fn task_document_default_content(kind: DomainTaskDocumentKind) -> String {
+    match kind {
+        DomainTaskDocumentKind::Task => [
+            "# TASK",
+            "",
+            "## Current Status",
+            "- task_status: todo",
+            "- run_status: idle",
+            "",
+            "## Latest Situation",
+            "- Fill in the current state and blockers.",
+            "",
+        ]
+        .join("\n"),
+        DomainTaskDocumentKind::Plan => [
+            "# PLAN",
+            "",
+            "## Milestones",
+            "1. Break down work into small, verifiable steps.",
+            "2. Execute changes with tests.",
+            "3. Validate and summarize outcomes.",
+            "",
+        ]
+        .join("\n"),
+        DomainTaskDocumentKind::Memory => [
+            "# MEMORY",
+            "",
+            "## Important Facts",
+            "- Record durable decisions and constraints here.",
+            "",
+            "## Open Questions",
+            "- Track pending checks and unresolved assumptions.",
+            "",
+        ]
+        .join("\n"),
+    }
+}
+
+fn file_updated_at_unix_ms(path: &FsPath) -> u64 {
+    let from_meta = std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+    from_meta.unwrap_or_else(now_unix_millis)
+}
+
+fn write_text_atomic(path: &FsPath, content: &str) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid task document path"))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create {}", parent.display()))?;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp = parent.join(format!(".tmp-{}-{unique}", std::process::id()));
+    std::fs::write(&tmp, content.as_bytes())
+        .with_context(|| format!("failed to write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("failed to replace {}", path.display()))?;
+    Ok(())
+}
+
+fn document_hash(content: &str) -> String {
+    blake3::hash(content.as_bytes()).to_hex().to_string()
+}
+
+fn build_task_document_snapshot(
+    thread_id: u64,
+    kind: DomainTaskDocumentKind,
+    content: String,
+    content_hash: String,
+    byte_len: u64,
+    updated_at_unix_ms: u64,
+) -> luban_api::TaskDocumentSnapshot {
+    luban_api::TaskDocumentSnapshot {
+        kind: to_api_task_document_kind(kind),
+        rel_path: task_document_relative_path(thread_id, kind),
+        content,
+        content_hash,
+        byte_len,
+        updated_at_unix_ms,
+    }
+}
+
+async fn get_task_documents(
+    State(state): State<AppStateHolder>,
+    Path((workspace_id, thread_id)): Path<(u64, u64)>,
+) -> impl IntoResponse {
+    let Some((_project_slug, _workspace_name, worktree_path)) =
+        workspace_info_from_snapshot(&state.engine.app_snapshot().await.ok(), workspace_id)
+    else {
+        return (axum::http::StatusCode::NOT_FOUND, "workspace not found").into_response();
+    };
+
+    let result = tokio::task::spawn_blocking(move || {
+        let root = task_documents_dir(FsPath::new(&worktree_path), thread_id);
+        std::fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+
+        let mut documents = Vec::new();
+        for kind in task_document_order() {
+            let path = root.join(kind.file_name());
+            let existed = path.exists();
+            let content = if existed {
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?
+            } else {
+                let initial = task_document_default_content(kind);
+                write_text_atomic(&path, &initial)?;
+                initial
+            };
+            let updated_at_unix_ms = file_updated_at_unix_ms(&path);
+            let byte_len = content.len() as u64;
+            let content_hash = document_hash(&content);
+
+            documents.push(build_task_document_snapshot(
+                thread_id,
+                kind,
+                content,
+                content_hash,
+                byte_len,
+                updated_at_unix_ms,
+            ));
+        }
+
+        Ok::<Vec<luban_api::TaskDocumentSnapshot>, anyhow::Error>(documents)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(documents)) => Json(luban_api::TaskDocumentsSnapshot {
+            workspace_id: luban_api::WorkspaceId(workspace_id),
+            thread_id: luban_api::WorkspaceThreadId(thread_id),
+            documents,
+        })
+        .into_response(),
+        Ok(Err(err)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            err.to_string(),
+        )
+            .into_response(),
+        Err(err) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to join task document read task: {err}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn update_task_document(
+    State(state): State<AppStateHolder>,
+    Path((workspace_id, thread_id, kind)): Path<(u64, u64, String)>,
+    Json(req): Json<UpdateTaskDocumentRequest>,
+) -> impl IntoResponse {
+    let Some((_project_slug, _workspace_name, worktree_path)) =
+        workspace_info_from_snapshot(&state.engine.app_snapshot().await.ok(), workspace_id)
+    else {
+        return (axum::http::StatusCode::NOT_FOUND, "workspace not found").into_response();
+    };
+    let Some(kind) = DomainTaskDocumentKind::parse_key(&kind) else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid task document kind",
+        )
+            .into_response();
+    };
+    if req.content.len() > 1_000_000 {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "document content too large",
+        )
+            .into_response();
+    }
+
+    let content = req.content;
+    let result = tokio::task::spawn_blocking(move || {
+        let root = task_documents_dir(FsPath::new(&worktree_path), thread_id);
+        std::fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path = root.join(kind.file_name());
+        write_text_atomic(&path, &content)?;
+
+        let updated_at_unix_ms = now_unix_millis();
+        let byte_len = content.len() as u64;
+        let content_hash = document_hash(&content);
+        Ok::<luban_api::TaskDocumentSnapshot, anyhow::Error>(build_task_document_snapshot(
+            thread_id,
+            kind,
+            content,
+            content_hash,
+            byte_len,
+            updated_at_unix_ms,
+        ))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(document)) => Json(document).into_response(),
+        Ok(Err(err)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            err.to_string(),
+        )
+            .into_response(),
+        Err(err) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to join task document update task: {err}"),
+        )
+            .into_response(),
     }
 }
 

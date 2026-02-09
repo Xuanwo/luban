@@ -41,6 +41,7 @@ import { runKeyboardSequenceShortcuts } from './scenarios/keyboard-sequence-shor
 import { runTurnDurationEstimate } from './scenarios/turn-duration-estimate.mjs';
 import { runAllTasksIncludesArchivedWorkdirs } from './scenarios/all-tasks-includes-archived-workdirs.mjs';
 import { runArchivedTaskOpenReadonly } from './scenarios/archived-task-open-readonly.mjs';
+import { runTaskDocumentsPanel } from './scenarios/task-documents-panel.mjs';
 
 async function canRun(command, args) {
   const proc = spawn(command, args, { stdio: 'ignore' });
@@ -189,6 +190,7 @@ async function main() {
 	    await runQueuedPrompts({ page, baseUrl });
     await runLatestEventsVisible({ page, baseUrl });
     await runSubagentMockView({ page, baseUrl });
+    await runTaskDocumentsPanel({ page, baseUrl });
     await runActivityWindowing({ page, baseUrl });
     await runAgentRunnerIcons({ page, baseUrl });
     await runEscapeDoesNotLeakFromChatInput({ page, baseUrl });

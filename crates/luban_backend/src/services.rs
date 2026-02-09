@@ -5,7 +5,7 @@ use luban_domain::{
     CodexThreadEvent, CodexThreadItem, ContextImage, ConversationEntry, ConversationSnapshot,
     CreatedWorkspace, DroidConfigEntry, OpenTarget, PersistedAppState, ProjectWorkspaceService,
     PullRequestCiState, PullRequestInfo, PullRequestState, RunAgentTurnRequest, SystemTaskKind,
-    TaskIntentKind,
+    TaskDocumentEvent, TaskDocumentEventType, TaskDocumentIndex, TaskDocumentKind, TaskIntentKind,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -1166,6 +1166,67 @@ impl ProjectWorkspaceService for GitWorkspaceService {
     fn clear_new_task_stash(&self) -> Result<(), String> {
         self.sqlite
             .clear_new_task_stash()
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn upsert_task_document_index(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+        index: TaskDocumentIndex,
+    ) -> Result<(), String> {
+        self.sqlite
+            .upsert_task_document_index(project_slug, workspace_name, thread_id, index)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn list_task_document_indices(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<Vec<TaskDocumentIndex>, String> {
+        self.sqlite
+            .list_task_document_indices(project_slug, workspace_name, thread_id)
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn insert_task_document_event(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+        kind: TaskDocumentKind,
+        event_type: TaskDocumentEventType,
+        rel_path: String,
+        content_hash: String,
+        byte_len: u64,
+        created_at_unix_ms: u64,
+    ) -> Result<u64, String> {
+        self.sqlite
+            .insert_task_document_event(
+                project_slug,
+                workspace_name,
+                thread_id,
+                kind,
+                event_type,
+                rel_path,
+                content_hash,
+                byte_len,
+                created_at_unix_ms,
+            )
+            .map_err(anyhow_error_to_string)
+    }
+
+    fn list_task_document_events(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_id: u64,
+    ) -> Result<Vec<TaskDocumentEvent>, String> {
+        self.sqlite
+            .list_task_document_events(project_slug, workspace_name, thread_id)
             .map_err(anyhow_error_to_string)
     }
 

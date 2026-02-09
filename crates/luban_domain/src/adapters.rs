@@ -263,6 +263,91 @@ pub struct NewTaskStash {
     pub updated_at_unix_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum TaskDocumentKind {
+    Task,
+    Plan,
+    Memory,
+}
+
+impl TaskDocumentKind {
+    pub fn as_key(self) -> &'static str {
+        match self {
+            TaskDocumentKind::Task => "task",
+            TaskDocumentKind::Plan => "plan",
+            TaskDocumentKind::Memory => "memory",
+        }
+    }
+
+    pub fn parse_key(raw: &str) -> Option<TaskDocumentKind> {
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("task") {
+            return Some(TaskDocumentKind::Task);
+        }
+        if raw.eq_ignore_ascii_case("plan") {
+            return Some(TaskDocumentKind::Plan);
+        }
+        if raw.eq_ignore_ascii_case("memory") {
+            return Some(TaskDocumentKind::Memory);
+        }
+        None
+    }
+
+    pub fn file_name(self) -> &'static str {
+        match self {
+            TaskDocumentKind::Task => "TASK.md",
+            TaskDocumentKind::Plan => "PLAN.md",
+            TaskDocumentKind::Memory => "MEMORY.md",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskDocumentEventType {
+    Initialized,
+    Updated,
+}
+
+impl TaskDocumentEventType {
+    pub fn as_key(self) -> &'static str {
+        match self {
+            TaskDocumentEventType::Initialized => "initialized",
+            TaskDocumentEventType::Updated => "updated",
+        }
+    }
+
+    pub fn parse_key(raw: &str) -> Option<TaskDocumentEventType> {
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("initialized") {
+            return Some(TaskDocumentEventType::Initialized);
+        }
+        if raw.eq_ignore_ascii_case("updated") {
+            return Some(TaskDocumentEventType::Updated);
+        }
+        None
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskDocumentIndex {
+    pub kind: TaskDocumentKind,
+    pub rel_path: String,
+    pub content_hash: String,
+    pub byte_len: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskDocumentEvent {
+    pub event_id: u64,
+    pub kind: TaskDocumentKind,
+    pub event_type: TaskDocumentEventType,
+    pub rel_path: String,
+    pub content_hash: String,
+    pub byte_len: u64,
+    pub created_at_unix_ms: u64,
+}
+
 pub trait ProjectWorkspaceService: Send + Sync {
     fn load_app_state(&self) -> Result<PersistedAppState, String>;
 
@@ -493,6 +578,50 @@ pub trait ProjectWorkspaceService: Send + Sync {
 
     fn clear_new_task_stash(&self) -> Result<(), String> {
         Err("unimplemented".to_owned())
+    }
+
+    fn upsert_task_document_index(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+        _index: TaskDocumentIndex,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn list_task_document_indices(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+    ) -> Result<Vec<TaskDocumentIndex>, String> {
+        Ok(Vec::new())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_task_document_event(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+        _kind: TaskDocumentKind,
+        _event_type: TaskDocumentEventType,
+        _rel_path: String,
+        _content_hash: String,
+        _byte_len: u64,
+        _created_at_unix_ms: u64,
+    ) -> Result<u64, String> {
+        Ok(0)
+    }
+
+    fn list_task_document_events(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+        _thread_id: u64,
+    ) -> Result<Vec<TaskDocumentEvent>, String> {
+        Ok(Vec::new())
     }
 
     fn run_agent_turn_streamed(

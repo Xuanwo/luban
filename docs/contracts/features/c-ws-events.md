@@ -207,6 +207,7 @@ All `ServerEvent` variants are part of this contract surface:
 - `TaskSummariesChanged`
 - `WorkdirTasksChanged`
 - `ConversationChanged`
+- `TaskDocumentChanged`
 - `Toast`
 - `ProjectPathPicked`
 - `AddProjectAndOpenReady`
@@ -238,6 +239,16 @@ Payload:
 - `tasks`: current `TaskSummarySnapshot[]` for that workdir
 - `ClaudeConfigFileReady`
 - `ClaudeConfigFileSaved`
+
+## `ServerEvent::TaskDocumentChanged`
+
+Purpose: notify the task document panel that one of `TASK.md` / `PLAN.md` / `MEMORY.md` changed on disk.
+
+Payload:
+
+- `workdir_id`: owning workdir id
+- `task_id`: owning task id
+- `kind`: changed document kind (`task` / `plan` / `memory`)
 
 ## Request/response style events
 

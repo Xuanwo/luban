@@ -147,6 +147,23 @@ export type WorkspaceDiffSnapshot = {
   files: WorkspaceDiffFileSnapshot[]
 }
 
+export type TaskDocumentKind = "task" | "plan" | "memory"
+
+export type TaskDocumentSnapshot = {
+  kind: TaskDocumentKind
+  rel_path: string
+  content: string
+  content_hash: string
+  byte_len: number
+  updated_at_unix_ms: number
+}
+
+export type TaskDocumentsSnapshot = {
+  workdir_id: WorkspaceId
+  task_id: WorkspaceThreadId
+  documents: TaskDocumentSnapshot[]
+}
+
 export type PullRequestState = "open" | "closed" | "merged"
 
 export type PullRequestCiState = "pending" | "success" | "failure"
@@ -560,6 +577,7 @@ export type ServerEvent =
   | { type: "task_summaries_changed"; project_id: ProjectId; workdir_id: WorkspaceId; tasks: TaskSummarySnapshot[] }
   | { type: "workdir_tasks_changed"; workdir_id: WorkspaceId; tabs: WorkspaceTabsSnapshot; tasks: ThreadMeta[] }
   | { type: "conversation_changed"; snapshot: ConversationSnapshot }
+  | { type: "task_document_changed"; workdir_id: WorkspaceId; task_id: WorkspaceThreadId; kind: TaskDocumentKind }
   | { type: "toast"; message: string }
   | { type: "project_path_picked"; request_id: string; path: string | null }
   | { type: "add_project_and_open_ready"; request_id: string; project_id: ProjectId; workdir_id: WorkspaceId }

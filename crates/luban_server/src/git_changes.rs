@@ -56,6 +56,11 @@ fn status_from_code(code: char) -> FileChangeStatus {
     }
 }
 
+fn is_runtime_internal_path(path: &str) -> bool {
+    let normalized = path.trim_start_matches("./");
+    normalized == ".luban" || normalized.starts_with(".luban/")
+}
+
 fn upstream_ref(repo_path: &Path) -> Option<String> {
     run_git_text(
         repo_path,
@@ -103,6 +108,15 @@ fn parse_name_status_line(
         }
     };
 
+    if is_runtime_internal_path(&path)
+        || old_path
+            .as_deref()
+            .map(is_runtime_internal_path)
+            .unwrap_or(false)
+    {
+        return None;
+    }
+
     if group == FileChangeGroup::Committed && upstream.is_none() {
         return None;
     }
@@ -135,6 +149,9 @@ fn parse_status_porcelain_v2(repo_path: &Path) -> anyhow::Result<Vec<ChangedFile
 
         if let Some(rest) = record.strip_prefix("? ") {
             let path = rest.to_owned();
+            if is_runtime_internal_path(&path) {
+                continue;
+            }
             files.push(ChangedFileSnapshot {
                 id: file_id(FileChangeGroup::Unstaged, &path),
                 name: basename(&path),
@@ -169,6 +186,9 @@ fn parse_status_porcelain_v2(repo_path: &Path) -> anyhow::Result<Vec<ChangedFile
             } else {
                 continue;
             };
+            if is_runtime_internal_path(&path) {
+                continue;
+            }
 
             files.push(ChangedFileSnapshot {
                 id: file_id(group, &path),
@@ -210,6 +230,9 @@ fn parse_status_porcelain_v2(repo_path: &Path) -> anyhow::Result<Vec<ChangedFile
                 .split_once('\t')
                 .map(|(a, b)| (a.to_owned(), b.to_owned()))
                 .unwrap_or_else(|| (paths.to_owned(), paths.to_owned()));
+            if is_runtime_internal_path(&path) || is_runtime_internal_path(&old_path) {
+                continue;
+            }
 
             files.push(ChangedFileSnapshot {
                 id: file_id(group, &path),

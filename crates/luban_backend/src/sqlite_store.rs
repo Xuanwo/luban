@@ -1,7 +1,8 @@
 use anyhow::{Context as _, anyhow};
 use luban_domain::{
     AttachmentKind, AttachmentRef, ChatScrollAnchor, ContextItem, ConversationEntry,
-    ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt, ThinkingEffort,
+    ConversationSnapshot, ConversationThreadMeta, PersistedAppState, QueuedPrompt,
+    TaskDocumentEvent, TaskDocumentEventType, TaskDocumentIndex, TaskDocumentKind, ThinkingEffort,
     WorkspaceStatus, WorkspaceThreadId,
 };
 use rand::{RngCore as _, rngs::OsRng};
@@ -25,7 +26,7 @@ impl std::fmt::Display for SqliteStoreError {
 
 impl std::error::Error for SqliteStoreError {}
 
-const LATEST_SCHEMA_VERSION: u32 = 22;
+const LATEST_SCHEMA_VERSION: u32 = 23;
 const WORKSPACE_CHAT_SCROLL_PREFIX: &str = "workspace_chat_scroll_y10_";
 const WORKSPACE_CHAT_SCROLL_ANCHOR_PREFIX: &str = "workspace_chat_scroll_anchor_";
 const WORKSPACE_ACTIVE_THREAD_PREFIX: &str = "workspace_active_thread_id_";
@@ -215,6 +216,13 @@ const MIGRATIONS: &[(u32, &str)] = &[
             "/migrations/0022_new_task_drafts.sql"
         )),
     ),
+    (
+        23,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0023_task_documents.sql"
+        )),
+    ),
 ];
 
 #[derive(Clone)]
@@ -364,6 +372,37 @@ enum DbCommand {
         workspace_name: String,
         pr_number: u64,
         reply: mpsc::Sender<anyhow::Result<Vec<u64>>>,
+    },
+    UpsertTaskDocumentIndex {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        index: TaskDocumentIndex,
+        reply: mpsc::Sender<anyhow::Result<()>>,
+    },
+    ListTaskDocumentIndices {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        reply: mpsc::Sender<anyhow::Result<Vec<TaskDocumentIndex>>>,
+    },
+    InsertTaskDocumentEvent {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        kind: TaskDocumentKind,
+        event_type: TaskDocumentEventType,
+        rel_path: String,
+        content_hash: String,
+        byte_len: u64,
+        created_at_unix_ms: u64,
+        reply: mpsc::Sender<anyhow::Result<u64>>,
+    },
+    ListTaskDocumentEvents {
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        reply: mpsc::Sender<anyhow::Result<Vec<TaskDocumentEvent>>>,
     },
     InsertContextItem {
         project_slug: String,
@@ -711,6 +750,80 @@ impl SqliteStore {
                                 &project_slug,
                                 &workspace_name,
                                 pr_number,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::UpsertTaskDocumentIndex {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                index,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.upsert_task_document_index(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                &index,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::ListTaskDocumentIndices {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.list_task_document_indices(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::InsertTaskDocumentEvent {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                kind,
+                                event_type,
+                                rel_path,
+                                content_hash,
+                                byte_len,
+                                created_at_unix_ms,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.insert_task_document_event(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
+                                kind,
+                                event_type,
+                                &rel_path,
+                                &content_hash,
+                                byte_len,
+                                created_at_unix_ms,
+                            ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::ListTaskDocumentEvents {
+                                project_slug,
+                                workspace_name,
+                                thread_local_id,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(db.list_task_document_events(
+                                &project_slug,
+                                &workspace_name,
+                                thread_local_id,
                             ));
                         }
                         (
@@ -1184,6 +1297,93 @@ impl SqliteStore {
         reply_rx.recv().context("sqlite worker terminated")?
     }
 
+    pub fn upsert_task_document_index(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        index: TaskDocumentIndex,
+    ) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::UpsertTaskDocumentIndex {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                index,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn list_task_document_indices(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+    ) -> anyhow::Result<Vec<TaskDocumentIndex>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::ListTaskDocumentIndices {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_task_document_event(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+        kind: TaskDocumentKind,
+        event_type: TaskDocumentEventType,
+        rel_path: String,
+        content_hash: String,
+        byte_len: u64,
+        created_at_unix_ms: u64,
+    ) -> anyhow::Result<u64> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::InsertTaskDocumentEvent {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                kind,
+                event_type,
+                rel_path,
+                content_hash,
+                byte_len,
+                created_at_unix_ms,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn list_task_document_events(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+        thread_local_id: u64,
+    ) -> anyhow::Result<Vec<TaskDocumentEvent>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::ListTaskDocumentEvents {
+                project_slug,
+                workspace_name,
+                thread_local_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
     pub fn insert_context_item(
         &self,
         project_slug: String,
@@ -1384,6 +1584,18 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::ListConversationTasksForMergedPr { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::UpsertTaskDocumentIndex { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::ListTaskDocumentIndices { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::InsertTaskDocumentEvent { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::ListTaskDocumentEvents { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::InsertContextItem { reply, .. } => {
@@ -2298,6 +2510,28 @@ impl SqliteDatabase {
                             old_workspace_name
                         ],
                     )?;
+                    tx.execute(
+                        "UPDATE task_documents
+                         SET project_slug = ?1, workspace_name = ?2
+                         WHERE project_slug = ?3 AND workspace_name = ?4",
+                        params![
+                            project.slug,
+                            workspace.workspace_name,
+                            old_slug,
+                            old_workspace_name
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE task_document_events
+                         SET project_slug = ?1, workspace_name = ?2
+                         WHERE project_slug = ?3 AND workspace_name = ?4",
+                        params![
+                            project.slug,
+                            workspace.workspace_name,
+                            old_slug,
+                            old_workspace_name
+                        ],
+                    )?;
                 }
             }
         }
@@ -2317,6 +2551,16 @@ impl SqliteDatabase {
                 )?;
                 tx.execute(
                     "DELETE FROM conversations
+                     WHERE project_slug = ?1 AND workspace_name = ?2",
+                    params![project_slug, workspace_name],
+                )?;
+                tx.execute(
+                    "DELETE FROM task_documents
+                     WHERE project_slug = ?1 AND workspace_name = ?2",
+                    params![project_slug, workspace_name],
+                )?;
+                tx.execute(
+                    "DELETE FROM task_document_events
                      WHERE project_slug = ?1 AND workspace_name = ?2",
                     params![project_slug, workspace_name],
                 )?;
@@ -3668,6 +3912,16 @@ impl SqliteDatabase {
              WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
             params![project_slug, workspace_name, thread_local_id as i64],
         )?;
+        tx.execute(
+            "DELETE FROM task_documents
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM task_document_events
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3",
+            params![project_slug, workspace_name, thread_local_id as i64],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -3943,6 +4197,180 @@ impl SqliteDatabase {
         };
 
         Ok(thread_ids)
+    }
+
+    fn upsert_task_document_index(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        index: &TaskDocumentIndex,
+    ) -> anyhow::Result<()> {
+        let now = now_unix_seconds();
+        self.conn.execute(
+            "INSERT INTO task_documents
+             (project_slug, workspace_name, thread_local_id, kind, rel_path, content_hash, byte_len, updated_at_unix_ms, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+             ON CONFLICT(project_slug, workspace_name, thread_local_id, kind)
+             DO UPDATE SET
+               rel_path = excluded.rel_path,
+               content_hash = excluded.content_hash,
+               byte_len = excluded.byte_len,
+               updated_at_unix_ms = excluded.updated_at_unix_ms,
+               updated_at = excluded.updated_at",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                index.kind.as_key(),
+                index.rel_path,
+                index.content_hash,
+                index.byte_len as i64,
+                index.updated_at_unix_ms as i64,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_task_document_indices(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+    ) -> anyhow::Result<Vec<TaskDocumentIndex>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, rel_path, content_hash, byte_len, updated_at_unix_ms
+             FROM task_documents
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
+             ORDER BY CASE kind WHEN 'task' THEN 1 WHEN 'plan' THEN 2 WHEN 'memory' THEN 3 ELSE 4 END ASC",
+        )?;
+        let rows = stmt.query_map(
+            params![project_slug, workspace_name, thread_local_id as i64],
+            |row| {
+                let kind = row.get::<_, String>(0)?;
+                let rel_path = row.get::<_, String>(1)?;
+                let content_hash = row.get::<_, String>(2)?;
+                let byte_len = row.get::<_, i64>(3)?;
+                let updated_at_unix_ms = row.get::<_, i64>(4)?;
+                Ok((kind, rel_path, content_hash, byte_len, updated_at_unix_ms))
+            },
+        )?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (kind, rel_path, content_hash, byte_len, updated_at_unix_ms) = row?;
+            let Some(kind) = TaskDocumentKind::parse_key(&kind) else {
+                continue;
+            };
+            let Some(byte_len) = u64::try_from(byte_len).ok() else {
+                continue;
+            };
+            let Some(updated_at_unix_ms) = u64::try_from(updated_at_unix_ms).ok() else {
+                continue;
+            };
+            out.push(TaskDocumentIndex {
+                kind,
+                rel_path,
+                content_hash,
+                byte_len,
+                updated_at_unix_ms,
+            });
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_task_document_event(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+        kind: TaskDocumentKind,
+        event_type: TaskDocumentEventType,
+        rel_path: &str,
+        content_hash: &str,
+        byte_len: u64,
+        created_at_unix_ms: u64,
+    ) -> anyhow::Result<u64> {
+        let now = now_unix_seconds();
+        self.conn.execute(
+            "INSERT INTO task_document_events
+             (project_slug, workspace_name, thread_local_id, kind, event_type, rel_path, content_hash, byte_len, created_at_unix_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                kind.as_key(),
+                event_type.as_key(),
+                rel_path,
+                content_hash,
+                byte_len as i64,
+                created_at_unix_ms as i64,
+                now,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid() as u64)
+    }
+
+    fn list_task_document_events(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+        thread_local_id: u64,
+    ) -> anyhow::Result<Vec<TaskDocumentEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT event_id, kind, event_type, rel_path, content_hash, byte_len, created_at_unix_ms
+             FROM task_document_events
+             WHERE project_slug = ?1 AND workspace_name = ?2 AND thread_local_id = ?3
+             ORDER BY event_id ASC",
+        )?;
+        let rows = stmt.query_map(
+            params![project_slug, workspace_name, thread_local_id as i64],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (event_id, kind, event_type, rel_path, content_hash, byte_len, created_at_unix_ms) =
+                row?;
+            let Some(event_id) = u64::try_from(event_id).ok() else {
+                continue;
+            };
+            let Some(kind) = TaskDocumentKind::parse_key(&kind) else {
+                continue;
+            };
+            let Some(event_type) = TaskDocumentEventType::parse_key(&event_type) else {
+                continue;
+            };
+            let Some(byte_len) = u64::try_from(byte_len).ok() else {
+                continue;
+            };
+            let Some(created_at_unix_ms) = u64::try_from(created_at_unix_ms).ok() else {
+                continue;
+            };
+            out.push(TaskDocumentEvent {
+                event_id,
+                kind,
+                event_type,
+                rel_path,
+                content_hash,
+                byte_len,
+                created_at_unix_ms,
+            });
+        }
+        Ok(out)
     }
 
     fn insert_context_item(

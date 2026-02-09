@@ -17,6 +17,11 @@ Return workspace VCS summary (status/changed files) for UI panels.
 - `200 OK`
 - JSON body: `WorkspaceChangesSnapshot`
 
+## Invariants
+
+- Runtime-internal task document files under `.luban/` are excluded from this surface.
+- This endpoint represents code/worktree VCS changes, not task document edits.
+
 ## Web usage
 
 - n/a (right sidebar removed)

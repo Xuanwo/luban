@@ -5,12 +5,13 @@ export async function runActivityTerminalCommand({ page }) {
   await page.getByText('Mock task 2').first().click();
 
   await page.getByTestId('chat-scroll-container').waitFor({ state: 'visible' });
-
-  await page.getByTestId('chat-mode-toggle').click();
-
-  await page.getByTestId('shell-composer').waitFor({ state: 'visible' });
+  await page.getByTestId('task-workspace-tab-agents').waitFor({ state: 'visible' });
+  await page.getByTestId('task-workspace-tab-terminal').click();
   await page.getByTestId('pty-terminal').waitFor({ state: 'visible' });
-
-  await page.getByTestId('chat-mode-toggle').click();
-  await page.getByTestId('chat-input').waitFor({ state: 'visible' });
+  await page.getByTestId('task-workspace-tab-agents').click();
+  const workspace = page.getByTestId('task-workspace-panel');
+  const chatInputCount = await workspace.getByTestId('chat-input').count();
+  if (chatInputCount !== 0) {
+    throw new Error(`expected no chat input in agents panel, got ${chatInputCount}`);
+  }
 }

@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { TaskActivityPanel } from "./task-activity-panel"
+import { TaskDocumentPanel } from "./task-document-panel"
+import { TaskWorkspacePanel } from "./task-workspace-panel"
 import { TaskHeader } from "./shared/task-header"
 import { useLuban } from "@/lib/luban-context"
 import { getActiveProjectInfo } from "@/lib/active-project-info"
@@ -113,8 +114,13 @@ export function TaskDetailView({ taskId, taskTitle, workdir, projectName, projec
         }}
       />
 
-      <div className="flex-1 min-h-0 flex">
-        <TaskActivityPanel />
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+        <div className="h-[48%] md:h-full md:w-[52%] min-h-0">
+          <TaskDocumentPanel />
+        </div>
+        <div className="flex-1 min-w-0 min-h-0">
+          <TaskWorkspacePanel />
+        </div>
       </div>
     </div>
   )

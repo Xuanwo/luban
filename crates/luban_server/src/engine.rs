@@ -1,4 +1,5 @@
 use crate::branch_watch::BranchWatchHandle;
+use crate::task_document_watch::TaskDocumentWatchHandle;
 use anyhow::Context as _;
 use luban_api::{
     AppSnapshot, ConversationSnapshot, PullRequestCiState, PullRequestSnapshot, PullRequestState,
@@ -9,7 +10,8 @@ use luban_domain::{
     Action, AppState, AttachmentKind, AttachmentRef, CodexThreadEvent, CodexThreadItem,
     ConversationEntry, ConversationThreadMeta, Effect, OpenTarget, OperationStatus,
     ProjectWorkspaceService, PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
-    PullRequestState as DomainPullRequestState, ThinkingEffort, WorkspaceId, WorkspaceThreadId,
+    PullRequestState as DomainPullRequestState, TaskDocumentKind as DomainTaskDocumentKind,
+    ThinkingEffort, WorkspaceId, WorkspaceThreadId,
 };
 use rand::RngCore as _;
 use rand::rngs::OsRng;
@@ -233,6 +235,11 @@ pub enum EngineCommand {
         workspace_id: WorkspaceId,
         branch_name: String,
     },
+    TaskDocumentObserved {
+        workspace_id: WorkspaceId,
+        thread_id: WorkspaceThreadId,
+        kind: DomainTaskDocumentKind,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -324,6 +331,7 @@ pub struct Engine {
     events: broadcast::Sender<WsServerMessage>,
     tx: mpsc::Sender<EngineCommand>,
     branch_watch: BranchWatchHandle,
+    task_document_watch: TaskDocumentWatchHandle,
     cancel_flags: HashMap<(WorkspaceId, WorkspaceThreadId), CancelFlagEntry>,
     pull_requests: HashMap<WorkspaceId, PullRequestCacheEntry>,
     pull_requests_in_flight: HashSet<WorkspaceId>,
@@ -368,6 +376,7 @@ impl Engine {
         let (events, _) = broadcast::channel::<WsServerMessage>(256);
 
         let branch_watch = BranchWatchHandle::start(tx.clone());
+        let task_document_watch = TaskDocumentWatchHandle::start(tx.clone());
         let mut engine = Self {
             state: AppState::new(),
             rev: 0,
@@ -375,6 +384,7 @@ impl Engine {
             events: events.clone(),
             tx: tx.clone(),
             branch_watch,
+            task_document_watch,
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -2550,6 +2560,20 @@ impl Engine {
                 })
                 .await;
             }
+            EngineCommand::TaskDocumentObserved {
+                workspace_id,
+                thread_id,
+                kind,
+            } => {
+                let _ = self.events.send(WsServerMessage::Event {
+                    rev: self.rev,
+                    event: Box::new(luban_api::ServerEvent::TaskDocumentChanged {
+                        workspace_id: luban_api::WorkspaceId(workspace_id.as_u64()),
+                        thread_id: luban_api::WorkspaceThreadId(thread_id.as_u64()),
+                        kind: map_task_document_kind(kind),
+                    }),
+                });
+            }
         }
     }
 
@@ -2765,7 +2789,7 @@ impl Engine {
                     | Action::TerminalCommandFinished { .. }
                     | Action::TaskStatusSuggestionCreated { .. }
             );
-            let should_sync_branch_watchers = should_sync_branch_watchers(&action);
+            let should_sync_workspace_watchers = should_sync_branch_watchers(&action);
             let mut conversation_keys = Vec::<(WorkspaceId, WorkspaceThreadId)>::new();
             let action_conversation_key = conversation_key_for_action(&action);
             if let Some(key) = action_conversation_key {
@@ -2777,8 +2801,9 @@ impl Engine {
 
             let new_effects = self.state.apply(action);
             conversation_keys.extend(conversation_keys_for_effects(&new_effects));
-            if should_sync_branch_watchers {
+            if should_sync_workspace_watchers {
                 self.sync_branch_watchers();
+                self.sync_task_document_watchers();
             }
             self.publish_app_snapshot();
 
@@ -2881,6 +2906,23 @@ impl Engine {
             })
             .collect::<Vec<_>>();
         self.branch_watch.sync_workspaces(workspaces);
+    }
+
+    fn sync_task_document_watchers(&self) {
+        let workspaces = self
+            .state
+            .projects
+            .iter()
+            .flat_map(|p| {
+                p.workspaces.iter().filter_map(|w| {
+                    if w.status != luban_domain::WorkspaceStatus::Active {
+                        return None;
+                    }
+                    Some((w.id, w.worktree_path.clone()))
+                })
+            })
+            .collect::<Vec<_>>();
+        self.task_document_watch.sync_workspaces(workspaces);
     }
 
     async fn persist_queue_state(&self, workspace_id: WorkspaceId, thread_id: WorkspaceThreadId) {
@@ -5129,6 +5171,14 @@ fn workspace_scope(state: &AppState, workspace_id: WorkspaceId) -> Option<Worksp
     None
 }
 
+fn map_task_document_kind(kind: DomainTaskDocumentKind) -> luban_api::TaskDocumentKind {
+    match kind {
+        DomainTaskDocumentKind::Task => luban_api::TaskDocumentKind::Task,
+        DomainTaskDocumentKind::Plan => luban_api::TaskDocumentKind::Plan,
+        DomainTaskDocumentKind::Memory => luban_api::TaskDocumentKind::Memory,
+    }
+}
+
 fn should_sync_branch_watchers(action: &Action) -> bool {
     matches!(
         action,
@@ -6917,6 +6967,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -6981,6 +7032,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7134,6 +7186,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7339,6 +7392,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7437,6 +7491,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7459,6 +7514,56 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread_id.0, thread_id.as_u64());
         assert_eq!(threads[0].title, "alpha");
+    }
+
+    #[tokio::test]
+    async fn task_document_observed_emits_task_document_changed_event() {
+        let (events, _) = broadcast::channel::<WsServerMessage>(4);
+        let mut rx = events.subscribe();
+        let (tx, _rx_cmd) = mpsc::channel::<EngineCommand>(1);
+
+        let mut engine = Engine {
+            state: AppState::new(),
+            rev: 42,
+            services: Arc::new(TestServices),
+            events,
+            tx,
+            branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
+            cancel_flags: HashMap::new(),
+            pull_requests: HashMap::new(),
+            pull_requests_in_flight: HashSet::new(),
+            workspace_threads_cache: HashMap::new(),
+            auto_archive_workspaces: HashSet::new(),
+            telegram_pairing: None,
+        };
+
+        engine
+            .handle(EngineCommand::TaskDocumentObserved {
+                workspace_id: WorkspaceId::from_u64(7),
+                thread_id: WorkspaceThreadId::from_u64(9),
+                kind: DomainTaskDocumentKind::Plan,
+            })
+            .await;
+
+        let message = rx.try_recv().expect("expected task document event");
+        let WsServerMessage::Event { rev, event } = message else {
+            panic!("expected WsServerMessage::Event");
+        };
+        assert_eq!(rev, 42);
+
+        let luban_api::ServerEvent::TaskDocumentChanged {
+            workspace_id,
+            thread_id,
+            kind,
+        } = *event
+        else {
+            panic!("expected task_document_changed event");
+        };
+
+        assert_eq!(workspace_id.0, 7);
+        assert_eq!(thread_id.0, 9);
+        assert_eq!(kind, luban_api::TaskDocumentKind::Plan);
     }
 
     #[test]
@@ -7553,6 +7658,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7643,6 +7749,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7720,6 +7827,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -7813,6 +7921,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -8166,6 +8275,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -8254,6 +8364,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::from([(
                 (workspace_id, thread_id),
                 CancelFlagEntry {
@@ -8546,6 +8657,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -8595,6 +8707,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -9070,6 +9183,7 @@ mod tests {
             events,
             tx: tx.clone(),
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -9137,6 +9251,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -9196,6 +9311,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -9270,6 +9386,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),
@@ -9341,6 +9458,7 @@ mod tests {
             events,
             tx,
             branch_watch: BranchWatchHandle::disabled(),
+            task_document_watch: TaskDocumentWatchHandle::disabled(),
             cancel_flags: HashMap::new(),
             pull_requests: HashMap::new(),
             pull_requests_in_flight: HashSet::new(),

@@ -1255,6 +1255,74 @@ async fn http_contracts_smoke() {
         }
     }
 
+    // C-HTTP-TASK-DOCUMENTS / C-HTTP-TASK-DOCUMENT
+    {
+        let docs: luban_api::TaskDocumentsSnapshot = client
+            .get(format!(
+                "{base}/api/workdirs/{workdir_id}/tasks/{task_id}/documents"
+            ))
+            .send()
+            .await
+            .expect("GET /task documents")
+            .error_for_status()
+            .expect("task documents status")
+            .json()
+            .await
+            .expect("task documents json");
+        assert_eq!(docs.workspace_id.0, workdir_id);
+        assert_eq!(docs.thread_id.0, task_id);
+        assert_eq!(docs.documents.len(), 3, "expected TASK/PLAN/MEMORY");
+        assert!(
+            docs.documents
+                .iter()
+                .any(|d| d.kind == luban_api::TaskDocumentKind::Task),
+            "expected TASK.md document"
+        );
+        assert!(
+            docs.documents
+                .iter()
+                .any(|d| d.kind == luban_api::TaskDocumentKind::Plan),
+            "expected PLAN.md document"
+        );
+        assert!(
+            docs.documents
+                .iter()
+                .any(|d| d.kind == luban_api::TaskDocumentKind::Memory),
+            "expected MEMORY.md document"
+        );
+
+        #[derive(serde::Serialize)]
+        struct UpdateDoc<'a> {
+            content: &'a str,
+        }
+
+        let updated: luban_api::TaskDocumentSnapshot = client
+            .put(format!(
+                "{base}/api/workdirs/{workdir_id}/tasks/{task_id}/documents/task"
+            ))
+            .json(&UpdateDoc {
+                content: "# TASK\n\nUpdated by contracts_http test.\n",
+            })
+            .send()
+            .await
+            .expect("PUT /task document")
+            .error_for_status()
+            .expect("task document update status")
+            .json()
+            .await
+            .expect("task document update json");
+        assert_eq!(updated.kind, luban_api::TaskDocumentKind::Task);
+        assert!(
+            updated.content.contains("Updated by contracts_http test."),
+            "expected updated task document content"
+        );
+        assert!(updated.byte_len > 0, "expected byte_len to be populated");
+        assert!(
+            !updated.content_hash.trim().is_empty(),
+            "expected content_hash to be populated"
+        );
+    }
+
     // C-HTTP-CHANGES / C-HTTP-DIFF
     {
         let _changes: luban_api::WorkspaceChangesSnapshot = client

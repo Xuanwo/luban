@@ -37,6 +37,8 @@ Legend:
 | C-HTTP-NEW-TASK-DRAFT | `DELETE /api/new_task/drafts/{draft_id}` | `crates/luban_server/src/server.rs:delete_new_task_draft` | `web/lib/luban-http.ts:deleteNewTaskDraft` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-NEW-TASK-STASH | `GET /api/new_task/stash` | `crates/luban_server/src/server.rs:get_new_task_stash` | `web/lib/luban-http.ts:fetchNewTaskStash` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONVERSATION | `GET /api/workdirs/{workdir_id}/conversations/{task_id}` | `crates/luban_server/src/server.rs:get_conversation` | `web/lib/luban-http.ts:fetchConversation` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-TASK-DOCUMENTS | `GET /api/workdirs/{workdir_id}/tasks/{task_id}/documents` | `crates/luban_server/src/server.rs:get_task_documents` | `web/lib/luban-http.ts:fetchTaskDocuments` | Draft | ✅ | ✅ | ✅ |
+| C-HTTP-TASK-DOCUMENT | `PUT /api/workdirs/{workdir_id}/tasks/{task_id}/documents/{kind}` | `crates/luban_server/src/server.rs:update_task_document` | `web/lib/luban-http.ts:updateTaskDocument` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CHANGES | `GET /api/workdirs/{workdir_id}/changes` | `crates/luban_server/src/server.rs:get_changes` | n/a (right sidebar removed) | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-DIFF | `GET /api/workdirs/{workdir_id}/diff` | `crates/luban_server/src/server.rs:get_diff` | `web/lib/luban-http.ts:fetchWorkspaceDiff` | Draft | ✅ | ✅ | ✅ |
 | C-HTTP-CONTEXT | `GET /api/workdirs/{workdir_id}/context` | `crates/luban_server/src/server.rs:get_context` | n/a (web context UI removed) | Draft | n/a | ✅ | ✅ |
@@ -64,6 +66,7 @@ Legend:
 - `C-WS-EVENTS`: Telegram progress relay reuses a single per-task progress message via `editMessageText` and treats `message is not modified` as idempotent success (see `docs/contracts/features/c-ws-events.md`, "Telegram progress relay behavior").
 - `C-WS-EVENTS`: Telegram passive conversation forwarding also keeps a single per-task relay message (after first send) and updates it via `editMessageText` on subsequent new updates.
 - `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
+- `C-WS-EVENTS`: `ServerEvent::TaskDocumentChanged` is emitted from filesystem notifications under `.luban/tasks/**` so the task document panel can refresh from FS truth.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id` and `created_at_unix_ms`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).
@@ -89,6 +92,7 @@ Legend:
 - `docs/contracts/features/c-http-workdir-tasks.md`
 - `docs/contracts/features/c-http-tasks.md`
 - `docs/contracts/features/c-http-conversation.md`
+- `docs/contracts/features/c-http-task-documents.md`
 - `docs/contracts/features/c-http-changes.md`
 - `docs/contracts/features/c-http-diff.md`
 - `docs/contracts/features/c-http-context.md`

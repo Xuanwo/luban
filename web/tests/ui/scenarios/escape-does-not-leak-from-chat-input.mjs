@@ -13,7 +13,12 @@ export async function runEscapeDoesNotLeakFromChatInput({ page }) {
     throw new Error(`expected no esc cancel hint before test, got ${beforeCount}`);
   }
 
-  await page.getByTestId('chat-input').click();
+  const workspace = page.getByTestId('task-workspace-panel');
+  const chatInputCount = await workspace.getByTestId('chat-input').count();
+  if (chatInputCount !== 0) {
+    throw new Error(`expected no chat input in agents panel, got ${chatInputCount}`);
+  }
+  await page.getByTestId('chat-scroll-container').click();
   await page.keyboard.press('Escape');
 
   await sleep(150);
@@ -23,4 +28,3 @@ export async function runEscapeDoesNotLeakFromChatInput({ page }) {
     throw new Error(`expected escape in chat input not to show esc cancel hint, got ${afterCount}`);
   }
 }
-

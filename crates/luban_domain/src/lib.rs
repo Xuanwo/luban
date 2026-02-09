@@ -17,8 +17,9 @@ pub use adapters::{
     AmpConfigEntry, AmpConfigEntryKind, ClaudeConfigEntry, ClaudeConfigEntryKind, CodexConfigEntry,
     CodexConfigEntryKind, ContextImage, CreatedWorkspace, DroidConfigEntry, DroidConfigEntryKind,
     NewTaskDraft, NewTaskStash, OpenTarget, ProjectIdentity, ProjectWorkspaceService,
-    PullRequestCiState, PullRequestInfo, PullRequestState, RunAgentTurnRequest, TaskIntentKind,
-    TaskIssueInfo, TaskStatusAutoUpdateSuggestion,
+    PullRequestCiState, PullRequestInfo, PullRequestState, RunAgentTurnRequest, TaskDocumentEvent,
+    TaskDocumentEventType, TaskDocumentIndex, TaskDocumentKind, TaskIntentKind, TaskIssueInfo,
+    TaskStatusAutoUpdateSuggestion,
 };
 mod context_tokens;
 pub use context_tokens::{

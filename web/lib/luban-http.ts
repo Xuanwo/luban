@@ -8,9 +8,13 @@ import type {
   NewTaskDraftSnapshot,
   NewTaskDraftsSnapshot,
   NewTaskStashResponse,
+  TaskDocumentKind,
+  TaskDocumentSnapshot,
+  TaskDocumentsSnapshot,
   TaskStatus,
   TasksSnapshot,
   ThreadsSnapshot,
+  WorkspaceChangesSnapshot,
   WorkspaceDiffSnapshot,
 } from "./luban-api"
 import { isMockMode } from "./luban-mode"
@@ -26,7 +30,10 @@ import {
   mockDeleteNewTaskDraft,
   mockFetchNewTaskDrafts,
   mockFetchNewTaskStash,
+  mockFetchTaskDocuments,
+  mockFetchWorkspaceChanges,
   mockSaveNewTaskStash,
+  mockUpdateTaskDocument,
   mockUpdateNewTaskDraft,
   mockClearNewTaskStash,
   mockUploadAttachment,
@@ -61,6 +68,47 @@ export async function fetchConversation(
       `GET /api/workdirs/${workspaceId}/conversations/${threadId} failed: ${res.status}`,
     )
   return (await res.json()) as ConversationSnapshot
+}
+
+export async function fetchTaskDocuments(
+  workspaceId: number,
+  threadId: number,
+): Promise<TaskDocumentsSnapshot> {
+  if (isMockMode()) return await mockFetchTaskDocuments(workspaceId, threadId)
+  const res = await fetch(`/api/workdirs/${workspaceId}/tasks/${threadId}/documents`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(
+      `GET /api/workdirs/${workspaceId}/tasks/${threadId}/documents failed: ${res.status}${text ? `: ${text}` : ""}`,
+    )
+  }
+  return (await res.json()) as TaskDocumentsSnapshot
+}
+
+export async function updateTaskDocument(args: {
+  workspaceId: number
+  threadId: number
+  kind: TaskDocumentKind
+  content: string
+}): Promise<TaskDocumentSnapshot> {
+  if (isMockMode()) {
+    return await mockUpdateTaskDocument(args.workspaceId, args.threadId, args.kind, args.content)
+  }
+  const res = await fetch(
+    `/api/workdirs/${args.workspaceId}/tasks/${args.threadId}/documents/${args.kind}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: args.content }),
+    },
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(
+      `PUT /api/workdirs/${args.workspaceId}/tasks/${args.threadId}/documents/${args.kind} failed: ${res.status}${text ? `: ${text}` : ""}`,
+    )
+  }
+  return (await res.json()) as TaskDocumentSnapshot
 }
 
 export async function uploadAttachment(args: {
@@ -110,6 +158,13 @@ export async function fetchWorkspaceDiff(workspaceId: number): Promise<Workspace
   const res = await fetch(`/api/workdirs/${workspaceId}/diff`)
   if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/diff failed: ${res.status}`)
   return (await res.json()) as WorkspaceDiffSnapshot
+}
+
+export async function fetchWorkspaceChanges(workspaceId: number): Promise<WorkspaceChangesSnapshot> {
+  if (isMockMode()) return await mockFetchWorkspaceChanges(workspaceId)
+  const res = await fetch(`/api/workdirs/${workspaceId}/changes`)
+  if (!res.ok) throw new Error(`GET /api/workdirs/${workspaceId}/changes failed: ${res.status}`)
+  return (await res.json()) as WorkspaceChangesSnapshot
 }
 
 export async function fetchCodexCustomPrompts(): Promise<CodexCustomPromptSnapshot[]> {

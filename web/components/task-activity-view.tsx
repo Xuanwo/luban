@@ -1229,6 +1229,7 @@ interface ActivityStreamSectionProps {
   scrollElement: HTMLElement | null
   messages: Message[]
   isLoading?: boolean
+  showHeader?: boolean
 }
 
 type ActivityGroup = 
@@ -1268,6 +1269,7 @@ function ActivityStreamSection({
   scrollElement,
   messages,
   isLoading,
+  showHeader = true,
   onCancelAgentTurn,
   workspaceId,
   taskId,
@@ -1431,27 +1433,28 @@ function ActivityStreamSection({
 
   return (
     <div>
-      {/* Activity header - Linear style: 15px, 600 */}
-      <div 
-        className="flex items-center justify-between"
-        style={{ 
-          padding: '12px 0px',
-          borderTop: `1px solid ${COLORS.border}`
-        }}
-      >
-        <h3 
-          style={{ 
-            fontSize: '15px', 
-            fontWeight: 600, 
-            color: COLORS.textPrimary 
+      {showHeader && (
+        <div
+          className="flex items-center justify-between"
+          style={{
+            padding: "12px 0px",
+            borderTop: `1px solid ${COLORS.border}`,
           }}
         >
-          Activity
-        </h3>
-      </div>
+          <h3
+            style={{
+              fontSize: "15px",
+              fontWeight: 600,
+              color: COLORS.textPrimary,
+            }}
+          >
+            Activity
+          </h3>
+        </div>
+      )}
 
       {/* Activity list (Linear style) */}
-      <div className="py-4">
+      <div className={showHeader ? "py-4" : "pt-2 pb-4"}>
         {messages.length === 0 && !isLoading && (
           <div 
             className="py-8 text-center"
@@ -1497,6 +1500,8 @@ export interface TaskActivityViewProps {
   inputComponent?: React.ReactNode
   onCancelAgentTurn?: () => void
   className?: string
+  showTaskHeader?: boolean
+  showActivityHeader?: boolean
 }
 
 export function TaskActivityView({
@@ -1512,6 +1517,8 @@ export function TaskActivityView({
   inputComponent,
   onCancelAgentTurn,
   className,
+  showTaskHeader = true,
+  showActivityHeader = true,
 }: TaskActivityViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null)
@@ -1621,18 +1628,20 @@ export function TaskActivityView({
           data-testid="chat-content-wrapper"
           style={{ maxWidth: "686px", margin: "0 auto" }}
         >
-          {/* Task header with title and description */}
-          <TaskHeaderSection
-            title={title}
-            description={description}
-            onTitleChange={onTitleChange}
-            onDescriptionChange={onDescriptionChange}
-          />
+          {showTaskHeader && (
+            <TaskHeaderSection
+              title={title}
+              description={description}
+              onTitleChange={onTitleChange}
+              onDescriptionChange={onDescriptionChange}
+            />
+          )}
 
           {/* Activity stream */}
           <ActivityStreamSection
             messages={messages}
             isLoading={isLoading}
+            showHeader={showActivityHeader}
             onCancelAgentTurn={onCancelAgentTurn}
             workspaceId={workspaceId}
             taskId={taskId}
