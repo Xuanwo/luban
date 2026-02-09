@@ -24,6 +24,7 @@ export async function runTaskDocumentsPanel({ page }) {
   const taskEditor = panel.getByTestId('task-document-editor-task');
   await taskEditor.waitFor({ state: 'visible' });
   await taskEditor.click();
+  await page.keyboard.type('Draft task notes for inline comment smoke test.');
   await taskEditor.press('ControlOrMeta+A');
   await panel.getByTestId('task-document-selection-toolbar').waitFor({ state: 'visible' });
   await panel.getByTestId('task-document-selection-toolbar-comment').click();

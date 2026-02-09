@@ -1,6 +1,7 @@
 use crate::engine::EngineCommand;
-use luban_domain::{TaskDocumentKind, WorkspaceId, WorkspaceThreadId};
+use luban_domain::{TaskDocumentKind, WorkspaceId, WorkspaceThreadId, paths};
 use notify::{Event, RecursiveMode, Watcher as _};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -21,15 +22,27 @@ enum TaskDocumentWatchMessage {
 
 #[derive(Debug)]
 enum TaskDocumentWatchCommand {
-    SyncWorkspaces {
-        workspaces: Vec<(WorkspaceId, PathBuf)>,
-    },
+    SyncWorkspaces { workspaces: Vec<WorkspaceId> },
     Shutdown,
 }
 
 #[derive(Debug)]
-struct WatchedWorkspace {
-    root_path: PathBuf,
+struct WatchedState {
+    tasks_root: PathBuf,
+    active_workspaces: HashSet<WorkspaceId>,
+}
+
+#[derive(Clone, Debug)]
+struct TaskIdentity {
+    workspace_id: WorkspaceId,
+    task_id: WorkspaceThreadId,
+}
+
+#[derive(Deserialize)]
+struct TaskIdentityRecord {
+    task_ulid: String,
+    workspace_id: u64,
+    task_id: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +50,12 @@ struct CachedDocument {
     content_hash: String,
     byte_len: u64,
     updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskEventFile {
+    Identity,
+    Document(TaskDocumentKind),
 }
 
 impl TaskDocumentWatchHandle {
@@ -54,16 +73,21 @@ impl TaskDocumentWatchHandle {
                 }
             };
 
-            let mut watched = HashMap::<WorkspaceId, WatchedWorkspace>::new();
-            let mut cache =
-                HashMap::<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind), CachedDocument>::new(
-                );
+            let mut watched: Option<WatchedState> = None;
+            let mut cache = HashMap::<(String, TaskDocumentKind), CachedDocument>::new();
+            let mut identities = HashMap::<String, TaskIdentity>::new();
 
             while let Ok(msg) = rx.recv() {
                 match msg {
                     TaskDocumentWatchMessage::Command(cmd) => match cmd {
                         TaskDocumentWatchCommand::SyncWorkspaces { workspaces } => {
-                            sync_workspaces(&mut watcher, &mut watched, &mut cache, workspaces);
+                            sync_workspaces(
+                                &mut watcher,
+                                &mut watched,
+                                &mut cache,
+                                &mut identities,
+                                workspaces,
+                            );
                         }
                         TaskDocumentWatchCommand::Shutdown => break,
                     },
@@ -75,11 +99,19 @@ impl TaskDocumentWatchHandle {
                                 continue;
                             }
                         };
-                        let changed = changed_documents_from_event(&watched, &mut cache, &event);
-                        for (workspace_id, thread_id, kind) in changed {
+                        let Some(watched_state) = watched.as_ref() else {
+                            continue;
+                        };
+                        let changed = changed_documents_from_event(
+                            watched_state,
+                            &mut cache,
+                            &mut identities,
+                            &event,
+                        );
+                        for (workspace_id, task_id, kind) in changed {
                             let _ = engine_tx.try_send(EngineCommand::TaskDocumentObserved {
                                 workspace_id,
-                                thread_id,
+                                thread_id: task_id,
                                 kind,
                             });
                         }
@@ -100,7 +132,7 @@ impl TaskDocumentWatchHandle {
         Self { tx, join: None }
     }
 
-    pub(crate) fn sync_workspaces(&self, workspaces: Vec<(WorkspaceId, PathBuf)>) {
+    pub(crate) fn sync_workspaces(&self, workspaces: Vec<WorkspaceId>) {
         let _ = self.tx.send(TaskDocumentWatchMessage::Command(
             TaskDocumentWatchCommand::SyncWorkspaces { workspaces },
         ));
@@ -120,178 +152,196 @@ impl Drop for TaskDocumentWatchHandle {
 
 fn sync_workspaces(
     watcher: &mut notify::RecommendedWatcher,
-    watched: &mut HashMap<WorkspaceId, WatchedWorkspace>,
-    cache: &mut HashMap<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind), CachedDocument>,
-    workspaces: Vec<(WorkspaceId, PathBuf)>,
+    watched: &mut Option<WatchedState>,
+    cache: &mut HashMap<(String, TaskDocumentKind), CachedDocument>,
+    identities: &mut HashMap<String, TaskIdentity>,
+    workspaces: Vec<WorkspaceId>,
 ) {
-    let desired_set: HashSet<WorkspaceId> = workspaces.iter().map(|(id, _)| *id).collect();
-
-    let existing_ids = watched.keys().copied().collect::<Vec<_>>();
-    for workspace_id in existing_ids {
-        if desired_set.contains(&workspace_id) {
-            continue;
-        }
-        if let Some(entry) = watched.remove(&workspace_id) {
-            let _ = watcher.unwatch(&entry.root_path);
-        }
-        cache.retain(|(wid, _, _), _| *wid != workspace_id);
-    }
-
-    for (workspace_id, worktree_path) in workspaces {
-        let root = worktree_path.join(".luban").join("tasks");
-        if std::fs::create_dir_all(&root).is_err() {
-            continue;
-        }
-        let root = std::fs::canonicalize(&root).unwrap_or(root);
-
-        if let Some(existing) = watched.get(&workspace_id)
-            && existing.root_path == root
-        {
-            continue;
-        }
-
-        if let Some(existing) = watched.remove(&workspace_id) {
-            let _ = watcher.unwatch(&existing.root_path);
-        }
-        cache.retain(|(wid, _, _), _| *wid != workspace_id);
-
-        if watcher.watch(&root, RecursiveMode::Recursive).is_err() {
-            continue;
-        }
-        watched.insert(
-            workspace_id,
-            WatchedWorkspace {
-                root_path: root.clone(),
-            },
-        );
-
-        seed_workspace_cache(workspace_id, &root, cache);
-    }
-}
-
-fn seed_workspace_cache(
-    workspace_id: WorkspaceId,
-    root: &Path,
-    cache: &mut HashMap<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind), CachedDocument>,
-) {
-    let Ok(entries) = std::fs::read_dir(root) else {
+    let active_workspaces: HashSet<WorkspaceId> = workspaces.into_iter().collect();
+    let Some(tasks_root) = resolve_task_documents_root() else {
+        tracing::debug!("task document watcher disabled: failed to resolve luban root");
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
+    if std::fs::create_dir_all(&tasks_root).is_err() {
+        tracing::debug!(path = %tasks_root.display(), "task document watcher failed to create root");
+        return;
+    }
+    let tasks_root = std::fs::canonicalize(&tasks_root).unwrap_or(tasks_root);
+
+    let needs_rewatch = match watched.as_ref() {
+        Some(entry) => entry.tasks_root != tasks_root,
+        None => true,
+    };
+    if needs_rewatch {
+        if let Some(existing) = watched.take() {
+            let _ = watcher.unwatch(&existing.tasks_root);
         }
-        let Some(thread_name) = path.file_name().and_then(|v| v.to_str()) else {
-            continue;
-        };
-        let Ok(thread_id_raw) = thread_name.parse::<u64>() else {
-            continue;
-        };
-        let thread_id = WorkspaceThreadId::from_u64(thread_id_raw);
-        for kind in [
-            TaskDocumentKind::Task,
-            TaskDocumentKind::Plan,
-            TaskDocumentKind::Memory,
-        ] {
-            let file_path = path.join(kind.file_name());
-            let Some(next) = read_document_state(&file_path) else {
-                continue;
-            };
-            cache.insert((workspace_id, thread_id, kind), next);
+        cache.clear();
+        identities.clear();
+        if watcher
+            .watch(&tasks_root, RecursiveMode::Recursive)
+            .is_err()
+        {
+            tracing::debug!(path = %tasks_root.display(), "task document watcher failed to watch root");
+            return;
         }
+        *watched = Some(WatchedState {
+            tasks_root: tasks_root.clone(),
+            active_workspaces: active_workspaces.clone(),
+        });
+    }
+
+    if let Some(entry) = watched.as_mut() {
+        entry.active_workspaces = active_workspaces;
     }
 }
 
 fn changed_documents_from_event(
-    watched: &HashMap<WorkspaceId, WatchedWorkspace>,
-    cache: &mut HashMap<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind), CachedDocument>,
+    watched: &WatchedState,
+    cache: &mut HashMap<(String, TaskDocumentKind), CachedDocument>,
+    identities: &mut HashMap<String, TaskIdentity>,
     event: &Event,
 ) -> Vec<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind)> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for path in &event.paths {
-        let Some((workspace_id, thread_id, kind, file_path)) = resolve_document_path(watched, path)
+        let Some((task_ulid, event_file)) = resolve_task_event_path(&watched.tasks_root, path)
         else {
             continue;
         };
 
-        let key = (workspace_id, thread_id, kind);
-        let prev = cache.get(&key).cloned();
-        let next = read_document_state(&file_path);
-
-        let changed = match (&prev, &next) {
-            (None, None) => false,
-            (Some(_), None) => true,
-            (None, Some(_)) => true,
-            (Some(prev), Some(next)) => prev != next,
-        };
-        if !changed {
-            continue;
-        }
-
-        match next {
-            Some(next) => {
-                cache.insert(key, next);
+        match event_file {
+            TaskEventFile::Identity => {
+                if let Some(identity) = read_task_identity(&watched.tasks_root, &task_ulid) {
+                    identities.insert(task_ulid, identity);
+                } else {
+                    identities.remove(&task_ulid);
+                }
             }
-            None => {
-                cache.remove(&key);
-            }
-        }
+            TaskEventFile::Document(kind) => {
+                let key = (task_ulid.clone(), kind);
+                let file_path = watched.tasks_root.join(&task_ulid).join(kind.file_name());
+                let prev = cache.get(&key).cloned();
+                let next = read_document_state(&file_path);
 
-        if seen.insert(key) {
-            out.push((workspace_id, thread_id, kind));
+                let changed = match (&prev, &next) {
+                    (None, None) => false,
+                    (Some(_), None) => true,
+                    (None, Some(_)) => true,
+                    (Some(prev), Some(next)) => prev != next,
+                };
+                if !changed {
+                    continue;
+                }
+
+                if let Some(next) = next {
+                    cache.insert(key, next);
+                } else {
+                    cache.remove(&key);
+                }
+
+                let Some(identity) =
+                    load_task_identity(&watched.tasks_root, &task_ulid, identities)
+                else {
+                    continue;
+                };
+                if !watched.active_workspaces.contains(&identity.workspace_id) {
+                    continue;
+                }
+
+                if seen.insert((identity.workspace_id, identity.task_id, kind)) {
+                    out.push((identity.workspace_id, identity.task_id, kind));
+                }
+            }
         }
     }
     out
 }
 
-fn resolve_document_path(
-    watched: &HashMap<WorkspaceId, WatchedWorkspace>,
-    raw_path: &Path,
-) -> Option<(WorkspaceId, WorkspaceThreadId, TaskDocumentKind, PathBuf)> {
-    let canonical = std::fs::canonicalize(raw_path).ok();
-    for (workspace_id, watched_workspace) in watched {
-        let relative = if let Ok(relative) = raw_path.strip_prefix(&watched_workspace.root_path) {
-            relative.to_path_buf()
-        } else if let Some(canonical) = &canonical {
-            if let Ok(relative) = canonical.strip_prefix(&watched_workspace.root_path) {
-                relative.to_path_buf()
-            } else {
-                continue;
-            }
-        } else {
-            continue;
-        };
-        let mut components = relative.components();
-        let Some(thread_component) = components.next() else {
-            continue;
-        };
-        let Some(file_component) = components.next() else {
-            continue;
-        };
-        if components.next().is_some() {
-            continue;
-        }
+fn load_task_identity(
+    tasks_root: &Path,
+    task_ulid: &str,
+    identities: &mut HashMap<String, TaskIdentity>,
+) -> Option<TaskIdentity> {
+    if let Some(identity) = identities.get(task_ulid) {
+        return Some(identity.clone());
+    }
+    let identity = read_task_identity(tasks_root, task_ulid)?;
+    identities.insert(task_ulid.to_owned(), identity.clone());
+    Some(identity)
+}
 
-        let thread_name = thread_component.as_os_str().to_str()?;
-        let thread_id_raw = thread_name.parse::<u64>().ok()?;
-        let file_name = file_component.as_os_str().to_str()?;
-        let kind = if file_name.eq_ignore_ascii_case("TASK.md") {
-            TaskDocumentKind::Task
-        } else if file_name.eq_ignore_ascii_case("PLAN.md") {
-            TaskDocumentKind::Plan
-        } else if file_name.eq_ignore_ascii_case("MEMORY.md") {
-            TaskDocumentKind::Memory
+fn read_task_identity(tasks_root: &Path, task_ulid: &str) -> Option<TaskIdentity> {
+    let path = tasks_root.join(task_ulid).join("task.json");
+    if let Ok(content) = std::fs::read_to_string(path) {
+        let record: TaskIdentityRecord = serde_json::from_str(&content).ok()?;
+        if record.task_ulid != task_ulid {
+            return None;
+        }
+        return Some(TaskIdentity {
+            workspace_id: WorkspaceId::from_u64(record.workspace_id),
+            task_id: WorkspaceThreadId::from_u64(record.task_id),
+        });
+    }
+
+    parse_identity_from_fallback_ulid(task_ulid)
+}
+
+fn parse_identity_from_fallback_ulid(task_ulid: &str) -> Option<TaskIdentity> {
+    let trimmed = task_ulid.trim();
+    let rest = trimmed.strip_prefix("task-")?;
+    let (workspace_str, task_str) = rest.split_once('-')?;
+    if workspace_str.is_empty() || task_str.is_empty() {
+        return None;
+    }
+    if task_str.contains('-') {
+        return None;
+    }
+    let workspace_id = workspace_str.parse::<u64>().ok()?;
+    let task_id = task_str.parse::<u64>().ok()?;
+    Some(TaskIdentity {
+        workspace_id: WorkspaceId::from_u64(workspace_id),
+        task_id: WorkspaceThreadId::from_u64(task_id),
+    })
+}
+
+fn resolve_task_event_path(tasks_root: &Path, raw_path: &Path) -> Option<(String, TaskEventFile)> {
+    let canonical = std::fs::canonicalize(raw_path).ok();
+    let relative = if let Ok(relative) = raw_path.strip_prefix(tasks_root) {
+        relative.to_path_buf()
+    } else if let Some(canonical) = &canonical {
+        if let Ok(relative) = canonical.strip_prefix(tasks_root) {
+            relative.to_path_buf()
         } else {
-            continue;
-        };
-        let thread_id = WorkspaceThreadId::from_u64(thread_id_raw);
-        let file_path = watched_workspace
-            .root_path
-            .join(thread_id_raw.to_string())
-            .join(kind.file_name());
-        return Some((*workspace_id, thread_id, kind, file_path));
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    let mut components = relative.components();
+    let task_component = components.next()?;
+    let file_component = components.next()?;
+    if components.next().is_some() {
+        return None;
+    }
+
+    let task_ulid = task_component.as_os_str().to_str()?.trim().to_owned();
+    if task_ulid.is_empty() {
+        return None;
+    }
+    let file_name = file_component.as_os_str().to_str()?.trim();
+    if file_name.eq_ignore_ascii_case("task.json") {
+        return Some((task_ulid, TaskEventFile::Identity));
+    }
+    if file_name.eq_ignore_ascii_case("TASK.md") {
+        return Some((task_ulid, TaskEventFile::Document(TaskDocumentKind::Task)));
+    }
+    if file_name.eq_ignore_ascii_case("PLAN.md") {
+        return Some((task_ulid, TaskEventFile::Document(TaskDocumentKind::Plan)));
+    }
+    if file_name.eq_ignore_ascii_case("MEMORY.md") {
+        return Some((task_ulid, TaskEventFile::Document(TaskDocumentKind::Memory)));
     }
     None
 }
@@ -313,6 +363,21 @@ fn read_document_state(path: &Path) -> Option<CachedDocument> {
     })
 }
 
+fn resolve_task_documents_root() -> Option<PathBuf> {
+    let root = if let Some(root) = std::env::var_os(paths::LUBAN_ROOT_ENV) {
+        let root = root.to_string_lossy();
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        PathBuf::from(trimmed)
+    } else {
+        let home = std::env::var_os("HOME")?;
+        PathBuf::from(home).join("luban")
+    };
+    Some(root.join("tasks").join("v1").join("tasks"))
+}
+
 fn now_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -325,22 +390,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_document_path_ignores_unrelated_files() {
-        let mut watched = HashMap::new();
-        watched.insert(
-            WorkspaceId::from_u64(7),
-            WatchedWorkspace {
-                root_path: PathBuf::from("/tmp/work/.luban/tasks"),
-            },
+    fn resolve_task_event_path_ignores_unrelated_files() {
+        let root = PathBuf::from("/tmp/luban/tasks/v1/tasks");
+        assert!(
+            resolve_task_event_path(&root, Path::new("/tmp/luban/tasks/v1/tasks/readme.md"))
+                .is_none()
+        );
+        assert!(
+            resolve_task_event_path(&root, Path::new("/tmp/luban/tasks/v1/tasks/1/other.md"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_task_event_path_parses_document_and_identity() {
+        let root = PathBuf::from("/tmp/luban/tasks/v1/tasks");
+        let doc = resolve_task_event_path(
+            &root,
+            Path::new("/tmp/luban/tasks/v1/tasks/01ARZ3NDEKTSV4RRFFQ69G5FAV/TASK.md"),
+        );
+        assert_eq!(
+            doc,
+            Some((
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned(),
+                TaskEventFile::Document(TaskDocumentKind::Task),
+            ))
         );
 
-        assert!(
-            resolve_document_path(&watched, Path::new("/tmp/work/.luban/tasks/1/other.md"))
-                .is_none()
+        let meta = resolve_task_event_path(
+            &root,
+            Path::new("/tmp/luban/tasks/v1/tasks/01ARZ3NDEKTSV4RRFFQ69G5FAV/task.json"),
         );
-        assert!(
-            resolve_document_path(&watched, Path::new("/tmp/work/.luban/tasks/readme.md"))
-                .is_none()
+        assert_eq!(
+            meta,
+            Some((
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned(),
+                TaskEventFile::Identity,
+            ))
         );
+    }
+
+    #[test]
+    fn parse_identity_from_fallback_ulid_works() {
+        let identity = parse_identity_from_fallback_ulid("task-12-34");
+        assert!(identity.is_some());
+        let identity = identity.expect("identity should be parsed");
+        assert_eq!(identity.workspace_id.as_u64(), 12);
+        assert_eq!(identity.task_id.as_u64(), 34);
+    }
+
+    #[test]
+    fn parse_identity_from_fallback_ulid_rejects_invalid() {
+        assert!(parse_identity_from_fallback_ulid("task-12").is_none());
+        assert!(parse_identity_from_fallback_ulid("task-12-34-56").is_none());
+        assert!(parse_identity_from_fallback_ulid("task-a-34").is_none());
+        assert!(parse_identity_from_fallback_ulid("foo-12-34").is_none());
     }
 }

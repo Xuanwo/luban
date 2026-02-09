@@ -59,7 +59,7 @@ export async function fetchConversation(
   args: { before?: number; limit?: number } = {},
 ): Promise<ConversationSnapshot> {
   if (isMockMode()) return await mockFetchConversation(workspaceId, threadId, args)
-  const limit = args.limit ?? 2000
+  const limit = args.limit ?? 200
   const params = new URLSearchParams({ limit: String(limit) })
   if (args.before != null) params.set("before", String(args.before))
   const res = await fetch(`/api/workdirs/${workspaceId}/conversations/${threadId}?${params.toString()}`)
@@ -72,30 +72,60 @@ export async function fetchConversation(
 
 export async function fetchTaskDocuments(
   workspaceId: number,
-  threadId: number,
+  taskId: number,
 ): Promise<TaskDocumentsSnapshot> {
-  if (isMockMode()) return await mockFetchTaskDocuments(workspaceId, threadId)
-  const res = await fetch(`/api/workdirs/${workspaceId}/tasks/${threadId}/documents`)
+  if (isMockMode()) return await mockFetchTaskDocuments(workspaceId, taskId)
+  const res = await fetch(`/api/workdirs/${workspaceId}/tasks/${taskId}/documents`)
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
-      `GET /api/workdirs/${workspaceId}/tasks/${threadId}/documents failed: ${res.status}${text ? `: ${text}` : ""}`,
+      `GET /api/workdirs/${workspaceId}/tasks/${taskId}/documents failed: ${res.status}${text ? `: ${text}` : ""}`,
     )
   }
   return (await res.json()) as TaskDocumentsSnapshot
 }
 
+export async function fetchTaskDocument(args: {
+  workspaceId: number
+  taskId: number
+  kind: TaskDocumentKind
+}): Promise<TaskDocumentSnapshot> {
+  if (isMockMode()) {
+    const snapshot = await mockFetchTaskDocuments(args.workspaceId, args.taskId)
+    const found = snapshot.documents.find((doc) => doc.kind === args.kind)
+    if (found) return found
+    return {
+      kind: args.kind,
+      rel_path: `tasks/v1/tasks/task-${args.workspaceId}-${args.taskId}/${args.kind.toUpperCase()}.md`,
+      content: "",
+      content_hash: "",
+      byte_len: 0,
+      updated_at_unix_ms: Date.now(),
+    }
+  }
+  const res = await fetch(
+    `/api/workdirs/${args.workspaceId}/tasks/${args.taskId}/documents/${args.kind}`,
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(
+      `GET /api/workdirs/${args.workspaceId}/tasks/${args.taskId}/documents/${args.kind} failed: ${res.status}${text ? `: ${text}` : ""}`,
+    )
+  }
+  return (await res.json()) as TaskDocumentSnapshot
+}
+
 export async function updateTaskDocument(args: {
   workspaceId: number
-  threadId: number
+  taskId: number
   kind: TaskDocumentKind
   content: string
 }): Promise<TaskDocumentSnapshot> {
   if (isMockMode()) {
-    return await mockUpdateTaskDocument(args.workspaceId, args.threadId, args.kind, args.content)
+    return await mockUpdateTaskDocument(args.workspaceId, args.taskId, args.kind, args.content)
   }
   const res = await fetch(
-    `/api/workdirs/${args.workspaceId}/tasks/${args.threadId}/documents/${args.kind}`,
+    `/api/workdirs/${args.workspaceId}/tasks/${args.taskId}/documents/${args.kind}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -105,7 +135,7 @@ export async function updateTaskDocument(args: {
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(
-      `PUT /api/workdirs/${args.workspaceId}/tasks/${args.threadId}/documents/${args.kind} failed: ${res.status}${text ? `: ${text}` : ""}`,
+      `PUT /api/workdirs/${args.workspaceId}/tasks/${args.taskId}/documents/${args.kind} failed: ${res.status}${text ? `: ${text}` : ""}`,
     )
   }
   return (await res.json()) as TaskDocumentSnapshot

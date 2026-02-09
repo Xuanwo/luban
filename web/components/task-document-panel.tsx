@@ -10,6 +10,7 @@ import { OpenButton } from "@/components/shared/open-button"
 import type { ComposerAttachment } from "@/components/shared/message-editor"
 import { attachmentHref } from "@/lib/attachment-href"
 import { buildMessages } from "@/lib/conversation-ui"
+import { buildTaskDocumentChangePrompt } from "@/lib/task-document-diff"
 import { openSettingsPanel } from "@/lib/open-settings"
 import type {
   AttachmentRef,
@@ -17,7 +18,13 @@ import type {
   TaskDocumentKind,
   TaskDocumentSnapshot,
 } from "@/lib/luban-api"
-import { fetchCodexCustomPrompts, fetchTaskDocuments, updateTaskDocument, uploadAttachment } from "@/lib/luban-http"
+import {
+  fetchCodexCustomPrompts,
+  fetchTaskDocument,
+  fetchTaskDocuments,
+  updateTaskDocument,
+  uploadAttachment,
+} from "@/lib/luban-http"
 import { useLuban } from "@/lib/luban-context"
 
 type DocumentState = {
@@ -72,7 +79,7 @@ function normalizeDocumentSnapshot(
   if (snapshot) return snapshot
   return {
     kind,
-    rel_path: `.luban/tasks/${taskId}/${TITLES[kind]}`,
+    rel_path: `tasks/v1/tasks/mock-${taskId}/${TITLES[kind]}`,
     content: "",
     content_hash: "",
     byte_len: 0,
@@ -82,15 +89,6 @@ function normalizeDocumentSnapshot(
 
 function hasLocalUnsavedEdit(doc: DocumentState): boolean {
   return doc.draft !== doc.snapshot.content
-}
-
-function documentEditPrompt(path: string): string {
-  return [
-    "I updated a task document.",
-    "",
-    `Path: ${path}`,
-    "Please review the change, update plan/memory as needed, and continue this task.",
-  ].join("\n")
 }
 
 function sectionReviewPrompt(args: {
@@ -158,6 +156,11 @@ export function TaskDocumentPanel() {
   const loadScopeRef = useRef<string>("")
   const refreshInFlightRef = useRef(false)
   const pendingRefreshRef = useRef(false)
+  const suppressNextWatcherRefreshRef = useRef<Record<TaskDocumentKind, number>>({
+    task: 0,
+    plan: 0,
+    memory: 0,
+  })
 
   const scope = `${activeWorkdirId ?? "none"}:${activeTaskId ?? "none"}`
   const attachmentScope = `${activeWorkdirId ?? "none"}:${activeTaskId ?? "none"}`
@@ -219,6 +222,38 @@ export function TaskDocumentPanel() {
     [activeTaskId, activeWorkdirId],
   )
 
+  const refreshDocumentByKind = useCallback(
+    async (kind: TaskDocumentKind, preferLocalDirty: boolean) => {
+      if (activeWorkdirId == null || activeTaskId == null) return
+      try {
+        const snapshot = await fetchTaskDocument({
+          workspaceId: activeWorkdirId,
+          taskId: activeTaskId,
+          kind,
+        })
+        setDocuments((prev) => {
+          if (!prev) return prev
+          const current = prev[kind]
+          if (!current) return prev
+          if (preferLocalDirty && hasLocalUnsavedEdit(current)) return prev
+          return {
+            ...prev,
+            [kind]: {
+              snapshot,
+              draft: snapshot.content,
+              isSaving: false,
+              error: null,
+            },
+          }
+        })
+      } catch {
+        // Fall back to full reload when single-document fetch fails.
+        void reloadDocuments(preferLocalDirty)
+      }
+    },
+    [activeTaskId, activeWorkdirId, reloadDocuments],
+  )
+
   useEffect(() => {
     if (scope === loadScopeRef.current) return
     loadScopeRef.current = scope
@@ -255,9 +290,14 @@ export function TaskDocumentPanel() {
     return subscribeServerEvents((event) => {
       if (event.type !== "task_document_changed") return
       if (event.workdir_id !== activeWorkdirId || event.task_id !== activeTaskId) return
-      void reloadDocuments(true)
+      const suppressed = suppressNextWatcherRefreshRef.current[event.kind] ?? 0
+      if (suppressed > 0) {
+        suppressNextWatcherRefreshRef.current[event.kind] = suppressed - 1
+        return
+      }
+      void refreshDocumentByKind(event.kind, true)
     })
-  }, [activeTaskId, activeWorkdirId, reloadDocuments, subscribeServerEvents])
+  }, [activeTaskId, activeWorkdirId, refreshDocumentByKind, subscribeServerEvents])
 
   useEffect(() => {
     const el = surfaceRef.current
@@ -349,8 +389,12 @@ export function TaskDocumentPanel() {
         const doc = documents[docKind]
         if (!doc) return null
         if (doc.isSaving || !hasLocalUnsavedEdit(doc)) return null
-        return { kind: docKind, draft: doc.draft }
-      }).filter((v): v is { kind: TaskDocumentKind; draft: string } => v != null)
+        return {
+          kind: docKind,
+          draft: doc.draft,
+          before: doc.snapshot.content,
+        }
+      }).filter((v): v is { kind: TaskDocumentKind; draft: string; before: string } => v != null)
 
       if (pending.length === 0) return
 
@@ -373,11 +417,23 @@ export function TaskDocumentPanel() {
         try {
           const updated = await updateTaskDocument({
             workspaceId: activeWorkdirId,
-            threadId: activeTaskId,
+            taskId: activeTaskId,
             kind: item.kind,
             content: item.draft,
           })
-          sendAgentMessageTo(activeWorkdirId, activeTaskId, documentEditPrompt(updated.rel_path))
+
+          suppressNextWatcherRefreshRef.current[item.kind] =
+            (suppressNextWatcherRefreshRef.current[item.kind] ?? 0) + 1
+
+          const prompt = buildTaskDocumentChangePrompt({
+            kind: item.kind,
+            path: updated.rel_path,
+            before: item.before,
+            after: item.draft,
+          })
+          if (prompt) {
+            sendAgentMessageTo(activeWorkdirId, activeTaskId, prompt)
+          }
 
           setDocuments((prev) => {
             if (!prev) return prev

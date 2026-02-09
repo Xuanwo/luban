@@ -73,6 +73,13 @@ export async function runRunningStreamingStates({ page, baseUrl }) {
   if (streamingMessageCount < 5) {
     throw new Error(`expected expanded timeline to include all independent streaming message events, got ${streamingMessageCount}`);
   }
+  const finalMessageRows = streamingMessageEvents.filter({
+    hasText: 'Almost done. Preparing the final consolidated response and final verification notes.',
+  });
+  const finalMessageCount = await finalMessageRows.count();
+  if (finalMessageCount !== 1) {
+    throw new Error(`expected repeated updates for the same assistant message id to be deduped, got ${finalMessageCount}`);
+  }
 
   const reasoningEvent = streamingCard
     .getByTestId('agent-turn-event')

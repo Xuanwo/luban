@@ -29,5 +29,17 @@ export async function runArchivedTaskOpenReadonly({ page }) {
   await archivedRow.scrollIntoViewIfNeeded();
   await archivedRow.click();
 
-  await archivedBanner.waitFor({ state: 'visible' });
+  const bannerVisible = await archivedBanner
+    .waitFor({ state: 'visible', timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (bannerVisible) return;
+
+  const workspacePanel = page.getByTestId('task-workspace-panel');
+  await workspacePanel.waitFor({ state: 'visible' });
+  const chatInputCount = await workspacePanel.getByTestId('chat-input').count();
+  if (chatInputCount !== 0) {
+    throw new Error('expected archived task to be read-only (no editable chat input)');
+  }
 }

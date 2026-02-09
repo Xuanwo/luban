@@ -84,44 +84,7 @@ function newEntryId(prefix: string): string {
 function taskDocRelPath(taskId: WorkspaceThreadId, kind: TaskDocumentKind): string {
   const file =
     kind === "task" ? "TASK.md" : kind === "plan" ? "PLAN.md" : "MEMORY.md"
-  return `.luban/tasks/${taskId}/${file}`
-}
-
-function defaultTaskDocContent(kind: TaskDocumentKind): string {
-  if (kind === "task") {
-    return [
-      "# TASK",
-      "",
-      "## Current Status",
-      "- task_status: todo",
-      "- run_status: idle",
-      "",
-      "## Latest Situation",
-      "- Fill in the current state and blockers.",
-      "",
-    ].join("\n")
-  }
-  if (kind === "plan") {
-    return [
-      "# PLAN",
-      "",
-      "## Milestones",
-      "1. Break down work into small, verifiable steps.",
-      "2. Execute changes with tests.",
-      "3. Validate and summarize outcomes.",
-      "",
-    ].join("\n")
-  }
-  return [
-    "# MEMORY",
-    "",
-    "## Important Facts",
-    "- Record durable decisions and constraints here.",
-    "",
-    "## Open Questions",
-    "- Track pending checks and unresolved assumptions.",
-    "",
-  ].join("\n")
+  return `tasks/v1/tasks/mock-${taskId}/${file}`
 }
 
 function mockHash(content: string): string {
@@ -143,7 +106,7 @@ function ensureTaskDocuments(
   if (existing) return existing
   const now = Date.now()
   const docs: TaskDocumentSnapshot[] = (["task", "plan", "memory"] as TaskDocumentKind[]).map((kind) => {
-    const content = defaultTaskDocContent(kind)
+    const content = ""
     return {
       kind,
       rel_path: taskDocRelPath(taskId, kind),

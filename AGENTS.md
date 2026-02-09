@@ -77,6 +77,18 @@ Luban ships prompt templates as a user-facing feature for tasks across *any* rep
   - Encourage direct investigation and implementation in the worktree.
   - Avoid requiring "patch/diff" artifacts as the primary output, unless the user explicitly asks.
 
+## 0.4 User-First Responsiveness (hard requirement)
+
+Luban is a direct user-facing application. User interactions must not be blocked by non-essential
+work.
+
+- Only load/request data that is strictly required for the current user action.
+- Prefer lazy loading, incremental loading, and background refresh for non-critical resources.
+- Do not put heavyweight global snapshots, full scans, or broad synchronization on hot UI paths.
+- When a new request is added to an interactive flow, document why it is necessary and what would
+  break without it.
+- Prefer patch-style updates (delta/event-driven) over full refetch when only partial data changes.
+
 ## 1. Project context and goals (first-screen context for agents)
 - Tech stack: Rust server + web frontend (optionally wrapped by Tauri)
 - All engineering commands are managed via `justfile` (prefer `just` over invoking `cargo` directly)

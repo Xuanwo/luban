@@ -7,6 +7,8 @@ Verification: Mock=yes, Provider=yes, CI=yes
 
 - Method: `GET`
 - Path: `/api/workdirs/{workdir_id}/tasks/{task_id}/documents`
+- Method: `GET`
+- Path: `/api/workdirs/{workdir_id}/tasks/{task_id}/documents/{kind}`
 - Method: `PUT`
 - Path: `/api/workdirs/{workdir_id}/tasks/{task_id}/documents/{kind}`
 
@@ -20,29 +22,40 @@ Expose task-scoped document files for review and editing:
 
 ## Storage model
 
-- Primary source of truth: filesystem under the active worktree.
-- Base path: `.luban/tasks/{task_id}/`.
+- Primary source of truth: global Luban storage (`$LUBAN_ROOT`), task-native layout.
+- Base path: `tasks/v1/tasks/{task_ulid}/`.
+- Reverse index path: `tasks/v1/index/workdir_task/{workdir_id}-{task_id}.json`.
 - File names: `TASK.md`, `PLAN.md`, `MEMORY.md`.
+- Identity metadata: `task.json` in each task directory, linking `{task_ulid}` to `{workdir_id, task_id}`.
 - Provider keeps an in-memory cache for change detection only.
-- Runtime change detection is driven by filesystem notifications on `.luban/tasks/**`.
+- Runtime change detection is driven by filesystem notifications on `tasks/v1/tasks/**`.
 
 ## GET behavior
 
-- Ensures the directory exists.
+- Read-only path: does not create identity metadata or document files.
 - Returns exactly three documents in semantic order: `task`, `plan`, `memory`.
-- If a file is missing, provider initializes it with default template content and persists it to FS.
+- If identity/files are missing, provider returns empty content and virtual `rel_path`.
 - Response body: `TaskDocumentsSnapshot`.
+
+## GET by kind behavior
+
+- Read-only path: does not create identity metadata or document files.
+- Returns only the requested kind (`task` / `plan` / `memory`).
+- If identity/files are missing, provider returns empty content and virtual `rel_path`.
+- Response body: `TaskDocumentSnapshot`.
 
 ## PUT behavior
 
 - `kind` path parameter must be one of: `task`, `plan`, `memory`.
 - Request body: `{ "content": string }`.
-- Writes content to the matching file atomically.
+- Lazily creates task identity/directory on first write, then writes content atomically.
+- First-write identity uses deterministic fallback task id (`task-{workdir_id}-{task_id}`) to align
+  with agent-created files before provider writes.
 - Response body: `TaskDocumentSnapshot`.
 
 ## Invariants
 
-- `TaskDocumentSnapshot.rel_path` must be a `.luban/tasks/{task_id}/...` relative path.
+- `TaskDocumentSnapshot.rel_path` must be a `tasks/v1/tasks/{task_ulid}/...` relative path.
 - `content_hash` must change when content changes.
 - `byte_len` must match returned content length in bytes.
 - Task document filesystem updates are independent from code diff/change surfaces (`C-HTTP-CHANGES`, `C-HTTP-DIFF`).
@@ -51,4 +64,5 @@ Expose task-scoped document files for review and editing:
 
 - `web/lib/luban-http.ts`
   - `fetchTaskDocuments(workdirId, taskId)`
-  - `updateTaskDocument({ workspaceId, threadId, kind, content })`
+  - `fetchTaskDocument({ workspaceId, taskId, kind })`
+  - `updateTaskDocument({ workspaceId, taskId, kind, content })`

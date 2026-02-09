@@ -851,6 +851,16 @@ export function defaultMockFixtures(): MockFixtures {
           entry_id: newEntryId("ae"),
           created_at_unix_ms: nextEntryCreatedAtUnixMs(),
           event: {
+            type: "message",
+            id: "running_stream_message_5",
+            text: "Almost done. Preparing the final consolidated response and final verification notes.",
+          },
+        },
+        {
+          type: "agent_event",
+          entry_id: newEntryId("ae"),
+          created_at_unix_ms: nextEntryCreatedAtUnixMs(),
+          event: {
             type: "item",
             id: "running_stream_tool_tail",
             kind: "command_execution",

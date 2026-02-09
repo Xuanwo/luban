@@ -22,7 +22,7 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { agentRunnerLabel } from "@/lib/conversation-ui"
+import { agentRunnerLabel, pickStreamingSummaryActivity } from "@/lib/conversation-ui"
 import type { Message, ActivityEvent } from "@/lib/conversation-ui"
 import { Markdown } from "@/components/markdown"
 import { AnsiOutput } from "@/components/shared/ansi-output"
@@ -260,12 +260,12 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
     )
 
     return (
-      <div className="group/event py-1">
+      <div className="group/event py-1" data-testid="agent-turn-message-event">
         <div className="flex items-start gap-2">
           <div
             data-testid="activity-event-icon"
             className="flex items-center justify-center flex-shrink-0"
-            style={{ width: "14px", height: "16.8px", marginLeft: "3px", marginTop: "2px" }}
+            style={{ width: "14px", height: "16.8px", marginTop: "2px" }}
           >
             {assistantIcon}
           </div>
@@ -288,7 +288,7 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
   }
 
   return (
-    <div className="group/event">
+    <div className="group/event" data-testid="agent-turn-event">
       <button
         onClick={() => canToggle && onToggle()}
         className={cn(
@@ -305,7 +305,7 @@ function ActivityEventItem({ event, isExpanded, onToggle, duration }: ActivityEv
         <div
           data-testid="activity-event-icon"
           className="flex items-center justify-center flex-shrink-0"
-          style={{ width: '14px', height: '16.8px', marginLeft: '3px' }}
+          style={{ width: '14px', height: '16.8px' }}
         >
           {event.status === "running" ? (
             <Loader2 data-testid="event-running-icon" className="w-3.5 h-3.5 animate-spin" />
@@ -980,6 +980,20 @@ function FlatAgentTurnEvents({
   const { durationLabel } = useActivityTiming(activities)
 
   const isRunning = message.turnStatus === "running"
+  const summaryActivity = useMemo(() => {
+    if (activities.length === 0) return undefined
+    if (isRunning) {
+      return [...activities].reverse().find((event) => event.type !== "assistant_message") ?? activities[activities.length - 1]
+    }
+    return pickStreamingSummaryActivity(activities)
+  }, [activities, isRunning])
+  const summaryText = useMemo(() => {
+    if (summaryActivity?.title && summaryActivity.title.trim().length > 0) return summaryActivity.title.trim()
+    const content = message.content.trim()
+    if (content.length === 0) return "No activity yet"
+    const firstLine = content.split(/\r?\n/)[0]?.trim() ?? content
+    return firstLine.length > 0 ? firstLine : content
+  }, [message.content, summaryActivity])
 
   const toggleEvent = (eventId: string) => {
     setExpandedEvents((prev) => {
@@ -991,11 +1005,29 @@ function FlatAgentTurnEvents({
   }
 
   const hasContent = message.content.trim().length > 0
-  const lastNonMessageActivity = [...activities].reverse().find((e) => e.type !== "assistant_message")
-  const showRunningIndicator = isRunning && !lastNonMessageActivity?.status?.includes("running")
-
   return (
     <div className="flex flex-col gap-0.5" data-testid="agent-turn-flat">
+      <button
+        type="button"
+        data-testid="agent-turn-toggle"
+        className="flex items-center gap-2 py-1 rounded cursor-default"
+        style={{ paddingLeft: `${ACTIVITY_AXIS_X_PX - ACTIVITY_ICON_RADIUS_PX}px` }}
+      >
+        <div
+          data-testid="agent-turn-avatar"
+          className="flex items-center justify-center flex-shrink-0"
+          style={{ width: "14px", height: "16.8px" }}
+        >
+          <AgentRunnerIcon runner={message.agentRunner} className="w-3.5 h-3.5" />
+        </div>
+        <span
+          className="truncate"
+          style={{ fontSize: "12px", fontWeight: 500, lineHeight: "16.8px", color: COLORS.textMuted }}
+        >
+          {agentRunnerLabel(message.agentRunner)}
+          {summaryText.length > 0 ? ` · ${summaryText}` : ""}
+        </span>
+      </button>
       {activities.map((event) => {
         if (event.type === "assistant_message") {
           return (
@@ -1019,7 +1051,7 @@ function FlatAgentTurnEvents({
           </div>
         )
       })}
-      {isRunning && onCancel && showRunningIndicator && (
+      {isRunning && onCancel && (
         <div
           className="flex items-center"
           style={{ paddingLeft: `${ACTIVITY_AXIS_X_PX - ACTIVITY_ICON_RADIUS_PX}px` }}
@@ -1029,7 +1061,6 @@ function FlatAgentTurnEvents({
             className="group/cancel relative flex items-center justify-center w-7 h-7 flex-shrink-0"
           >
             <Loader2
-              data-testid="event-running-icon"
               className="w-3.5 h-3.5 animate-spin transition-opacity group-hover/cancel:opacity-0"
               style={{ color: COLORS.textMuted }}
             />
@@ -1209,7 +1240,7 @@ function ActivityStreamSection({
           return {
             key: msg.id,
             node: (
-              <div className="relative">
+              <div className="relative" data-testid="agent-turn-card">
                 <FlatAgentTurnEvents
                   message={msg}
                   onCancel={msg.turnStatus === "running" ? onCancelAgentTurn : undefined}

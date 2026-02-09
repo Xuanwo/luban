@@ -662,6 +662,7 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
   }
 
   const terminalCommandIndexById = new Map<string, number>()
+  const agentMessageLatestTextById = new Map<string, string>()
 
   for (let i = 0; i < conversation.entries.length; i += 1) {
     const entry = conversation.entries[i]!
@@ -852,8 +853,13 @@ function buildMessagesGroupedTurns(conversation: ConversationSnapshot): Message[
         msg.content = messageText
         msg.timestamp = unixMsToIso(entry.created_at_unix_ms) ?? msg.timestamp
 
-        const activityKey = `assistant_message_${entry.entry_id || out.length}`
+        const activityKey = `assistant_message_${ev.id}`
         const rowId = activityKey
+        const previousText = agentMessageLatestTextById.get(activityKey)
+        if (previousText === messageText) {
+          continue
+        }
+        agentMessageLatestTextById.set(activityKey, messageText)
         appendTurnActivity(turnId, {
           key: activityKey,
           rowId,
@@ -1050,6 +1056,8 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
   }
 
   const agentEventIndexById = new Map<string, number>()
+  const agentMessageIndexById = new Map<string, number>()
+  const agentMessageLatestTextById = new Map<string, string>()
   const terminalCommandIndexById = new Map<string, number>()
 
   for (let i = 0; i < conversation.entries.length; i += 1) {
@@ -1222,15 +1230,44 @@ function buildMessagesFlatEvents(conversation: ConversationSnapshot): Message[] 
       const ev = entry.event
       const entryRunner = entry.runner ?? conversation.agent_runner
       if (ev.type === "message") {
-        const entryPart = entry.entry_id ? `_${entry.entry_id}` : `_${out.length}`
+        const messageId = `a_${ev.id}`
+        const messageText = ev.text.trim()
+        const previousText = agentMessageLatestTextById.get(messageId)
+        if (previousText === messageText) {
+          continue
+        }
+        agentMessageLatestTextById.set(messageId, messageText)
+
+        const existing = agentMessageIndexById.get(messageId)
+        if (typeof existing === "number") {
+          const prev = out[existing]
+          if (prev && prev.type === "assistant") {
+            prev.agentRunner = entryRunner
+            prev.content = messageText
+            prev.timestamp = unixMsToIso(entry.created_at_unix_ms)
+          } else {
+            out.push({
+              id: messageId,
+              type: "assistant",
+              eventSource: "agent",
+              agentRunner: entryRunner,
+              content: messageText,
+              timestamp: unixMsToIso(entry.created_at_unix_ms),
+            })
+            agentMessageIndexById.set(messageId, out.length - 1)
+          }
+          continue
+        }
+
         out.push({
-          id: `a_${ev.id}${entryPart}`,
+          id: messageId,
           type: "assistant",
           eventSource: "agent",
           agentRunner: entryRunner,
-          content: ev.text.trim(),
+          content: messageText,
           timestamp: unixMsToIso(entry.created_at_unix_ms),
         })
+        agentMessageIndexById.set(messageId, out.length - 1)
         continue
       }
 
