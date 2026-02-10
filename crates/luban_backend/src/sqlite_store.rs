@@ -266,6 +266,11 @@ enum DbCommand {
         thread_local_id: u64,
         reply: mpsc::Sender<anyhow::Result<()>>,
     },
+    AllocateConversationThread {
+        project_slug: String,
+        workspace_name: String,
+        reply: mpsc::Sender<anyhow::Result<u64>>,
+    },
     GetConversationThreadId {
         project_slug: String,
         workspace_name: String,
@@ -494,6 +499,18 @@ impl SqliteStore {
                                 &workspace_name,
                                 thread_local_id,
                             ));
+                        }
+                        (
+                            Ok(db),
+                            DbCommand::AllocateConversationThread {
+                                project_slug,
+                                workspace_name,
+                                reply,
+                            },
+                        ) => {
+                            let _ = reply.send(
+                                db.allocate_conversation_thread(&project_slug, &workspace_name),
+                            );
                         }
                         (
                             Ok(db),
@@ -985,6 +1002,22 @@ impl SqliteStore {
                 project_slug,
                 workspace_name,
                 thread_local_id,
+                reply: reply_tx,
+            })
+            .context("sqlite worker is not running")?;
+        reply_rx.recv().context("sqlite worker terminated")?
+    }
+
+    pub fn allocate_conversation_thread(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+    ) -> anyhow::Result<u64> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(DbCommand::AllocateConversationThread {
+                project_slug,
+                workspace_name,
                 reply: reply_tx,
             })
             .context("sqlite worker is not running")?;
@@ -1539,6 +1572,9 @@ fn respond_db_open_error(err: &anyhow::Error, cmd: DbCommand) {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::EnsureConversation { reply, .. } => {
+            let _ = reply.send(Err(anyhow!(message)));
+        }
+        DbCommand::AllocateConversationThread { reply, .. } => {
             let _ = reply.send(Err(anyhow!(message)));
         }
         DbCommand::GetConversationThreadId { reply, .. } => {
@@ -3147,6 +3183,63 @@ impl SqliteDatabase {
 
         tx.commit()?;
         Ok(())
+    }
+
+    fn allocate_conversation_thread(
+        &mut self,
+        project_slug: &str,
+        workspace_name: &str,
+    ) -> anyhow::Result<u64> {
+        let now = now_unix_seconds();
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            "INSERT INTO conversations (project_slug, workspace_name, thread_local_id, thread_id, title, task_status, created_at, updated_at)
+             SELECT ?1, ?2,
+                    COALESCE(MAX(thread_local_id), 0) + 1,
+                    NULL,
+                    printf('Thread %d', COALESCE(MAX(thread_local_id), 0) + 1),
+                    'backlog',
+                    ?3, ?3
+               FROM conversations
+              WHERE project_slug = ?1 AND workspace_name = ?2",
+            params![project_slug, workspace_name, now],
+        )?;
+
+        let thread_local_id_raw = tx.query_row(
+            "SELECT MAX(thread_local_id)
+               FROM conversations
+              WHERE project_slug = ?1 AND workspace_name = ?2",
+            params![project_slug, workspace_name],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let thread_local_id =
+            u64::try_from(thread_local_id_raw).context("allocated thread_local_id is negative")?;
+
+        let entry_id = "sys_1".to_owned();
+        let entry = ConversationEntry::SystemEvent {
+            entry_id: entry_id.clone(),
+            created_at_unix_ms: now_unix_millis(),
+            event: luban_domain::ConversationSystemEvent::TaskCreated,
+        };
+        let payload_json =
+            serde_json::to_string(&entry).context("failed to serialize conversation entry")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO conversation_entries
+             (project_slug, workspace_name, thread_local_id, seq, entry_id, kind, codex_item_id, payload_json, created_at)
+             VALUES (?1, ?2, ?3, 1, ?4, 'system_event', NULL, ?5, ?6)",
+            params![
+                project_slug,
+                workspace_name,
+                thread_local_id as i64,
+                entry_id,
+                payload_json,
+                now,
+            ],
+        )?;
+
+        tx.commit()?;
+        Ok(thread_local_id)
     }
 
     fn ensure_conversation(
@@ -5128,6 +5221,26 @@ mod tests {
             err.downcast_ref::<SqliteStoreError>() == Some(&SqliteStoreError::ConversationNotFound),
             "expected missing conversation to return ConversationNotFound"
         );
+    }
+
+    #[test]
+    fn allocate_conversation_thread_creates_monotonic_ids() {
+        let path = temp_db_path("allocate_conversation_thread_creates_monotonic_ids");
+        let mut db = open_db(&path);
+
+        let first = db.allocate_conversation_thread("p", "w").unwrap();
+        let second = db.allocate_conversation_thread("p", "w").unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+
+        let mut ids = db
+            .list_conversation_threads("p", "w")
+            .unwrap()
+            .into_iter()
+            .map(|meta| meta.thread_id.as_u64())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2]);
     }
 
     #[test]

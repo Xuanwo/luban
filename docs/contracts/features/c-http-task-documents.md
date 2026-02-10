@@ -49,8 +49,7 @@ Expose task-scoped document files for review and editing:
 - `kind` path parameter must be one of: `task`, `plan`, `memory`.
 - Request body: `{ "content": string }`.
 - Lazily creates task identity/directory on first write, then writes content atomically.
-- First-write identity uses deterministic fallback task id (`task-{workdir_id}-{task_id}`) to align
-  with agent-created files before provider writes.
+- Newly created task identity uses a generated ULID (`{task_ulid}`).
 - Response body: `TaskDocumentSnapshot`.
 
 ## Invariants

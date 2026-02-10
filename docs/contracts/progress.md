@@ -67,6 +67,7 @@ Legend:
 - `C-WS-EVENTS`: Telegram passive conversation forwarding also keeps a single per-task relay message (after first send) and updates it via `editMessageText` on subsequent new updates.
 - `C-WS-EVENTS`: `ServerEvent::TaskSummariesChanged` pushes per-workdir `TaskSummarySnapshot[]` updates for task-first UI surfaces (inbox, global task lists).
 - `C-WS-EVENTS`: `ServerEvent::TaskDocumentChanged` is emitted from filesystem notifications under `tasks/v1/tasks/**` so the task document panel can refresh from FS truth.
+- `C-HTTP-TASK-DOCUMENTS`: task document identity directory (`task_ulid`) is ULID-based for newly created task identities (provider fallback `task-*` is legacy-compat only).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot` includes per-thread run config (`agent_runner` / `agent_model_id` / `thinking_effort` / `amp_mode`).
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.task_status` exposes the per-task lifecycle stage.
 - `C-HTTP-CONVERSATION`: `ConversationSnapshot.entries` is a timeline of `ConversationEntry` values tagged by `type` (`system_event` / `user_event` / `agent_event`). Each entry includes a stable `entry_id` and `created_at_unix_ms`, and streaming/tool updates are appended as additional `agent_event` entries (clients may fold by `AgentEvent.id` if desired).

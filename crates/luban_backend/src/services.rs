@@ -731,6 +731,16 @@ impl ProjectWorkspaceService for GitWorkspaceService {
             .map_err(anyhow_error_to_string)
     }
 
+    fn allocate_conversation_thread(
+        &self,
+        project_slug: String,
+        workspace_name: String,
+    ) -> Result<u64, String> {
+        self.sqlite
+            .allocate_conversation_thread(project_slug, workspace_name)
+            .map_err(anyhow_error_to_string)
+    }
+
     fn list_conversation_threads(
         &self,
         project_slug: String,

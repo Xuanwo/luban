@@ -11,7 +11,7 @@ use luban_domain::{
     ConversationEntry, ConversationThreadMeta, Effect, OpenTarget, OperationStatus,
     ProjectWorkspaceService, PullRequestCiState as DomainPullRequestCiState, PullRequestInfo,
     PullRequestState as DomainPullRequestState, TaskDocumentKind as DomainTaskDocumentKind,
-    ThinkingEffort, WorkspaceId, WorkspaceThreadId,
+    ThinkingEffort, WorkspaceId, WorkspaceTabs, WorkspaceThreadId,
 };
 use rand::RngCore as _;
 use rand::rngs::OsRng;
@@ -823,6 +823,92 @@ impl Engine {
         Ok(())
     }
 
+    async fn create_workspace_thread_safe(
+        &mut self,
+        workspace_id: WorkspaceId,
+        model_id: Option<String>,
+        thinking_effort: Option<luban_domain::ThinkingEffort>,
+    ) -> Result<WorkspaceThreadId, String> {
+        let Some(scope) = workspace_scope(&self.state, workspace_id) else {
+            return Err("workspace not found".to_owned());
+        };
+
+        let services = self.services.clone();
+        let allocate_result = tokio::task::spawn_blocking(move || {
+            services.allocate_conversation_thread(scope.project_slug, scope.workspace_name)
+        })
+        .await
+        .ok()
+        .unwrap_or_else(|| Err("failed to join allocate conversation thread task".to_owned()));
+
+        let created_thread_id = match allocate_result {
+            Ok(thread_local_id) => {
+                if thread_local_id == 0 {
+                    return Err("provider returned invalid task id 0".to_owned());
+                }
+                let allocated_thread_id = WorkspaceThreadId::from_u64(thread_local_id);
+                let tabs = self
+                    .state
+                    .workspace_tabs
+                    .entry(workspace_id)
+                    .or_insert_with(WorkspaceTabs::new_empty);
+                tabs.next_thread_id = allocated_thread_id.as_u64();
+
+                self.process_action_queue(Action::CreateWorkspaceThread {
+                    workspace_id,
+                    model_id,
+                    thinking_effort,
+                })
+                .await;
+
+                let created_thread_id = self
+                    .state
+                    .active_thread_id(workspace_id)
+                    .ok_or_else(|| "failed to determine created task id".to_owned())?;
+                if created_thread_id != allocated_thread_id {
+                    tracing::warn!(
+                        workspace_id = workspace_id.as_u64(),
+                        allocated_task_id = allocated_thread_id.as_u64(),
+                        created_task_id = created_thread_id.as_u64(),
+                        "task id allocation mismatch; forcing activation to provider-allocated id"
+                    );
+                    self.process_action_queue(Action::ActivateWorkspaceThread {
+                        workspace_id,
+                        thread_id: allocated_thread_id,
+                    })
+                    .await;
+                }
+
+                allocated_thread_id
+            }
+            Err(message) if message.trim() == "unimplemented" => {
+                self.process_action_queue(Action::CreateWorkspaceThread {
+                    workspace_id,
+                    model_id,
+                    thinking_effort,
+                })
+                .await;
+                self.state
+                    .active_thread_id(workspace_id)
+                    .ok_or_else(|| "failed to determine created task id".to_owned())?
+            }
+            Err(message) => return Err(message),
+        };
+
+        // Keep task document identity stable and ULID-based from task creation time.
+        if let Err(err) = ensure_task_document_identity_for_thread(workspace_id, created_thread_id)
+        {
+            tracing::warn!(
+                workspace_id = workspace_id.as_u64(),
+                thread_id = created_thread_id.as_u64(),
+                error = %err,
+                "failed to ensure task document identity"
+            );
+        }
+
+        Ok(created_thread_id)
+    }
+
     async fn execute_task_prompt(
         &mut self,
         prompt: String,
@@ -854,16 +940,9 @@ impl Engine {
 
         self.process_action_queue(Action::OpenWorkspace { workspace_id })
             .await;
-        self.process_action_queue(Action::CreateWorkspaceThread {
-            workspace_id,
-            model_id,
-            thinking_effort,
-        })
-        .await;
-
-        let Some(thread_id) = self.state.active_thread_id(workspace_id) else {
-            return Err("failed to determine created task id".to_owned());
-        };
+        let thread_id = self
+            .create_workspace_thread_safe(workspace_id, model_id, thinking_effort)
+            .await?;
 
         // Reason: CreateWorkspaceThread already sets the correct per-runner
         // model and thinking effort via resolve_default_model_for_runner, so
@@ -2468,6 +2547,30 @@ impl Engine {
                         self.process_action_queue(Action::EnsureMainWorkspace { project_id: id })
                             .await;
                         let _ = reply.send(Ok(self.rev));
+                        return;
+                    }
+                    luban_api::ClientAction::CreateWorkspaceThread {
+                        workspace_id,
+                        model_id,
+                        thinking_effort,
+                    } => {
+                        let workspace_id = WorkspaceId::from_u64(workspace_id.0);
+                        let thinking_effort = map_api_thinking_effort(*thinking_effort);
+                        match self
+                            .create_workspace_thread_safe(
+                                workspace_id,
+                                model_id.clone(),
+                                thinking_effort,
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = reply.send(Ok(self.rev));
+                            }
+                            Err(message) => {
+                                let _ = reply.send(Err(message));
+                            }
+                        }
                         return;
                     }
                     luban_api::ClientAction::CancelAndSendAgentMessage {
@@ -5226,6 +5329,8 @@ struct TaskDocumentIdentityRecord {
     updated_at_unix_ms: u64,
 }
 
+const TASK_DOCUMENT_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Clone, Debug)]
 struct TaskDocumentPaths {
     task_path: PathBuf,
@@ -5273,6 +5378,24 @@ fn task_document_meta_path(luban_root: &Path, task_ulid: &str) -> PathBuf {
     task_document_task_dir(luban_root, task_ulid).join("task.json")
 }
 
+fn write_text_atomic(path: &Path, content: &str) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid task document path"))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create {}", parent.display()))?;
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp = parent.join(format!(".tmp-{}-{unique}", std::process::id()));
+    std::fs::write(&tmp, content.as_bytes())
+        .with_context(|| format!("failed to write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("failed to replace {}", path.display()))?;
+    Ok(())
+}
+
 fn read_task_document_identity(
     luban_root: &Path,
     workspace_id: u64,
@@ -5307,8 +5430,57 @@ fn read_task_document_identity(
     Ok(Some(identity))
 }
 
-fn fallback_task_ulid(workspace_id: u64, task_id: u64) -> String {
-    format!("task-{workspace_id}-{task_id}")
+fn write_task_document_identity(
+    luban_root: &Path,
+    identity: &TaskDocumentIdentityRecord,
+) -> anyhow::Result<()> {
+    let task_dir = task_document_task_dir(luban_root, &identity.task_ulid);
+    std::fs::create_dir_all(&task_dir)
+        .with_context(|| format!("failed to create {}", task_dir.display()))?;
+
+    let meta_path = task_document_meta_path(luban_root, &identity.task_ulid);
+    let meta_json = serde_json::to_string_pretty(identity)?;
+    write_text_atomic(&meta_path, &meta_json)?;
+
+    let index_path = task_document_index_path(luban_root, identity.workspace_id, identity.task_id);
+    let index = TaskDocumentIndexRecord {
+        task_ulid: identity.task_ulid.clone(),
+        workspace_id: identity.workspace_id,
+        task_id: identity.task_id,
+    };
+    let index_json = serde_json::to_string_pretty(&index)?;
+    write_text_atomic(&index_path, &index_json)?;
+    Ok(())
+}
+
+fn ensure_task_document_identity(
+    luban_root: &Path,
+    workspace_id: u64,
+    task_id: u64,
+) -> anyhow::Result<TaskDocumentIdentityRecord> {
+    if let Some(identity) = read_task_document_identity(luban_root, workspace_id, task_id)? {
+        return Ok(identity);
+    }
+
+    let now = now_unix_ms();
+    let identity = TaskDocumentIdentityRecord {
+        schema_version: TASK_DOCUMENT_SCHEMA_VERSION,
+        task_ulid: ulid::Ulid::new().to_string(),
+        workspace_id,
+        task_id,
+        created_at_unix_ms: now,
+        updated_at_unix_ms: now,
+    };
+    write_task_document_identity(luban_root, &identity)?;
+    Ok(identity)
+}
+
+fn ensure_task_document_identity_for_thread(
+    workspace_id: WorkspaceId,
+    thread_id: WorkspaceThreadId,
+) -> anyhow::Result<TaskDocumentIdentityRecord> {
+    let luban_root = resolve_luban_root()?;
+    ensure_task_document_identity(&luban_root, workspace_id.as_u64(), thread_id.as_u64())
 }
 
 fn task_document_paths_for_dir(root: &Path) -> TaskDocumentPaths {
@@ -5328,9 +5500,8 @@ fn resolve_task_document_paths(
 ) -> anyhow::Result<TaskDocumentPaths> {
     let luban_root = resolve_luban_root()?;
     let task_ulid =
-        read_task_document_identity(&luban_root, workspace_id.as_u64(), thread_id.as_u64())?
-            .map(|identity| identity.task_ulid)
-            .unwrap_or_else(|| fallback_task_ulid(workspace_id.as_u64(), thread_id.as_u64()));
+        ensure_task_document_identity(&luban_root, workspace_id.as_u64(), thread_id.as_u64())?
+            .task_ulid;
     let task_dir = task_document_task_dir(&luban_root, &task_ulid);
     Ok(task_document_paths_for_dir(&task_dir))
 }
@@ -9609,6 +9780,26 @@ mod tests {
         assert!(request.prompt.contains("TASK.md:"));
         assert!(request.prompt.contains("PLAN.md:"));
         assert!(request.prompt.contains("MEMORY.md:"));
+
+        let task_line = request
+            .prompt
+            .lines()
+            .find(|line| line.starts_with("- TASK.md: "))
+            .expect("task prompt line should exist");
+        let task_path = task_line.trim_start_matches("- TASK.md: ").trim();
+        let task_ulid = std::path::Path::new(task_path)
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|name| name.to_str())
+            .expect("task path should include ulid directory");
+        assert!(
+            ulid::Ulid::from_string(task_ulid).is_ok(),
+            "task document path should use ULID directory"
+        );
+        assert!(
+            !task_ulid.starts_with("task-"),
+            "fallback task-* identity should not be used"
+        );
     }
 
     #[tokio::test]

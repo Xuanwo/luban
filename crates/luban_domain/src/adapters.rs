@@ -390,6 +390,14 @@ pub trait ProjectWorkspaceService: Send + Sync {
         thread_id: u64,
     ) -> Result<(), String>;
 
+    fn allocate_conversation_thread(
+        &self,
+        _project_slug: String,
+        _workspace_name: String,
+    ) -> Result<u64, String> {
+        Err("unimplemented".to_owned())
+    }
+
     fn list_conversation_threads(
         &self,
         project_slug: String,

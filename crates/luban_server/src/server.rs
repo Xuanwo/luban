@@ -815,7 +815,7 @@ fn ensure_task_document_identity(
     let now = now_unix_millis();
     let identity = TaskDocumentIdentityRecord {
         schema_version: TASK_DOCUMENT_SCHEMA_VERSION,
-        task_ulid: fallback_task_ulid(workspace_id, task_id),
+        task_ulid: ulid::Ulid::new().to_string(),
         workspace_id,
         task_id,
         created_at_unix_ms: now,
