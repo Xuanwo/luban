@@ -11,6 +11,7 @@ mod mentions;
 mod project_avatars;
 pub mod pty;
 pub mod server;
+pub mod shell_env;
 mod task_document_watch;
 mod telegram;
 

@@ -46,6 +46,10 @@ fn hex_char(nibble: u8) -> char {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if let Err(err) = luban_server::shell_env::apply_runtime_shell_env_defaults() {
+        eprintln!("warning: failed to apply shell environment defaults: {err:#}");
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
