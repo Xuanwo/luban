@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Terminal } from "lucide-react"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { TiptapMarkdownEditor } from "@/components/tiptap-markdown-editor"
@@ -939,12 +938,6 @@ export function TaskDocumentPanel() {
               setChatAmpMode(activeWorkdirId, activeTaskId, mode)
             }}
             onSend={sendUnifiedComment}
-            secondaryAction={{
-              onClick: () => {},
-              ariaLabel: "Switch to shell",
-              icon: <Terminal className="w-3.5 h-3.5" />,
-              testId: "chat-mode-toggle",
-            }}
             canSend={commentCanSend}
             codexEnabled={app?.agent.codex_enabled ?? true}
             ampEnabled={app?.agent.amp_enabled ?? true}

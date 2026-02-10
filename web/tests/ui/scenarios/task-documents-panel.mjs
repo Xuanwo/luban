@@ -19,6 +19,10 @@ export async function runTaskDocumentsPanel({ page }) {
   }
   await panel.getByTestId('chat-attach').waitFor({ state: 'visible' });
   await panel.getByTestId('agent-selector').waitFor({ state: 'visible' });
+  const shellToggleCount = await panel.getByTestId('chat-mode-toggle').count();
+  if (shellToggleCount !== 0) {
+    throw new Error(`expected no left-side shell toggle in task documents panel, got ${shellToggleCount}`);
+  }
 
   // TipTap editor is always visible (seamless WYSIWYG) — click to focus, then select all
   const taskEditor = panel.getByTestId('task-document-editor-task');
