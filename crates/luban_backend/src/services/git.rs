@@ -87,13 +87,12 @@ impl GitWorkspaceService {
             let host = parts.next()?;
             let path = parts.next().unwrap_or_default();
             (host, path)
-        } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        } else {
+            let rest = trimmed.strip_prefix("http://")?;
             let mut parts = rest.splitn(2, '/');
             let host = parts.next()?;
             let path = parts.next().unwrap_or_default();
             (host, path)
-        } else {
-            return None;
         };
 
         if !host.eq_ignore_ascii_case("github.com") {

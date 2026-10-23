@@ -180,11 +180,9 @@ async fn ws_events_terminal_command_start_emits_conversation_events_with_output(
                                 started_created_at_unix_ms = Some(user.created_at_unix_ms);
                             }
                         }
-                        luban_api::UserEvent::TerminalCommandFinished(ev) => {
-                            if ev.command == cmd {
-                                finished = Some(ev);
-                                finished_created_at_unix_ms = Some(user.created_at_unix_ms);
-                            }
+                        luban_api::UserEvent::TerminalCommandFinished(ev) if ev.command == cmd => {
+                            finished = Some(ev);
+                            finished_created_at_unix_ms = Some(user.created_at_unix_ms);
                         }
                         _ => {}
                     }
