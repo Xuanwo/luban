@@ -144,10 +144,8 @@ fn task_status_auto_update_input(
                         last_agent_message = Some(text.trim().to_owned());
                     }
                 }
-                crate::AgentEvent::TurnError { message } => {
-                    if last_turn_error.is_none() {
-                        last_turn_error = Some(message.trim().to_owned());
-                    }
+                crate::AgentEvent::TurnError { message } if last_turn_error.is_none() => {
+                    last_turn_error = Some(message.trim().to_owned());
                 }
                 _ => {}
             },
